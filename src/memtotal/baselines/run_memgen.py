@@ -12,6 +12,7 @@ from pathlib import Path
 
 from huggingface_hub import HfFolder
 
+from memtotal.baselines.budgeting import build_baseline_budget_fields
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json, write_jsonl
 from memtotal.utils.repro import set_seed, validate_backbone_name
@@ -263,6 +264,11 @@ def main(argv: list[str] | None = None) -> int:
         "task_name": config["baseline"]["task_name"],
         "backbone": config["backbone"]["name"],
         "memgen_results_root": str(results_root),
+        **build_baseline_budget_fields(
+            config=config,
+            baseline_family="memgen",
+            baseline_mode="external_eval",
+        ),
         **_baseline_metadata(config),
     }
 

@@ -218,6 +218,9 @@ class RepoContractTest(unittest.TestCase):
             metrics = json.loads((output_dir / "metrics.json").read_text())
             self.assertTrue(metrics["dry_run"])
             self.assertEqual(metrics["backbone"], "Qwen2.5-1.5B-Instruct")
+            self.assertEqual(metrics["baseline_family"], "memgen")
+            self.assertEqual(metrics["train_steps"], 0)
+            self.assertEqual(metrics["trainable_parameter_count"], 0)
 
 
 if __name__ == "__main__":

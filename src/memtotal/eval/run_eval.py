@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from memtotal.baselines import AdapterBaselineRuntime, PromptBaselineRuntime
+from memtotal.baselines.budgeting import build_baseline_budget_fields
 from memtotal.pipeline import MemoryRuntime
 from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.utils.config import load_config
@@ -54,6 +55,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.checkpoint:
             checkpoint = torch.load(args.checkpoint, map_location="cpu")
             runtime.load_state_dict(checkpoint["model_state"])
+    baseline_budget_fields: dict[str, object] = {}
+    if use_baseline:
+        trainable_parameter_count = 0
+        if baseline_family == "adapter":
+            trainable_parameter_count = sum(parameter.numel() for parameter in runtime.parameters() if parameter.requires_grad)
+        baseline_budget_fields = build_baseline_budget_fields(
+            config=config,
+            baseline_family=baseline_family,
+            baseline_mode=str(baseline_cfg.get("mode", "vanilla")),
+            trainable_parameter_count=trainable_parameter_count,
+        )
 
     max_examples = min(len(dataset), 2 if args.dry_run else int(config["runtime"]["eval_examples"]))
     predictions = []
@@ -290,8 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         **profile_metrics,
     }
     if use_baseline:
-        metrics["baseline_family"] = baseline_family
-        metrics["baseline_mode"] = str(baseline_cfg.get("mode", "vanilla"))
+        metrics.update(baseline_budget_fields)
     narrativeqa_runtime_cfg = config["task"].get("narrativeqa_runtime")
     if isinstance(narrativeqa_runtime_cfg, dict):
         metrics["story_runtime_selector"] = str(narrativeqa_runtime_cfg.get("selector", "question_aware"))

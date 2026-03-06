@@ -215,3 +215,5 @@
 - 当前 `Prompt Tuning / LoRA` 的最小 smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
 - 同一套 qwen3 adapter smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 - 同一套 `Prompt Tuning / LoRA` 现已推进到 `story_cloze` real-source smoke，汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
+- baseline run 当前会统一写出 `support_examples / train_steps / trainable_parameter_count / budget_signature`
+- `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter` 三个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`

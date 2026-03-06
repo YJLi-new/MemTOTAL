@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from memtotal.baselines.budgeting import build_baseline_budget_fields
 from memtotal.models import BackboneWrapper
 from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.utils.io import write_json
@@ -196,6 +197,14 @@ def run_adapter_baseline_train(
 
     profile_metrics = profiler.finalize()
     trainable_parameter_count = sum(parameter.numel() for parameter in runtime.parameters() if parameter.requires_grad)
+    budget_fields = build_baseline_budget_fields(
+        config=config,
+        baseline_family=runtime.family,
+        baseline_mode=runtime.mode,
+        support_examples=support_examples,
+        train_steps=train_steps,
+        trainable_parameter_count=trainable_parameter_count,
+    )
     checkpoint = {
         "model_state": runtime.state_dict(),
         "seed": seed,
@@ -206,19 +215,15 @@ def run_adapter_baseline_train(
         output_dir / "metrics.json",
         {
             "mode": "train_baseline",
-            "baseline_family": runtime.family,
-            "baseline_mode": runtime.mode,
-            "support_examples": support_examples,
-            "train_steps": train_steps,
             "examples_seen": train_steps,
             "final_loss": events[-1]["loss"],
             "mean_loss": sum(item["loss"] for item in events) / len(events),
-            "trainable_parameter_count": trainable_parameter_count,
             "task_name": config["task"]["name"],
             "benchmark_id": config["task"].get("benchmark_id"),
             "task_domain": config["task"].get("domain"),
             "smoke_subset": config["task"].get("smoke_subset"),
             "backbone": config["backbone"]["name"],
+            **budget_fields,
             **profile_metrics,
         },
     )

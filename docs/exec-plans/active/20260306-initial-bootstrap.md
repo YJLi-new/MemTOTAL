@@ -149,6 +149,7 @@
 - 2026-03-06 18:01 UTC: 已新增最小 `MetaPrompting` scaffold。`src/memtotal/baselines/prompting.py` 现支持 `family=meta_prompting`、`mode=planner_critic`，并通过 `Planner / Solver / Critic / Finalizer` prompt protocol 接入统一 eval。
 - 2026-03-06 18:01 UTC: 已真实跑通 `configs/exp/baseline_metaprompting_story_cloze_qwen25_smoke.yaml` 与 `configs/exp/baseline_metaprompting_story_cloze_qwen3_smoke.yaml`；统一汇总位于 `results/generated/m5-metaprompting-smoke/summary.csv`。当前 stub 结果为 qwen25 `accuracy=0.0`、qwen3 `accuracy=1.0`。
 - 2026-03-06 18:03 UTC: 已把同一套 `MetaPrompting` 进一步补到 `story_cloze` real-source smoke。统一汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`；当前结果为 qwen25 `accuracy=0.75`、qwen3 `accuracy=1.0`。
+- 2026-03-07 01:02 UTC: 已新增 `baseline_budget_audit` 并真实跑通。当前 baseline run 会统一写出 `support_examples / train_steps / trainable_parameter_count / budget_signature`；`./scripts/run_baseline_budget_audit.sh 961 results/generated/m5-baseline-budget-audit runs/verify` 的结果为 `rows_collected=40`、`checks_pass_rate=1.0`、`issues_found=0`。当前 audit scope 明确限定在 `prompting / meta_prompting / adapter`，`MemGen` 仍作为后续预算统一项保留。
 
 ## Decision Log
 

@@ -238,6 +238,9 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertEqual(metrics["mode"], "eval_baseline")
             self.assertEqual(metrics["baseline_family"], "prompting")
             self.assertEqual(metrics["baseline_mode"], "vanilla")
+            self.assertEqual(metrics["support_examples"], 0)
+            self.assertEqual(metrics["train_steps"], 0)
+            self.assertEqual(metrics["trainable_parameter_count"], 0)
             self.assertEqual(predictions[0]["baseline_mode"], "vanilla")
             self.assertIn("Story:", predictions[0]["baseline_prompt"])
             self.assertIsNotNone(predictions[0]["candidate_scores"])
@@ -309,6 +312,9 @@ class BenchmarkEvalTest(unittest.TestCase):
             predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
             self.assertEqual(metrics["mode"], "eval_baseline")
             self.assertEqual(metrics["baseline_mode"], "cot")
+            self.assertEqual(metrics["support_examples"], 0)
+            self.assertEqual(metrics["train_steps"], 0)
+            self.assertEqual(metrics["trainable_parameter_count"], 0)
             self.assertEqual(metrics["exact_match"], 1.0)
             self.assertIn("Think step by step and then answer.", predictions[0]["baseline_prompt"])
             self.assertEqual(predictions[0]["generated_text"], "4")
@@ -383,6 +389,9 @@ class BenchmarkEvalTest(unittest.TestCase):
             predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
             self.assertEqual(metrics["baseline_family"], "meta_prompting")
             self.assertEqual(metrics["baseline_mode"], "planner_critic")
+            self.assertEqual(metrics["support_examples"], 0)
+            self.assertEqual(metrics["train_steps"], 0)
+            self.assertEqual(metrics["trainable_parameter_count"], 0)
             self.assertIn("Planner:", predictions[0]["baseline_prompt"])
             self.assertIn("Critic:", predictions[0]["baseline_prompt"])
 
