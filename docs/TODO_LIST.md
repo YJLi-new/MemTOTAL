@@ -299,7 +299,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 
 ### P1 重要
 - [ ] 实现 Query-Gating
-  - [ ] off / random / learned
+  - [x] off / random / learned
   - **DoD**：能记录每段 gating 统计
 
 - [ ] 实现多种注入位置
@@ -316,11 +316,17 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - `MemoryReader`: `H` 个 learned queries + cross-attention，支持 `memory_mask`
 - `MemoryFuser`: `linear` / `resampler`
 - `MemoryInjector`: `enabled` 开关已进入 config 契约，且 on/off 已有测试验证会改变生成路径
+- `Query-Gating`: `off / random / learned` 三档已进入 `gating_mode` 配置契约；`train/eval metrics.json` 会记录 `gating_mode / mean_gate / mean_active_queries`，`predictions.jsonl` 会记录每个样本的 `gates`
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
   - `python -m train --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir runs/verify/m2-transformer-writer-v2/train`
   - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir runs/verify/m2-transformer-writer-v2/eval --checkpoint runs/verify/m2-transformer-writer-v2/train/checkpoint.pt`
   - `python -m analysis --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir results/generated/m2-transformer-writer-summary-v2 --input_root runs/verify/m2-transformer-writer-v2`
+  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 131 --output_dir runs/verify/m2-learned-gating/train`
+  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 131 --output_dir runs/verify/m2-learned-gating/eval --checkpoint runs/verify/m2-learned-gating/train/checkpoint.pt`
+  - `python -m analysis --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 131 --output_dir results/generated/m2-learned-gating-summary --input_root runs/verify/m2-learned-gating`
+
+当前仍未勾掉 `Query-Gating` 的父条目，是因为当前 runtime 还不是“每个 segment 边界都单独执行一次 Reader”的正式 Stage B/C 形态；现阶段已经有 gating 模式与样本级统计，但真正的“按 segment 记录 gating 频率图”仍要等 M3/M4 的多段训练/评测 runtime。
 
 ### P2 加分
 - [ ] 更高级的注入方式（如 KV 初始化）

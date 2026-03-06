@@ -47,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     predictions = []
     correct = 0
     similarities = []
+    gate_means = []
+    active_query_counts = []
     profiler = ProfileTracker(
         output_dir=Path(args.output_dir),
         device=str(config["runtime"].get("device", "cpu")),
@@ -71,6 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         is_correct = predicted_label == example["label"]
         correct += int(is_correct)
         similarities.append(similarity)
+        gate_mean = float(forward.gating.mean().item())
+        active_queries = int((forward.gating > 0.5).sum().item())
+        gate_means.append(gate_mean)
+        active_query_counts.append(active_queries)
         predictions.append(
             {
                 "id": example["id"],
@@ -79,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
                 "predicted_label": predicted_label,
                 "correct": is_correct,
                 "similarity": similarity,
+                "gating_mode": runtime.reader.gating_mode,
+                "gates": [float(value) for value in forward.gating.squeeze(0).tolist()],
+                "mean_gate": gate_mean,
+                "active_queries": active_queries,
                 "generated_text": generated_text,
             }
         )
@@ -89,6 +99,9 @@ def main(argv: list[str] | None = None) -> int:
         "examples_evaluated": max_examples,
         "accuracy": correct / max_examples,
         "mean_similarity": sum(similarities) / len(similarities),
+        "gating_mode": runtime.reader.gating_mode,
+        "mean_gate": sum(gate_means) / len(gate_means),
+        "mean_active_queries": sum(active_query_counts) / len(active_query_counts),
         "backbone": config["backbone"]["name"],
         "metric_name": config["task"]["metric_name"],
         **profile_metrics,

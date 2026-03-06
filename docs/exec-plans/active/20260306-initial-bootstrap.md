@@ -90,6 +90,8 @@
 - 2026-03-06 11:17 UTC: 已将方法层从纯 M0 stub 升级为 M2 skeleton：`MemoryWriter` 现支持 `mlp` / `transformer` 两档实现，`MemoryReader` 补齐 learned queries + cross-attention + `memory_mask`，`MemoryFuser` 补齐 `linear` / `resampler` 两档，`MemoryInjector` 新增 `enabled` 配置开关并同步控制生成侧 memory 注入。
 - 2026-03-06 11:17 UTC: 新增 `configs/method/memory_bootstrap_transformer.yaml` 与 `configs/exp/smoke_qwen25_transformer_writer.yaml`；已真实跑通 `train -> eval -> analysis` 轻量闭环，产物位于 `runs/verify/m2-transformer-writer-v2/` 与 `results/generated/m2-transformer-writer-summary-v2/`。
 - 2026-03-06 11:17 UTC: 最新验证包括 `python -m unittest discover -s tests -v`（23 项通过）、transformer-writer toy train（`final_loss=0.04995205998420715`）、eval（`accuracy=0.5`）、analysis（`rows_collected=2`）。
+- 2026-03-06 11:21 UTC: 已将 Query-Gating 从布尔值升级为显式 `gating_mode` 契约，支持 `off / random / learned`；并在 `train/eval` 的 `metrics.json` 记录 `gating_mode / mean_gate / mean_active_queries`，在 `predictions.jsonl` 记录每样本 `gates`。
+- 2026-03-06 11:21 UTC: 新增 `configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml`；已真实跑通 learned-gating toy 闭环，产物位于 `runs/verify/m2-learned-gating/` 与 `results/generated/m2-learned-gating-summary/`，当前 eval `accuracy=0.25`、`mean_gate=0.5174825489521027`、`mean_active_queries=3.0`。
 
 ## Decision Log
 
@@ -106,6 +108,7 @@
 - 2026-03-06: MemGen 的任务清单对齐先按“真实 smoke + 固定模板 + 统一分析可读”推进，不把 `TODO_LIST.md` 的“主套件全覆盖”偷换成只做单一 benchmark。
 - 2026-03-06: 对 gated 数据任务，优先把阻塞点显式写回仓库，并继续推进其他可公开访问的主套件任务，而不是在未认证环境里反复手工重试。
 - 2026-03-06: M2 当前只收口“可验证的模块骨架与配置契约”，不提前宣称 Stage A/B/C 已完成；训练流水线仍留在 M3。
+- 2026-03-06: Query-Gating 先按配置契约 + 样本级统计落地，不把当前单步 toy runtime 误写成“已经具备正式按-segment 统计”；真正多段统计留给后续 Stage runtime。
 
 ## Surprises & Discoveries
 

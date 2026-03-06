@@ -34,13 +34,20 @@
 - `MemoryReader`
   - `H` 个 learned queries
   - 基于 cross-attention 读取 `M_long`
-  - 支持 `context` conditioning、`memory_mask`、可选 query gating
+  - 支持 `context` conditioning、`memory_mask`、`gating_mode in {off, random, learned}`
 - `MemoryFuser`
   - `arch=linear`：简单投影压缩
   - `arch=resampler`：learned short queries 读取 readouts，形成 `M_short`
 - `MemoryInjector`
   - 当前支持 `prefix` 注入
   - `enabled` 开关已进入 config 契约；关闭时会同时关闭生成侧 memory token 注入
+
+当前 train/eval 产物里，方法层额外会写出：
+
+- `gating_mode`
+- `mean_gate`
+- `mean_active_queries`
+- `predictions.jsonl` 中每个样本的 `gates`
 
 这些实现当前仍运行在 deterministic stub backbone 与 toy pipeline 上，用于先验证接口、梯度、注入路径与结果治理；真实 Qwen 权重加载保留在 `BackboneWrapper` 扩展点中。
 

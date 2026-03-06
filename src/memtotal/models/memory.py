@@ -111,6 +111,7 @@ class MemoryReader(ManagedMemoryModule):
         num_queries: int,
         use_query_gating: bool = False,
         *,
+        gating_mode: str | None = None,
         num_heads: int = 4,
         condition_on_context: bool = True,
         dropout: float = 0.0,
@@ -118,7 +119,13 @@ class MemoryReader(ManagedMemoryModule):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_queries = num_queries
-        self.use_query_gating = use_query_gating
+        resolved_gating_mode = gating_mode or ("learned" if use_query_gating else "off")
+        if resolved_gating_mode not in {"off", "random", "learned"}:
+            raise ValueError(
+                f"Unsupported reader gating mode: {resolved_gating_mode}. "
+                "Expected one of off/random/learned."
+            )
+        self.gating_mode = resolved_gating_mode
         self.condition_on_context = condition_on_context
         self.queries = nn.Parameter(torch.randn(num_queries, embed_dim) * 0.02)
         self.context_proj = nn.Linear(embed_dim, embed_dim) if condition_on_context else None
@@ -129,7 +136,7 @@ class MemoryReader(ManagedMemoryModule):
             batch_first=True,
         )
         self.readout_norm = nn.LayerNorm(embed_dim)
-        self.gate = nn.Linear(embed_dim, num_queries) if use_query_gating else None
+        self.gate = nn.Linear(embed_dim, num_queries) if self.gating_mode == "learned" else None
 
     def _pool_context(self, context: torch.Tensor | None) -> torch.Tensor | None:
         if context is None:
@@ -185,8 +192,14 @@ class MemoryReader(ManagedMemoryModule):
             average_attn_weights=False,
         )
         attention = attention.mean(dim=1)
-        if self.gate is not None and pooled_context is not None:
-            gates = torch.sigmoid(self.gate(pooled_context))
+        if self.gating_mode == "learned":
+            gate_source = pooled_context if pooled_context is not None else queries.mean(dim=1)
+            gates = torch.sigmoid(self.gate(gate_source))
+            readouts = readouts * gates.unsqueeze(-1)
+        elif self.gating_mode == "random":
+            gates = (
+                torch.rand(batch_size, self.num_queries, device=memory.device) > 0.5
+            ).to(dtype=readouts.dtype)
             readouts = readouts * gates.unsqueeze(-1)
         else:
             gates = torch.ones(batch_size, self.num_queries, device=memory.device)

@@ -57,12 +57,16 @@ def main(argv: list[str] | None = None) -> int:
         loss = F.mse_loss(forward.predicted_state, forward.target_state)
         loss.backward()
         query_grad_norm = float(runtime.reader.queries.grad.norm().item())
+        mean_gate = float(forward.gating.mean().item())
+        active_queries = int((forward.gating > 0.5).sum().item())
         optimizer.step()
         events.append(
             {
                 "step": step,
                 "loss": float(loss.item()),
                 "query_grad_norm": query_grad_norm,
+                "mean_gate": mean_gate,
+                "active_queries": active_queries,
                 "segments": len(forward.segments),
             }
         )
@@ -74,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
         "final_loss": events[-1]["loss"],
         "mean_loss": sum(item["loss"] for item in events) / len(events),
         "final_query_grad_norm": events[-1]["query_grad_norm"],
+        "gating_mode": runtime.reader.gating_mode,
+        "mean_gate": sum(item["mean_gate"] for item in events) / len(events),
+        "mean_active_queries": sum(item["active_queries"] for item in events) / len(events),
         "memory_long_shape": list(forward.memory_long.shape),
         "memory_short_shape": list(forward.memory_short.shape),
         **profile_metrics,

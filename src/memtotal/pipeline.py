@@ -56,7 +56,8 @@ class MemoryRuntime(nn.Module):
         self.reader = MemoryReader(
             embed_dim=embed_dim,
             num_queries=reader_cfg["num_queries"],
-            use_query_gating=reader_cfg["use_query_gating"],
+            use_query_gating=bool(reader_cfg.get("use_query_gating", False)),
+            gating_mode=reader_cfg.get("gating_mode"),
             num_heads=reader_cfg.get("num_heads", 4),
             condition_on_context=reader_cfg.get("condition_on_context", True),
             dropout=reader_cfg.get("dropout", 0.0),

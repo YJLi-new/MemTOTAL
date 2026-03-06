@@ -67,13 +67,26 @@ class SmokeComponentTest(unittest.TestCase):
     def test_query_gating_changes_readouts(self) -> None:
         config = load_config(ROOT / "configs/exp/smoke_qwen25.yaml")
         gated_config = copy.deepcopy(config)
-        gated_config["method"]["reader"]["use_query_gating"] = True
+        gated_config["method"]["reader"]["gating_mode"] = "learned"
 
         dataset = load_toy_dataset(ROOT / gated_config["task"]["dataset_path"])
         set_seed(11)
         runtime = MemoryRuntime(config=gated_config, seed=11)
         forward = runtime.forward_example(dataset[0])
 
+        self.assertFalse(torch.allclose(forward.gating, torch.ones_like(forward.gating)))
+
+    def test_random_query_gating_masks_some_queries(self) -> None:
+        config = load_config(ROOT / "configs/exp/smoke_qwen25.yaml")
+        gated_config = copy.deepcopy(config)
+        gated_config["method"]["reader"]["gating_mode"] = "random"
+
+        dataset = load_toy_dataset(ROOT / gated_config["task"]["dataset_path"])
+        set_seed(17)
+        runtime = MemoryRuntime(config=gated_config, seed=17)
+        forward = runtime.forward_example(dataset[0])
+
+        self.assertTrue(torch.all((forward.gating == 0) | (forward.gating == 1)))
         self.assertFalse(torch.allclose(forward.gating, torch.ones_like(forward.gating)))
 
     def test_reader_supports_memory_mask(self) -> None:
