@@ -31,6 +31,8 @@
 - module: `python -m memtotal.baselines.grid_runner`
 - import variant config: `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml`
 - import variant script: `scripts/run_story_cloze_baseline_grid_with_memgen.sh`
+- protocol-smoke config: `configs/exp/m5_story_cloze_baseline_grid_protocol_smoke.yaml`
+- protocol-smoke script: `scripts/run_story_cloze_baseline_grid_protocol_smoke.sh`
 
 ## Verified Commands
 
@@ -38,6 +40,8 @@
 ./scripts/run_story_cloze_baseline_grid.sh 991 results/generated/m5-story-cloze-baseline-grid-smoke
 ./scripts/run_story_cloze_baseline_grid.sh 992 results/generated/m5-story-cloze-baseline-grid-smoke-dryrun --dry-run
 ./scripts/run_story_cloze_baseline_grid_with_memgen.sh 993 results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke
+python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --seed 701 --output_root data/benchmarks/materialized --manifest_root data/benchmarks/manifests --summary_path data/benchmarks/source_summary.json
+./scripts/run_story_cloze_baseline_grid_protocol_smoke.sh 997 results/generated/m5-story-cloze-baseline-grid-protocol-smoke
 ```
 
 ## Verified Outputs
@@ -50,6 +54,11 @@
 - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json`
 - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/summary.csv`
 - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_curve.csv`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/summary.csv`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/summary.svg`
+- `data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl`
 
 当前已验证：
 
@@ -58,6 +67,13 @@
 - `train_run_count = 12`
 - `eval_run_count = 24`
 - `imported_eval_count = 1`
+- protocol-smoke:
+  - `shots = {0, 1, 2, 4}`
+  - `steps = {0, 1, 3, 5}`
+  - `cell_count = 76`
+  - `train_run_count = 52`
+  - `eval_run_count = 76`
+  - `imported_eval_count = 1`
 
 ## Current Smoke Signals
 
@@ -70,9 +86,15 @@
   - `adapter`: 当前 `0-step` 就已达到 `1.0`，`4-step` 不再提升
 - imported external point:
   - `MemGen / Qwen2.5-1.5B-Instruct / 0-shot / 0-step`: `compute_reward = 0.75`
+- protocol-smoke:
+  - `qwen25 / vanilla`: `0-shot=0.625`，`1-shot=0.75`
+  - `qwen25 / meta_prompting`: `0-shot=0.5`，`4-shot=0.625`
+  - `qwen3 / prompt_tuning`: `0-shot=0.5`，`4-shot 5-step=0.75`
+  - `qwen3 / lora`: `0-shot=0.5`，`4-shot 5-step=0.75`
 
 这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：
 
 - baseline 家族现在不再只是孤立单点 smoke
 - 仓库已经具备“在单个 suite 内循环 shot/step 网格并产出 `adapt_curve.csv`”的最小能力
 - 统一 grid 现在也能把外部 baseline 点导入同一张曲线，而不需要手工抄数
+- materialize 层现在不会再因为不同 `max_examples` 覆盖同一个 real-smoke 文件，`smoke4` 和 `smoke8` 可以并存

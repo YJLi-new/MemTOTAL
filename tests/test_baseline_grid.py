@@ -228,6 +228,87 @@ class BaselineGridTest(unittest.TestCase):
             cost = json.loads((output_dir / "adapt_cost.json").read_text())
             self.assertEqual(cost["imported_eval_count"], 1)
 
+    def test_grid_runner_applies_config_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze.jsonl"
+            dataset_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "story-cloze-000",
+                                "story": "Mara packed a lunch before the hike.",
+                                "choices": [
+                                    {"label": "A", "text": "She enjoyed the trail with enough food."},
+                                    {"label": "B", "text": "She forgot why she left the house."},
+                                ],
+                                "label": "A",
+                                "answer": "She enjoyed the trail with enough food.",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "story-cloze-001",
+                                "story": "Owen charged his camera overnight.",
+                                "choices": [
+                                    {"label": "A", "text": "He took photos throughout the trip."},
+                                    {"label": "B", "text": "The camera melted in the snow."},
+                                ],
+                                "label": "A",
+                                "answer": "He took photos throughout the trip.",
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            config = {
+                "grid": {
+                    "shots": [0],
+                    "steps": [0],
+                    "config_overrides": {
+                        "task": {
+                            "smoke_subset": "override_subset",
+                            "dataset_path": str(dataset_path),
+                        },
+                        "runtime": {"eval_examples": 2},
+                    },
+                    "variants": [
+                        {
+                            "family": "prompting",
+                            "mode": "vanilla",
+                            "backbone": "Qwen2.5-1.5B-Instruct",
+                            "template_config": str(ROOT / "configs/exp/baseline_vanilla_story_cloze_qwen25_real_smoke.yaml"),
+                        }
+                    ],
+                }
+            }
+            config_path = tmp / "grid.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "grid-output"
+            self.assertEqual(
+                grid_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "995",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            generated_configs = sorted((output_dir / "generated-configs").glob("*.yaml"))
+            self.assertEqual(len(generated_configs), 1)
+            generated = yaml.safe_load(generated_configs[0].read_text())
+            self.assertEqual(generated["task"]["smoke_subset"], "override_subset")
+            self.assertEqual(generated["task"]["dataset_path"], str(dataset_path))
+            self.assertEqual(generated["runtime"]["eval_examples"], 2)
+            grid_plan = json.loads((output_dir / "grid_plan.json").read_text())
+            self.assertEqual(grid_plan["config_overrides"]["task"]["smoke_subset"], "override_subset")
+
 
 if __name__ == "__main__":
     unittest.main()

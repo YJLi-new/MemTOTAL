@@ -12,7 +12,7 @@
 ```
 
 默认输出：
-- `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke4.jsonl`
+- `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke<max_examples>.jsonl`
 - `data/benchmarks/manifests/<benchmark_id>.json`
 - `data/benchmarks/source_summary.json`
 
@@ -24,7 +24,7 @@
 | `math` | `EleutherAI/hendrycks_math` / `{algebra, geometry, number_theory, precalculus}` / `test` | public | auto | `data/benchmarks/materialized/math/eval-real-smoke4.jsonl` | MIT (from dataset card README metadata) |
 | `gpqa` | `Idavidrein/gpqa` / `gpqa_diamond` / `train` | gated | auto | `data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl` | gated dataset; metadata license field is blank |
 | `triviaqa` | `mandarjoshi/trivia_qa` / `rc.wikipedia.nocontext` / `validation` | public | auto | `data/benchmarks/materialized/triviaqa/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
-| `story_cloze` | `gimmaru/story_cloze-2016` / `test` | public | auto | `data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
+| `story_cloze` | `gimmaru/story_cloze-2016` / `test` | public | auto | `data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl` and `eval-real-smoke8.jsonl` | HF metadata license field is blank; verify upstream card |
 | `narrativeqa` | `deepmind/narrativeqa` / `validation` / `full_text_segmented` (`runtime_pool_qaware6x128`, plus selector ablations) | public | auto | `data/benchmarks/materialized/narrativeqa/eval-real-smoke4.jsonl` | Apache-2.0 (from official dataset card metadata) |
 | `kodcode` | `KodCode/KodCode-Light-RL-10K` / `train` | public | auto | `data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
 | `rocstories` | `hf://datasets/wza/roc_stories/ROCStories__spring2016.csv` | public | auto | `data/benchmarks/materialized/rocstories/eval-real-smoke4.jsonl` | CSV-backed dataset; verify upstream card manually |
@@ -51,4 +51,5 @@
 - `results/generated/m4-narrativeqa-selector-ablations/summary.csv` 当前记录了 qwen25 下 `anchor_only / question_aware / oracle_like_proxy` 的 selector contract smoke，对比的主字段是 `story_runtime_selector / smoke_subset / mean_similarity / f1`。
 - `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv` 当前记录了同一组 selector 在 `Qwen3-8B` 上的 contract smoke；这让 NarrativeQA 这条 runtime ablation 不再只停留在单一 backbone。
 - `memtotal.tasks.setup_data` 现在支持增量 merge `data/benchmarks/source_summary.json`：单独重建某个 benchmark 时，不会再把其他 benchmark 的 source summary 覆盖掉。
+- `memtotal.tasks.setup_data` 现在也会按 `max_examples` 解析输出文件名：例如 `--max_examples 4` 会写 `eval-real-smoke4.jsonl`，`--max_examples 8` 会写 `eval-real-smoke8.jsonl`，不再互相覆盖。
 - `scripts/run_real_benchmark_smoke_suite.sh` 现支持 `SKIP_SETUP_BENCHMARK_DATA=1`，用于在数据已 materialize 的情况下避免重复 setup 被 HF 缓存锁拖住。

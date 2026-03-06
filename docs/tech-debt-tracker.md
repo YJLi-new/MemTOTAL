@@ -47,7 +47,9 @@
 - `prompting / meta_prompting` 当前已支持最小 in-context few-shot demo 注入，并在 `story_cloze` real-source 上真实跑通了 `2-shot` smoke；但这还不是正式 shot-curve，后续仍需要把更多 shots、更多任务和 seeds 纳入统一网格。
 - 当前 `story_cloze` baseline grid suite 只覆盖最小 smoke 网格 `shots={0,2}`、`steps={0,4}`；它证明了 suite contract 已经存在，但离 `EXPERIMENTS_INFO.md` 里锁定的正式网格还差很远。
 - baseline grid 现已能导入外部 baseline 点，且 `MemGen` 的 `story_cloze / qwen25 / 0-shot / 0-step` 已接进同一条 `adapt_curve.csv`；但这仍只是单点导入，不是正式的 `MemGen` shot/step 网格，更没有覆盖 `Qwen3-8B`。
+- `story_cloze` grid 现已进一步扩到 protocol-smoke 版本：`smoke8` 子集上的 `shots={0,1,2,4}`、`steps={0,1,3,5}` 已真实跑通；但这仍只是锁定网格的一个小前缀，距离正式 `{0,1,2,4,8,16,32,64,128} x {0,1,3,5,10,20,50}` 还差得很远。
 - `M5` 的 `adapter` baseline family 现已接入最小 `Prompt Tuning / LoRA` 闭环，并补到了两档固定 backbone和 `story_cloze` real-source smoke；但当前仍只支持 candidate-selection 任务，后续还需要补到更多任务和更正式的 few-shot/step 网格。
 - `M5` 的 `MetaPrompting` 现已接入最小 `planner_critic` scaffold，但当前仍是单次 prompt protocol，而不是正式多轮/多-agent MetaPrompting 复现；后续若要进入主表，需要补更接近原方法的交互与预算口径。
 - `MetaPrompting` 当前已补到 `story_cloze` real-source smoke，但还没有进 `gsm8k / narrativeqa / gpqa` 等更强任务，也没有与 Prompt Tuning / LoRA 对齐到正式 shot/step 网格。
 - `baseline_budget_audit` 现已能自动检查 `prompting / meta_prompting / adapter` 的预算字段与双 backbone 覆盖；但 `MemGen` 仍未纳入同一条自动预算审计，因为它的外部训练/权重成本还没有在本仓库统一建模。
+- benchmark materialize 现在已支持按 `max_examples` 生成不同的 real-smoke 文件名，避免 `smoke4` 与 `smoke8` 互相覆盖；但目前 manifest 仍只记录每个 benchmark 最近一次 materialize 的那个子集，还不是“多子集并存”的完整台账。

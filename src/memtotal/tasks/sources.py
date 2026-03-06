@@ -66,6 +66,15 @@ class BenchmarkSourceSpec:
     dataset_configs: list[str] | None = None
 
 
+def _resolve_output_filename(spec: BenchmarkSourceSpec, max_examples: int) -> str:
+    filename = spec.output_filename
+    if "{max_examples}" in filename:
+        return filename.format(max_examples=max_examples)
+    if "smoke4" in filename and max_examples > 0:
+        return filename.replace("smoke4", f"smoke{max_examples}")
+    return filename
+
+
 SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
     "gsm8k": BenchmarkSourceSpec(
         benchmark_id="gsm8k",
@@ -781,10 +790,15 @@ def materialize_benchmark_source(
     manifest_dir = Path(manifest_root).resolve()
     manifest_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = manifest_dir / f"{benchmark_id}.json"
+    resolved_output_filename = _resolve_output_filename(spec, max_examples)
+    manifest_base = {
+        **asdict(spec),
+        "output_filename": resolved_output_filename,
+    }
 
     if spec.source_kind == "manual":
         manifest = {
-            **asdict(spec),
+            **manifest_base,
             "status": "manual_pending",
             "materialized_path": None,
             "num_rows": 0,
@@ -803,12 +817,12 @@ def materialize_benchmark_source(
             max_examples=max_examples,
             split=str(spec.split),
         )
-        output_path = output_dir / spec.output_filename
+        output_path = output_dir / resolved_output_filename
         output_path.write_text(
             "\n".join(json.dumps(row, sort_keys=True) for row in canonical_rows) + ("\n" if canonical_rows else "")
         )
         manifest = {
-            **asdict(spec),
+            **manifest_base,
             "status": "materialized",
             "materialized_path": str(output_path),
             "num_rows": len(canonical_rows),
@@ -823,12 +837,12 @@ def materialize_benchmark_source(
             max_examples=max_examples,
             seed=seed,
         )
-        output_path = output_dir / spec.output_filename
+        output_path = output_dir / resolved_output_filename
         output_path.write_text(
             "\n".join(json.dumps(row, sort_keys=True) for row in canonical_rows) + ("\n" if canonical_rows else "")
         )
         manifest = {
-            **asdict(spec),
+            **manifest_base,
             "status": "materialized",
             "materialized_path": str(output_path),
             "num_rows": len(canonical_rows),
@@ -847,12 +861,12 @@ def materialize_benchmark_source(
         raise ValueError(f"No canonicalizer registered for benchmark_id={benchmark_id}.")
     canonical_rows = [canonicalizer(row, index, seed) for index, row in enumerate(rows)]
 
-    output_path = output_dir / spec.output_filename
+    output_path = output_dir / resolved_output_filename
     output_path.write_text(
         "\n".join(json.dumps(row, sort_keys=True) for row in canonical_rows) + ("\n" if canonical_rows else "")
     )
     manifest = {
-        **asdict(spec),
+        **manifest_base,
         "status": "materialized",
         "materialized_path": str(output_path),
         "num_rows": len(canonical_rows),

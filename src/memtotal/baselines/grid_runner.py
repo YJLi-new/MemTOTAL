@@ -40,6 +40,16 @@ def _resolve_template(config_path: Path, template_config: str) -> Path:
     return (config_path.parent / template_config).resolve()
 
 
+def _deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def build_grid_plan(config: dict[str, Any]) -> list[GridCell]:
     grid_cfg = config["grid"]
     shots = [int(value) for value in grid_cfg.get("shots", [0])]
@@ -89,6 +99,7 @@ def _write_variant_config(
     shot: int,
     step: int,
     config_output_path: Path,
+    config_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     template = load_config(template_path)
     template.pop("_meta", None)
@@ -97,6 +108,8 @@ def _write_variant_config(
     template["baseline"]["support_examples"] = shot
     if template["baseline"].get("family") == "adapter":
         template["runtime"]["train_steps"] = step
+    if config_overrides:
+        template = _deep_merge_dicts(template, config_overrides)
     config_output_path.write_text(yaml.safe_dump(template, sort_keys=False))
     return template
 
@@ -164,6 +177,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
     generated_config_root = ensure_dir(output_dir / "generated-configs")
     run_root = ensure_dir(output_dir / "runs")
     grid_cells = build_grid_plan(config)
+    config_overrides = dict(config["grid"].get("config_overrides", {}))
     if dry_run:
         grid_cells = grid_cells[: max(1, min(4, len(grid_cells)))]
 
@@ -178,6 +192,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
             shot=cell.shot,
             step=cell.step,
             config_output_path=generated_config_path,
+            config_overrides=config_overrides,
         )
         run_dir = run_root / cell.slug
         if cell.family == "adapter":
@@ -274,6 +289,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
         {
             "seed": seed,
             "output_dir": str(output_dir.resolve()),
+            "config_overrides": config_overrides,
             "cells": executed_cells,
             "imports": [
                 {

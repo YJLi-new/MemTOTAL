@@ -23,6 +23,7 @@ from memtotal.tasks.sources import (
     _detect_structural_story_start_index,
     _canonicalize_story_cloze,
     _canonicalize_triviaqa,
+    _resolve_output_filename,
     get_benchmark_source,
     materialize_benchmark_source,
     select_narrativeqa_story_segment_indexes,
@@ -259,6 +260,11 @@ class BenchmarkSourcesTest(unittest.TestCase):
         source = get_benchmark_source("narrativeqa")
         self.assertEqual(source.access, "public")
         self.assertEqual(source.source_kind, "huggingface_streaming")
+
+    def test_resolve_output_filename_expands_smoke_size(self) -> None:
+        source = get_benchmark_source("story_cloze")
+        self.assertEqual(_resolve_output_filename(source, 4), "eval-real-smoke4.jsonl")
+        self.assertEqual(_resolve_output_filename(source, 8), "eval-real-smoke8.jsonl")
 
 
 if __name__ == "__main__":
