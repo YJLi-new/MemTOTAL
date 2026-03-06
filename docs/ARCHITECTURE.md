@@ -107,6 +107,28 @@
 - 一键回归入口：
   - `scripts/run_benchmark_smoke_suite.sh`
   - 当前会顺序跑 `gsm8k / gpqa / kodcode / story_cloze / fever / alfworld` 六个 smoke eval，并汇总到 `summary.csv/.svg`
+- 新增 `src/memtotal/tasks/sources.py` 与 `src/memtotal/tasks/setup_data.py`
+  - 统一维护真实数据源 registry、访问方式、materialize 路径与许可备注
+  - 当前已能真实 materialize：
+    - `gsm8k`
+    - `gpqa`
+    - `triviaqa`
+    - `story_cloze`
+    - `kodcode`
+    - `rocstories`
+  - 当前仍为 manual pending：
+    - `fever`
+    - `alfworld`
+- 新增真实数据入口脚本：
+  - `scripts/setup_benchmark_data.sh`
+  - `scripts/run_real_benchmark_smoke_suite.sh`
+- 真实来源 smoke 当前会落到：
+  - `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke4.jsonl`
+  - `data/benchmarks/manifests/<benchmark_id>.json`
+  - `data/benchmarks/source_summary.json`
+  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T133708Z/summary.csv`
+
+当前 `M4` 已不只是本地 contract smoke。现在已有 6 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。
 
 ## M3 Failure Checks
 

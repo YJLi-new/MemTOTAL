@@ -1,0 +1,20 @@
+{
+  "access": "public",
+  "benchmark_id": "story_cloze",
+  "data_files": null,
+  "dataset_config": null,
+  "dataset_name": "gimmaru/story_cloze-2016",
+  "display_name": "Story Cloze",
+  "homepage": null,
+  "license_note": "Hugging Face metadata currently does not expose a structured license field; verify upstream dataset card before redistribution.",
+  "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl",
+  "max_examples": 4,
+  "notes": "",
+  "num_rows": 4,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "seed": 701,
+  "source_kind": "huggingface",
+  "source_url": "https://huggingface.co/datasets/gimmaru/story_cloze-2016",
+  "split": "test",
+  "status": "materialized"
+}

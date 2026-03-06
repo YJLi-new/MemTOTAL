@@ -113,6 +113,9 @@
 - 2026-03-06 13:13 UTC: 已把 `writer_noise` failure check 升级为可配置的多次噪声抽样均值，避免 tiny smoke 上单次抽样方差误判；当前 canonical 配置使用 `writer_noise_trials=8`，`results/generated/m3-fuser-fix-failure-checks-v2/metrics.json` 现记录 `checks_pass_rate=1.0`，三项检查全部通过。
 - 2026-03-06 13:24 UTC: 已启动 `M4` foundation：新增 `src/memtotal/tasks/{registry,evaluator}.py`，统一登记 benchmark 的 `domain / evaluator_type / metric_name / prompt_template`，并把 `eval` 输出扩展为 `benchmark_id / task_domain / smoke_subset / evaluator_type`。
 - 2026-03-06 13:24 UTC: 已建立本地 benchmark smoke subset 与配置：`gsm8k`、`math`、`gpqa`、`triviaqa`、`kodcode`、`story_cloze`、`rocstories`、`fever`、`alfworld`；`scripts/run_benchmark_smoke_suite.sh` 已真实跑通 6 个代表任务，汇总位于 `results/generated/m4-benchmark-smoke/20260306T132413Z/summary.csv`。
+- 2026-03-06 13:37 UTC: 已新增 benchmark source registry、materialize CLI 与数据来源文档：`src/memtotal/tasks/sources.py`、`src/memtotal/tasks/setup_data.py`、`scripts/setup_benchmark_data.sh`、`docs/benchmark-data.md`。当前 `data/benchmarks/source_summary.json` 与 `data/benchmarks/manifests/*.json` 会显式记录 access / source_url / split / license_note / local path。
+- 2026-03-06 13:37 UTC: 已真实 materialize `gsm8k`、`gpqa`、`triviaqa`、`story_cloze`、`kodcode`、`rocstories` 的真实来源 smoke 子集，落在 `data/benchmarks/materialized/*/eval-real-smoke4.jsonl`；`fever` 与 `alfworld` 当前只写 `manual_pending` manifest。
+- 2026-03-06 13:37 UTC: `scripts/run_real_benchmark_smoke_suite.sh` 已真实跑通 6 个 real-source smoke eval，汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T133708Z/summary.csv`。当前分数仍只是 stub-backbone contract 结果，不代表正式 benchmark 表现。
 
 ## Decision Log
 
@@ -138,6 +141,7 @@
 - 2026-03-06: 训练失败模式检查的目标不是“让所有 smoke 都通过”，而是把退化显式暴露出来；若 canonical smoke 被新检查抓出问题，应优先记录并修结构，而不是降低阈值掩盖。
 - 2026-03-06: 对 `writer_noise` 这类带随机性的退化检查，优先通过多次抽样估计期望而不是下调阈值；这样既保留“writer 必须优于噪声”的检查意图，也避免 tiny smoke 的偶然抽样把 harness 打成不稳定平局。
 - 2026-03-06: 进入 `M4` 时，优先补“统一 benchmark 契约层”和本地 smoke subset，而不是直接宣称真实 benchmark 已接入；只有当真实数据路径、许可、缓存和统一评测都打通后，才能把条目算作正式完成。
+- 2026-03-06: 对 benchmark 数据源，若上游 metadata 没有明确 license 字段，则在仓库内显式写“需核对上游卡片”，而不是靠记忆补许可证；数据合规说明优先准确，不优先好看。
 
 ## Surprises & Discoveries
 

@@ -44,6 +44,7 @@ class RepoLintTest(unittest.TestCase):
         required = [
             ROOT / "scripts/setup_env.sh",
             ROOT / "scripts/setup_data.sh",
+            ROOT / "scripts/setup_benchmark_data.sh",
             ROOT / "scripts/dev_boot_smoke.sh",
             ROOT / "scripts/collect_artifacts.sh",
             ROOT / "scripts/run_train.sh",
@@ -51,6 +52,8 @@ class RepoLintTest(unittest.TestCase):
             ROOT / "scripts/run_analysis.sh",
             ROOT / "scripts/profile_run.sh",
             ROOT / "scripts/run_memgen.sh",
+            ROOT / "scripts/run_benchmark_smoke_suite.sh",
+            ROOT / "scripts/run_real_benchmark_smoke_suite.sh",
         ]
         for path in required:
             self.assertTrue(path.is_file(), msg=f"Missing script entrypoint: {path}")

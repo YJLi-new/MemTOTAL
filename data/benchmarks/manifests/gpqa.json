@@ -1,0 +1,20 @@
+{
+  "access": "gated",
+  "benchmark_id": "gpqa",
+  "data_files": null,
+  "dataset_config": "gpqa_diamond",
+  "dataset_name": "Idavidrein/gpqa",
+  "display_name": "GPQA",
+  "homepage": null,
+  "license_note": "Gated Hugging Face dataset; current metadata does not expose a structured license field. Access approval is required before use.",
+  "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl",
+  "max_examples": 4,
+  "notes": "MemGen uses gpqa_main for train and gpqa_diamond for eval; this scaffold materializes gpqa_diamond for eval-side smoke only.",
+  "num_rows": 4,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "seed": 701,
+  "source_kind": "huggingface",
+  "source_url": "https://huggingface.co/datasets/Idavidrein/gpqa",
+  "split": "train",
+  "status": "materialized"
+}

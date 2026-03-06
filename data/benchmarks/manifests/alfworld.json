@@ -1,0 +1,18 @@
+{
+  "access": "manual",
+  "benchmark_id": "alfworld",
+  "data_files": null,
+  "dataset_config": null,
+  "dataset_name": null,
+  "display_name": "ALFWorld",
+  "homepage": "https://alfworld.github.io/",
+  "license_note": "Pending environment/game-files registration.",
+  "materialized_path": null,
+  "notes": "ALFWorld requires environment assets and execution harness, not just a flat JSONL download.",
+  "num_rows": 0,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "source_kind": "manual",
+  "source_url": null,
+  "split": null,
+  "status": "manual_pending"
+}

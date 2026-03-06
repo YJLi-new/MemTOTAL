@@ -16,6 +16,9 @@
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
 - `M4` 当前新增的是本地 benchmark smoke contract，而不是正式 benchmark 数据接入；后续仍需要把 `data/benchmarks/smoke/*.jsonl` 替换成与 `EXPERIMENTS_INFO.md` 对齐的真实下载 / 缓存 / 许可路径。
 - `TaskEvaluator` 当前只覆盖 `exact_match / multiple_choice / dataset_label_classification`；如果后续接 `MemoryAgentBench` 分项、代码执行式评测或更复杂 agent reward，需要扩成任务专属 evaluator。
+- `M4` 当前虽然已经 materialize 并验证了 `gsm8k / gpqa / triviaqa / kodcode / story_cloze / rocstories` 的真实来源 smoke 子集，但 `MATH / FEVER / ALFWorld / MemoryAgentBench` 的正式数据入口仍未打通。
+- 当前若上游 Hugging Face metadata 没有结构化 license 字段，仓库只会写“需核对上游卡片”而不会自行补写；后续若要对外发布数据副本，需要补更严格的 license 审核流程。
+- `rocstories` 当前通过 `hf://` CSV 路径 materialize，而不是老式 dataset script；后续需要确认这种路径在 CI/离线缓存环境中的稳定性。
 
 ## Resolved In This Bootstrap
 
@@ -32,3 +35,4 @@
 - `Fuser collapse` blocker 已完成一轮 follow-up 修复：`MemoryFuser` 的 `resampler` 现保留 short-query slot identity，下游 M3 分类/检查改为使用 position-sensitive `summary_proj`，canonical failure checks 已从 `2/3` 提升到 `3/3` 通过。
 - `writer_noise` failure check 已改为可配置的多次噪声抽样均值，避免 tiny smoke 上单次噪声抽样导致的高方差误判；当前 canonical 配置使用 `writer_noise_trials=8`。
 - `M4` benchmark foundation 已补齐统一 registry / prompt template / evaluator scaffold，本地 smoke 子集与 `scripts/run_benchmark_smoke_suite.sh` 已能真实跑通 6 个代表任务并进入统一汇总。
+- `M4` 已进一步补齐 benchmark source registry、数据来源文档、materialize 脚本与 manifest；真实来源 smoke 子集现已覆盖 `gsm8k / gpqa / triviaqa / kodcode / story_cloze / rocstories` 并通过统一 eval 汇总。

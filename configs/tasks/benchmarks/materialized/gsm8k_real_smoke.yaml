@@ -1,0 +1,10 @@
+task:
+  name: gsm8k_real_smoke
+  benchmark_id: gsm8k
+  domain: math
+  split: eval
+  smoke_subset: hf_real_smoke4
+  dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke4.jsonl
+  metric_name: exact_match
+  evaluator:
+    type: exact_match

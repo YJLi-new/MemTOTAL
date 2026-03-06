@@ -1,0 +1,10 @@
+task:
+  name: gpqa_real_smoke
+  benchmark_id: gpqa
+  domain: qa
+  split: eval
+  smoke_subset: hf_real_smoke4
+  dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

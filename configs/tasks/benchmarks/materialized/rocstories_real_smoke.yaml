@@ -1,0 +1,10 @@
+task:
+  name: rocstories_real_smoke
+  benchmark_id: rocstories
+  domain: narrative
+  split: eval
+  smoke_subset: hf_real_smoke4
+  dataset_path: data/benchmarks/materialized/rocstories/eval-real-smoke4.jsonl
+  metric_name: exact_match
+  evaluator:
+    type: exact_match

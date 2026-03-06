@@ -1,0 +1,18 @@
+{
+  "access": "manual",
+  "benchmark_id": "fever",
+  "data_files": null,
+  "dataset_config": null,
+  "dataset_name": null,
+  "display_name": "FEVER",
+  "homepage": null,
+  "license_note": "Pending manual source registration.",
+  "materialized_path": null,
+  "notes": "Current repo only has a local contract smoke subset. Real FEVER download/cache path is still pending.",
+  "num_rows": 0,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "source_kind": "manual",
+  "source_url": null,
+  "split": null,
+  "status": "manual_pending"
+}

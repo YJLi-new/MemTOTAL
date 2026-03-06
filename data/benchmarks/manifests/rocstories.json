@@ -1,0 +1,22 @@
+{
+  "access": "public",
+  "benchmark_id": "rocstories",
+  "data_files": {
+    "test": "hf://datasets/wza/roc_stories/ROCStories__spring2016.csv"
+  },
+  "dataset_config": null,
+  "dataset_name": "csv",
+  "display_name": "ROCStories",
+  "homepage": null,
+  "license_note": "Hugging Face metadata for this CSV-backed dataset is not exposed through `load_dataset_builder`; verify the upstream dataset card before redistribution.",
+  "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/rocstories/eval-real-smoke4.jsonl",
+  "max_examples": 4,
+  "notes": "The current `datasets` version no longer supports the legacy `roc_stories.py` script, so this scaffold follows MemGen and reads the CSV via `hf://` instead.",
+  "num_rows": 4,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "seed": 701,
+  "source_kind": "hf_csv",
+  "source_url": "https://huggingface.co/datasets/wza/roc_stories",
+  "split": "test",
+  "status": "materialized"
+}
