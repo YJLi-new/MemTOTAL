@@ -52,9 +52,29 @@ class ReportingTest(unittest.TestCase):
                 )
             )
 
+            stage_b_non_meta_dir = temp_root / "stage_b_non_meta"
+            stage_b_non_meta_dir.mkdir()
+            (stage_b_non_meta_dir / "run_info.json").write_text(
+                json.dumps({"backbone": "Qwen2.5-1.5B-Instruct", "task_name": "toy_meta_smoke"})
+            )
+            (stage_b_non_meta_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "train",
+                        "training_stage": "stage_b",
+                        "query_learning_mode": "non_meta_multitask",
+                        "source_eval_query_accuracy": 0.75,
+                        "source_eval_query_loss": 0.67,
+                    }
+                )
+            )
+
             rows = collect_metrics(temp_root)
             by_mode = {str(row["mode"]): row for row in rows}
             by_stage = {str(row.get("training_stage", "")): row for row in rows}
+            by_mode_and_query = {
+                (str(row["mode"]), str(row.get("query_learning_mode", ""))): row for row in rows
+            }
 
             self.assertEqual(by_mode["memgen_adapter"]["primary_metric"], "compute_reward")
             self.assertEqual(by_mode["memgen_adapter"]["primary_score"], 0.25)
@@ -62,6 +82,14 @@ class ReportingTest(unittest.TestCase):
             self.assertAlmostEqual(by_mode["train"]["primary_score"], 2.0 / 3.0)
             self.assertEqual(by_stage["stage_c"]["primary_metric"], "best_adapt_query_accuracy")
             self.assertEqual(by_stage["stage_c"]["primary_score"], 0.5)
+            self.assertEqual(
+                by_mode_and_query[("train", "non_meta_multitask")]["primary_metric"],
+                "source_eval_query_accuracy",
+            )
+            self.assertEqual(
+                by_mode_and_query[("train", "non_meta_multitask")]["primary_score"],
+                0.75,
+            )
 
     def test_write_sanity_plot_uses_primary_metric_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

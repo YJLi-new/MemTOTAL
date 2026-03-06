@@ -68,15 +68,19 @@
   - 保存 `meta_data_manifest.json`，记录 `dataset_sha256` 与 domain split
 - Stage B：
   - 产出 `queries_meta_init.pt`
-  - 当前实现为 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`
+  - 支持 `query_learning_mode in {meta_trained, non_meta_multitask, random}`
+  - `meta_trained` 当前实现为 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`
+  - `non_meta_multitask` 使用固定 Writer + source-domain 全局 label bank 的普通多任务训练
+  - `random` 不做 Stage B 更新，只落 reader-side 随机初始化快照
   - episode 采样按 label 分层，评估使用 domain 内 label prototype，而不是逐样本候选集
 - Stage C：
   - 默认按 `adaptation_target=q_only` 对齐 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的 Stage C 契约，只更新 `reader.queries`
   - 支持 `adaptation_target in {q_only, w_only, w_plus_q}`
+  - 支持 `expected_query_learning_mode`，会在 resume 阶段校验 reader init 来源
   - 产出 `queries_adapted.pt`
   - 若 writer 参与适配，则额外产出 `writer_adapted.ckpt`
   - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json`
-  - `adapt_curve.csv` 当前会显式写出 `adaptation_target / trainable_module / trainable_parameter_count`
+  - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / adaptation_target / trainable_module / trainable_parameter_count`
 
 当前 M3 smoke 已经把工件、resume 链路、Stage C 适配对象配置契约、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
 

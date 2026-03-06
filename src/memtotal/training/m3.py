@@ -74,6 +74,32 @@ def _resolve_stage_c_adaptation_target(config: dict) -> str:
     return adaptation_target
 
 
+def _resolve_stage_b_query_learning_mode(config: dict) -> str:
+    query_learning_mode = str(config["runtime"].get("query_learning_mode", "meta_trained"))
+    aliases = {
+        "meta": "meta_trained",
+        "meta_trained": "meta_trained",
+        "non_meta": "non_meta_multitask",
+        "non_meta_multitask": "non_meta_multitask",
+        "random": "random",
+    }
+    normalized = aliases.get(query_learning_mode)
+    if normalized is None:
+        raise ValueError(
+            f"Unsupported Stage B query_learning_mode={query_learning_mode}. "
+            "Expected one of meta_trained, non_meta_multitask, random."
+        )
+    return normalized
+
+
+def _resolve_expected_stage_c_query_learning_mode(config: dict) -> str | None:
+    expected = config["runtime"].get("expected_query_learning_mode")
+    if expected is None:
+        return None
+    normalized = _resolve_stage_b_query_learning_mode({"runtime": {"query_learning_mode": expected}})
+    return normalized
+
+
 def _configure_stage_c_trainables(
     runtime: MemoryRuntime,
     adaptation_target: str,
@@ -105,6 +131,13 @@ def _count_unique_parameters(parameters: list[torch.nn.Parameter]) -> int:
         seen.add(pointer)
         total += int(parameter.numel())
     return total
+
+
+def _stage_b_trainable_parameters(runtime: MemoryRuntime) -> tuple[list[torch.nn.Parameter], str]:
+    runtime.writer.freeze()
+    runtime.fuser.unfreeze()
+    runtime.reader.unfreeze()
+    return [runtime.reader.queries, *runtime.fuser.parameters()], "reader.queries+fuser"
 
 
 def _example_loss(runtime: MemoryRuntime, example: dict[str, str]) -> torch.Tensor:
@@ -143,6 +176,23 @@ def _mean_classification_loss(
     return float(torch.stack(losses).mean().item())
 
 
+def _mean_classification_loss_by_domain(
+    runtime: MemoryRuntime,
+    examples: list[dict[str, str]],
+    candidate_bank: dict[str, tuple[torch.Tensor, list[str]]],
+) -> float:
+    losses = [
+        _classification_loss(
+            runtime,
+            example,
+            candidate_states=candidate_bank[str(example["domain"])][0],
+            candidate_labels=candidate_bank[str(example["domain"])][1],
+        )
+        for example in examples
+    ]
+    return float(torch.stack(losses).mean().item())
+
+
 def _compute_accuracy(
     runtime: MemoryRuntime,
     examples: list[dict[str, str]],
@@ -159,6 +209,22 @@ def _compute_accuracy(
     return correct / len(examples)
 
 
+def _compute_accuracy_by_domain(
+    runtime: MemoryRuntime,
+    examples: list[dict[str, str]],
+    candidate_bank: dict[str, tuple[torch.Tensor, list[str]]],
+) -> float:
+    correct = 0
+    for example in examples:
+        candidate_states, candidate_labels = candidate_bank[str(example["domain"])]
+        forward = runtime.forward_example(example)
+        memory_summary = forward.memory_short.mean(dim=1)
+        scores = runtime.score_candidates(memory_summary, candidate_states)
+        predicted_label = candidate_labels[int(torch.argmax(scores).item())]
+        correct += int(predicted_label == example["label"])
+    return correct / len(examples)
+
+
 def _stage_c_row_key(row: dict[str, object]) -> tuple[float, float, int, int]:
     return (
         float(row["query_accuracy"]),
@@ -166,6 +232,30 @@ def _stage_c_row_key(row: dict[str, object]) -> tuple[float, float, int, int]:
         int(row["shot"]),
         int(row["step"]),
     )
+
+
+def _save_stage_b_state(
+    *,
+    output_dir: Path,
+    runtime: MemoryRuntime,
+    seed: int,
+    source_domains: list[str],
+    query_learning_mode: str,
+    writer_checkpoint: Path,
+) -> Path:
+    queries_path = output_dir / "queries_meta_init.pt"
+    torch.save(
+        {
+            "reader_state": runtime.reader.state_dict(),
+            "fuser_state": runtime.fuser.state_dict(),
+            "seed": seed,
+            "writer_checkpoint": str(writer_checkpoint.resolve()),
+            "source_domains": source_domains,
+            "query_learning_mode": query_learning_mode,
+        },
+        queries_path,
+    )
+    return queries_path
 
 
 def _build_meta_context(config: dict) -> tuple[dict[str, list[dict[str, str]]], dict[str, object]]:
@@ -248,110 +338,206 @@ def run_stage_b(
     writer_path = _resolve_artifact_path(resume, "writer.ckpt")
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
-    runtime.writer.freeze()
-    runtime.fuser.unfreeze()
-    runtime.reader.unfreeze()
+    query_learning_mode = _resolve_stage_b_query_learning_mode(config)
+    trainable_parameters, trainable_module = _stage_b_trainable_parameters(runtime)
     shutil.copy2(writer_path, output_dir / "writer.ckpt")
+    source_examples = _flatten_domains(grouped_examples, manifest["source_domains"])
+    domain_candidate_bank = {
+        domain: _build_label_prototypes(runtime, grouped_examples[domain])
+        for domain in manifest["source_domains"]
+    }
+    source_eval_label_space = "per_domain"
+
+    if query_learning_mode == "random":
+        profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
+        for example in source_examples:
+            profiler.add_example()
+            profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+            profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+        source_zero_shot_query_loss = _mean_classification_loss_by_domain(
+            runtime,
+            source_examples,
+            candidate_bank=domain_candidate_bank,
+        )
+        source_zero_shot_query_accuracy = _compute_accuracy_by_domain(
+            runtime,
+            source_examples,
+            candidate_bank=domain_candidate_bank,
+        )
+        queries_path = _save_stage_b_state(
+            output_dir=output_dir,
+            runtime=runtime,
+            seed=seed,
+            source_domains=manifest["source_domains"],
+            query_learning_mode=query_learning_mode,
+            writer_checkpoint=output_dir / "writer.ckpt",
+        )
+        metrics = {
+            "mode": "train",
+            "training_stage": "stage_b",
+            "query_learning_mode": query_learning_mode,
+            "episodes_completed": 0,
+            "steps_completed": 0,
+            "examples_seen": 0,
+            "trainable_module": trainable_module,
+            "source_eval_label_space": source_eval_label_space,
+            "source_eval_query_loss": source_zero_shot_query_loss,
+            "source_eval_query_accuracy": source_zero_shot_query_accuracy,
+            "queries_meta_init": str(queries_path.resolve()),
+            "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
+            "source_domains": manifest["source_domains"],
+            "dataset_sha256": manifest["dataset_sha256"],
+            **profiler.finalize(),
+        }
+        write_json(output_dir / "metrics.json", metrics)
+        write_json(output_dir / "stage_b_events.json", {"events": []})
+        return metrics
 
     episodes = 2 if dry_run else int(config["runtime"]["meta_episodes"])
-    sampler = EpisodeSampler(
-        grouped_examples,
-        source_domains=manifest["source_domains"],
-        support_size=int(manifest["support_size"]),
-        query_size=int(manifest["query_size"]),
-        seed=seed,
-    )
-    inner_lr = float(config["runtime"]["inner_learning_rate"])
-    meta_lr = float(config["runtime"]["meta_learning_rate"])
-    inner_steps = int(config["runtime"]["inner_steps"])
     profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
     events = []
 
-    for episode_index in range(episodes):
-        profiler.add_example()
-        episode = sampler.sample_episode()
-        fast_runtime = copy.deepcopy(runtime)
-        fast_runtime.writer.freeze()
-        fast_runtime.fuser.unfreeze()
-        fast_runtime.reader.unfreeze()
-        inner_optimizer = torch.optim.SGD(
-            [fast_runtime.reader.queries, *fast_runtime.fuser.parameters()],
-            lr=inner_lr,
+    if query_learning_mode == "meta_trained":
+        sampler = EpisodeSampler(
+            grouped_examples,
+            source_domains=manifest["source_domains"],
+            support_size=int(manifest["support_size"]),
+            query_size=int(manifest["query_size"]),
+            seed=seed,
         )
-        domain_examples = list(grouped_examples[episode.domain])
-        candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
+        inner_lr = float(config["runtime"]["inner_learning_rate"])
+        meta_lr = float(config["runtime"]["meta_learning_rate"])
+        inner_steps = int(config["runtime"]["inner_steps"])
 
-        zero_shot_query_loss = _mean_classification_loss(
-            runtime,
-            episode.query_examples,
-            candidate_states=candidate_states,
-            candidate_labels=candidate_labels,
+        for episode_index in range(episodes):
+            profiler.add_example()
+            episode = sampler.sample_episode()
+            fast_runtime = copy.deepcopy(runtime)
+            _stage_b_trainable_parameters(fast_runtime)
+            inner_optimizer = torch.optim.SGD(
+                [fast_runtime.reader.queries, *fast_runtime.fuser.parameters()],
+                lr=inner_lr,
+            )
+            domain_examples = list(grouped_examples[episode.domain])
+            candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
+
+            zero_shot_query_loss = _mean_classification_loss(
+                runtime,
+                episode.query_examples,
+                candidate_states=candidate_states,
+                candidate_labels=candidate_labels,
+            )
+            for _ in range(inner_steps):
+                support_loss = torch.stack(
+                    [
+                        _classification_loss(
+                            fast_runtime,
+                            example,
+                            candidate_states=candidate_states,
+                            candidate_labels=candidate_labels,
+                        )
+                        for example in episode.support_examples
+                    ]
+                ).mean()
+                inner_optimizer.zero_grad()
+                support_loss.backward()
+                inner_optimizer.step()
+            adapted_query_loss = _mean_classification_loss(
+                fast_runtime,
+                episode.query_examples,
+                candidate_states=candidate_states,
+                candidate_labels=candidate_labels,
+            )
+
+            with torch.no_grad():
+                runtime.reader.queries.add_(meta_lr * (fast_runtime.reader.queries - runtime.reader.queries))
+                for parameter, fast_parameter in zip(runtime.fuser.parameters(), fast_runtime.fuser.parameters()):
+                    parameter.add_(meta_lr * (fast_parameter - parameter))
+
+            for example in episode.support_examples + episode.query_examples:
+                profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+                profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+            events.append(
+                {
+                    "episode": episode_index,
+                    "domain": episode.domain,
+                    "zero_shot_query_loss": zero_shot_query_loss,
+                    "adapted_query_loss": adapted_query_loss,
+                    "adaptation_gain": zero_shot_query_loss - adapted_query_loss,
+                }
+            )
+    else:
+        source_eval_label_space = "global_multitask"
+        global_candidate_states, global_candidate_labels = _build_label_prototypes(runtime, source_examples)
+        multitask_steps = 2 if dry_run else int(config["runtime"].get("multitask_steps", episodes))
+        multitask_learning_rate = float(
+            config["runtime"].get("multitask_learning_rate", config["runtime"]["meta_learning_rate"])
         )
-        for _ in range(inner_steps):
-            support_loss = torch.stack(
-                [
-                    _classification_loss(
-                        fast_runtime,
-                        example,
-                        candidate_states=candidate_states,
-                        candidate_labels=candidate_labels,
-                    )
-                    for example in episode.support_examples
-                ]
-            ).mean()
-            inner_optimizer.zero_grad()
-            support_loss.backward()
-            inner_optimizer.step()
-        adapted_query_loss = _mean_classification_loss(
-            fast_runtime,
-            episode.query_examples,
-            candidate_states=candidate_states,
-            candidate_labels=candidate_labels,
-        )
+        optimizer = torch.optim.SGD(trainable_parameters, lr=multitask_learning_rate)
 
-        with torch.no_grad():
-            runtime.reader.queries.add_(meta_lr * (fast_runtime.reader.queries - runtime.reader.queries))
-            for parameter, fast_parameter in zip(runtime.fuser.parameters(), fast_runtime.fuser.parameters()):
-                parameter.add_(meta_lr * (fast_parameter - parameter))
-
-        for example in episode.support_examples + episode.query_examples:
+        for step in range(multitask_steps):
+            profiler.add_example()
+            example = source_examples[step % len(source_examples)]
+            optimizer.zero_grad()
+            loss = _classification_loss(
+                runtime,
+                example,
+                candidate_states=global_candidate_states,
+                candidate_labels=global_candidate_labels,
+            )
+            loss.backward()
+            optimizer.step()
             profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
             profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
-        events.append(
-            {
-                "episode": episode_index,
-                "domain": episode.domain,
-                "zero_shot_query_loss": zero_shot_query_loss,
-                "adapted_query_loss": adapted_query_loss,
-                "adaptation_gain": zero_shot_query_loss - adapted_query_loss,
-            }
-        )
+            events.append(
+                {
+                    "step": step,
+                    "domain": example["domain"],
+                    "query_loss": float(loss.item()),
+                }
+            )
 
-    queries_path = output_dir / "queries_meta_init.pt"
-    torch.save(
-        {
-            "reader_state": runtime.reader.state_dict(),
-            "fuser_state": runtime.fuser.state_dict(),
-            "seed": seed,
-            "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
-            "source_domains": manifest["source_domains"],
-        },
-        queries_path,
+    queries_path = _save_stage_b_state(
+        output_dir=output_dir,
+        runtime=runtime,
+        seed=seed,
+        source_domains=manifest["source_domains"],
+        query_learning_mode=query_learning_mode,
+        writer_checkpoint=output_dir / "writer.ckpt",
+    )
+    source_zero_shot_query_loss = _mean_classification_loss_by_domain(
+        runtime,
+        source_examples,
+        candidate_bank=domain_candidate_bank,
+    )
+    source_zero_shot_query_accuracy = _compute_accuracy_by_domain(
+        runtime,
+        source_examples,
+        candidate_bank=domain_candidate_bank,
     )
     metrics = {
         "mode": "train",
         "training_stage": "stage_b",
-        "episodes_completed": episodes,
-        "trainable_module": "reader.queries+fuser",
-        "mean_zero_shot_query_loss": sum(item["zero_shot_query_loss"] for item in events) / len(events),
-        "mean_adapted_query_loss": sum(item["adapted_query_loss"] for item in events) / len(events),
-        "mean_adaptation_gain": sum(item["adaptation_gain"] for item in events) / len(events),
+        "query_learning_mode": query_learning_mode,
+        "episodes_completed": episodes if query_learning_mode == "meta_trained" else 0,
+        "steps_completed": len(events) if query_learning_mode == "non_meta_multitask" else 0,
+        "examples_seen": len(events),
+        "trainable_module": trainable_module,
+        "source_eval_label_space": source_eval_label_space,
+        "source_eval_query_loss": source_zero_shot_query_loss,
+        "source_eval_query_accuracy": source_zero_shot_query_accuracy,
         "queries_meta_init": str(queries_path.resolve()),
         "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
         "source_domains": manifest["source_domains"],
         "dataset_sha256": manifest["dataset_sha256"],
         **profiler.finalize(),
     }
+    if query_learning_mode == "meta_trained":
+        metrics["mean_zero_shot_query_loss"] = sum(item["zero_shot_query_loss"] for item in events) / len(events)
+        metrics["mean_adapted_query_loss"] = sum(item["adapted_query_loss"] for item in events) / len(events)
+        metrics["mean_adaptation_gain"] = sum(item["adaptation_gain"] for item in events) / len(events)
+    else:
+        metrics["mean_query_loss"] = sum(item["query_loss"] for item in events) / len(events)
     write_json(output_dir / "metrics.json", metrics)
     write_json(output_dir / "stage_b_events.json", {"events": events})
     return metrics
@@ -371,9 +557,16 @@ def run_stage_c(
     writer_path = _resolve_artifact_path(resume, "writer.ckpt")
     queries_path = _resolve_artifact_path(resume, "queries_meta_init.pt")
     adaptation_target = _resolve_stage_c_adaptation_target(config)
+    expected_query_learning_mode = _resolve_expected_stage_c_query_learning_mode(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
+    query_learning_mode = str(state.get("query_learning_mode", "meta_trained"))
+    if expected_query_learning_mode is not None and query_learning_mode != expected_query_learning_mode:
+        raise ValueError(
+            f"Stage C expected query_learning_mode={expected_query_learning_mode}, "
+            f"but resume artifact provides {query_learning_mode}."
+        )
     runtime.reader.load_state_dict(state["reader_state"])
     if "fuser_state" in state:
         runtime.fuser.load_state_dict(state["fuser_state"])
@@ -424,6 +617,7 @@ def run_stage_c(
             )
             curve_rows.append(
                 {
+                    "query_learning_mode": query_learning_mode,
                     "adaptation_target": adaptation_target,
                     "trainable_module": trainable_module,
                     "trainable_parameter_count": trainable_parameter_count,
@@ -467,6 +661,7 @@ def run_stage_c(
         writer = csv.DictWriter(
             handle,
             fieldnames=[
+                "query_learning_mode",
                 "adaptation_target",
                 "trainable_module",
                 "trainable_parameter_count",
@@ -488,6 +683,7 @@ def run_stage_c(
             "fuser_state": best_runtime.fuser.state_dict(),
             "seed": seed,
             "target_domain": manifest["target_domain"],
+            "query_learning_mode": query_learning_mode,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -498,6 +694,7 @@ def run_stage_c(
     best_row = best_adapt_row or zero_shot_row
     profile_metrics = profiler.finalize()
     adapt_cost = {
+        "query_learning_mode": query_learning_mode,
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
@@ -516,6 +713,7 @@ def run_stage_c(
         "mode": "train",
         "training_stage": "stage_c",
         "target_domain": manifest["target_domain"],
+        "query_learning_mode": query_learning_mode,
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,

@@ -1,0 +1,9 @@
+includes:
+  - m3_stage_c_qwen25_smoke.yaml
+
+experiment:
+  name: m3_stage_c_qwen25_smoke_random
+  method_variant: ours-stage-c-random-reader-q-only
+
+runtime:
+  expected_query_learning_mode: random

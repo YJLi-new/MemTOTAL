@@ -16,6 +16,7 @@ backbone:
 runtime:
   training_stage: stage_c
   adaptation_target: q_only
+  expected_query_learning_mode: meta_trained
   adapt_steps: 3
   adapt_learning_rate: 0.2
   adapt_shots:

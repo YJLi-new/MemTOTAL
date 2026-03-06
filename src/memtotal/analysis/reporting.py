@@ -20,6 +20,7 @@ def resolve_primary_metric(row: dict[str, object]) -> tuple[str, float]:
         ("best_adapt_query_accuracy", _coerce_float(row.get("best_adapt_query_accuracy"))),
         ("zero_shot_query_accuracy", _coerce_float(row.get("zero_shot_query_accuracy"))),
         ("mean_adaptation_gain", _coerce_float(row.get("mean_adaptation_gain"))),
+        ("source_eval_query_accuracy", _coerce_float(row.get("source_eval_query_accuracy"))),
         ("mean_similarity", _coerce_float(row.get("mean_similarity"))),
     ]
     for metric_name, metric_value in metric_preferences:
@@ -33,6 +34,10 @@ def resolve_primary_metric(row: dict[str, object]) -> tuple[str, float]:
     zero_shot_query_loss = _coerce_float(row.get("zero_shot_query_loss"))
     if zero_shot_query_loss is not None:
         return "inv_zero_shot_query_loss", 1.0 / (1.0 + max(zero_shot_query_loss, 0.0))
+
+    source_eval_query_loss = _coerce_float(row.get("source_eval_query_loss"))
+    if source_eval_query_loss is not None:
+        return "inv_source_eval_query_loss", 1.0 / (1.0 + max(source_eval_query_loss, 0.0))
 
     mean_loss = _coerce_float(row.get("mean_loss"))
     if mean_loss is not None:

@@ -370,7 +370,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 已新增 `toy_meta_smoke` 数据与 meta split；当前配置是 `source={math, code, qa}`、`target=narrative`、`support_size=2`、`query_size=2`
 - Stage A 已真实产出 `writer.ckpt`，并把 `dataset_sha256`、domain 采样规则写入 `meta_data_manifest.json`
 - Stage B 已真实产出 `queries_meta_init.pt`，当前实现是 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`，Writer 固定
+- Stage B 现支持 `query_learning_mode in {meta_trained, non_meta_multitask, random}`，并把模式写入 `queries_meta_init.pt` / `metrics.json`
 - Stage C 已真实产出 `queries_adapted.pt`、`adapt_curve.csv` 与 `adapt_cost.json`；当前默认 `adaptation_target=q_only`，并已按 `Q-only / W-only / W+Q` 跑通对齐预算的 smoke 曲线
+- Stage C 现支持 `expected_query_learning_mode` 校验，避免把 `random / non-meta / meta-trained` 的 reader init resume 混到错误 run 里
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
   - `python -m train --config configs/exp/m3_stage_a_qwen25_smoke.yaml --seed 301 --output_dir runs/verify/m3-stage-a`
@@ -385,8 +387,13 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
   - `W+Q`：`writer+reader.queries`，`trainable_parameter_count=72000`，`0.7023470401763916 -> 0.694838285446167`
+- Reader 学习方式消融：`runs/verify/m3-reader-learning-modes-canonical/`
+  - `meta-trained`：Stage B `mean_adaptation_gain=0.02427813410758972`；Stage C `zero_shot_query_loss=0.7023470401763916`
+  - `non-meta multi-task`：Stage B `source_eval_query_loss=0.6913747191429138`；Stage C `zero_shot_query_loss=0.7048434019088745`
+  - `random`：Stage B `source_eval_query_loss=0.6923675537109375`；Stage C `zero_shot_query_loss=0.7098537683486938`
 
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
+说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 
@@ -397,10 +404,10 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - [x] W+Q
   - **DoD**：三条曲线齐全，且对齐相同预算
 
-- [ ] Reader 学习方式消融
-  - [ ] random queries
-  - [ ] non-meta multi-task queries
-  - [ ] meta-trained queries
+- [x] Reader 学习方式消融
+  - [x] random queries
+  - [x] non-meta multi-task queries
+  - [x] meta-trained queries
   - **DoD**：能直接比较 meta 的价值
 
 - [ ] 把训练失败常见模式写成显式检查
