@@ -200,3 +200,4 @@
   - `predictions.jsonl[].baseline_prompt`
   - `predictions.jsonl[].candidate_scores`
 - 当前已真实 smoke 验证 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
+- 同一套 qwen3 配置 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 也已真实跑通，汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`

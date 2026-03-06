@@ -43,4 +43,4 @@
 - `NarrativeQA` 当前已具备两档固定 backbone 的 smoke 配置：`Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B` 都能跑通同一条 runtime-pool NarrativeQA 路径。
 - `NarrativeQA` selector 消融当前已接入统一汇总；但 qwen25 stub smoke 下的排序是 `anchor_only > question_aware > oracle_like_proxy`（按 `mean_similarity`），这说明 contract 生效了，不说明启发式已接近正式最优，后续仍需要用真实长上下文方法与正式指标重评。
 - `Qwen3-8B` 上同一组 NarrativeQA selector smoke 的排序又变成了 `question_aware > anchor_only > oracle_like_proxy`，进一步说明当前 smoke 更像“backbone-sensitive contract check”而不是“稳定实验结论”；后续若要用于论文主表，仍需升级到真实权重与正式指标。
-- `M5` 的 `prompting` baseline family 现已接入 `Vanilla / CoT`，但当前仍只是 qwen25 的 zero-shot smoke 验证；后续还需要补到两档 backbone、真实 benchmark smoke、few-shot/step 预算对齐，以及主表需要的 Prompt Tuning / LoRA / MetaPrompting 家族。
+- `M5` 的 `prompting` baseline family 现已接入 `Vanilla / CoT`，并补到了两档固定 backbone；但当前仍只是 `GSM8K + Story Cloze` 的 zero-shot smoke 验证，后续还需要补真实 benchmark smoke、few-shot/step 预算对齐，以及主表需要的 Prompt Tuning / LoRA / MetaPrompting 家族。

@@ -139,6 +139,7 @@
 - 2026-03-06 16:41 UTC: 已将同一组 NarrativeQA selector 消融补到 `Qwen3-8B`。新增 `configs/exp/benchmark_narrativeqa_qwen3_real_smoke_anchor_only.yaml` 与 `configs/exp/benchmark_narrativeqa_qwen3_real_smoke_oracle_like_proxy.yaml`，并真实跑通 `question_aware / anchor_only / oracle_like_proxy` 三组 qwen3 smoke。统一汇总位于 `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv`；当前 stub 结果为 `question_aware=0.03560512885451317`、`anchor_only=-0.011595143005251884`、`oracle_like_proxy=-0.033963803201913834`。
 - 2026-03-06 16:46 UTC: 已进入 `M5` 并接入最小 `prompting` baseline family。新增 `src/memtotal/baselines/prompting.py`，让 `python -m eval` 在 `baseline.family=prompting` 时绕过 `MemoryRuntime`，支持 `mode in {vanilla, cot}`，并将 `baseline_family / baseline_mode / baseline_prompt / candidate_scores` 写入统一产物。
 - 2026-03-06 16:46 UTC: 已新增并真实跑通 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml` 四组 smoke。统一汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`；当前 qwen25 stub smoke 结果为 `gsm8k: vanilla=0.0, cot=0.0`，`story_cloze: vanilla=1.0, cot=1.0`。
+- 2026-03-06 16:47 UTC: 已把同一组 `Vanilla / CoT` smoke 配置补到 `Qwen3-8B`。新增 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 四组配置，并真实跑通。统一汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`；当前 qwen3 stub smoke 与 qwen25 一致：`gsm8k=0.0`，`story_cloze=1.0`。
 
 ## Decision Log
 

@@ -36,6 +36,10 @@ baseline:
 - `configs/exp/baseline_cot_gsm8k_qwen25_smoke.yaml`
 - `configs/exp/baseline_vanilla_story_cloze_qwen25_smoke.yaml`
 - `configs/exp/baseline_cot_story_cloze_qwen25_smoke.yaml`
+- `configs/exp/baseline_vanilla_gsm8k_qwen3_smoke.yaml`
+- `configs/exp/baseline_cot_gsm8k_qwen3_smoke.yaml`
+- `configs/exp/baseline_vanilla_story_cloze_qwen3_smoke.yaml`
+- `configs/exp/baseline_cot_story_cloze_qwen3_smoke.yaml`
 
 ## Verified Commands
 
@@ -45,14 +49,26 @@ python -m eval --config configs/exp/baseline_cot_gsm8k_qwen25_smoke.yaml --seed 
 python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen25_smoke.yaml --seed 811 --output_dir runs/verify/m5-prompt-baseline-smoke/vanilla-story-cloze
 python -m eval --config configs/exp/baseline_cot_story_cloze_qwen25_smoke.yaml --seed 811 --output_dir runs/verify/m5-prompt-baseline-smoke/cot-story-cloze
 python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen25_smoke.yaml --seed 811 --output_dir results/generated/m5-prompt-baseline-smoke --input_root runs/verify/m5-prompt-baseline-smoke
+python -m eval --config configs/exp/baseline_vanilla_gsm8k_qwen3_smoke.yaml --seed 821 --output_dir runs/verify/m5-prompt-baseline-smoke-qwen3/vanilla-gsm8k
+python -m eval --config configs/exp/baseline_cot_gsm8k_qwen3_smoke.yaml --seed 821 --output_dir runs/verify/m5-prompt-baseline-smoke-qwen3/cot-gsm8k
+python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen3_smoke.yaml --seed 821 --output_dir runs/verify/m5-prompt-baseline-smoke-qwen3/vanilla-story-cloze
+python -m eval --config configs/exp/baseline_cot_story_cloze_qwen3_smoke.yaml --seed 821 --output_dir runs/verify/m5-prompt-baseline-smoke-qwen3/cot-story-cloze
+python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_smoke.yaml --seed 821 --output_dir results/generated/m5-prompt-baseline-smoke-qwen3 --input_root runs/verify/m5-prompt-baseline-smoke-qwen3
 ```
 
 ## Current Smoke Results
 
 汇总路径：
 - `results/generated/m5-prompt-baseline-smoke/summary.csv`
+- `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
 
 当前 qwen25 stub smoke：
+- `vanilla-gsm8k`: `accuracy=0.0`
+- `cot-gsm8k`: `accuracy=0.0`
+- `vanilla-story-cloze`: `accuracy=1.0`
+- `cot-story-cloze`: `accuracy=1.0`
+
+当前 qwen3 stub smoke：
 - `vanilla-gsm8k`: `accuracy=0.0`
 - `cot-gsm8k`: `accuracy=0.0`
 - `vanilla-story-cloze`: `accuracy=1.0`
