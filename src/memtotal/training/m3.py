@@ -38,6 +38,20 @@ def _flatten_domains(grouped_examples: dict[str, list[dict[str, str]]], domains:
     return flattened
 
 
+def _build_label_prototypes(
+    runtime: MemoryRuntime,
+    examples: list[dict[str, str]],
+) -> tuple[torch.Tensor, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for row in examples:
+        grouped.setdefault(str(row["label"]), []).append(row["continuation"])
+    labels = sorted(grouped)
+    states = []
+    for label in labels:
+        states.append(runtime.backbone.summarize_texts(grouped[label]).mean(dim=0))
+    return torch.stack(states, dim=0), labels
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -213,10 +227,7 @@ def run_stage_b(
             lr=inner_lr,
         )
         domain_examples = list(grouped_examples[episode.domain])
-        candidate_labels = [row["label"] for row in domain_examples]
-        candidate_states = runtime.backbone.summarize_texts(
-            row["continuation"] for row in domain_examples
-        )
+        candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
 
         zero_shot_query_loss = _mean_classification_loss(
             runtime,
@@ -325,8 +336,7 @@ def run_stage_c(
         seed=seed,
     )
     domain_examples = list(grouped_examples[manifest["target_domain"]])
-    candidate_labels = [row["label"] for row in domain_examples]
-    candidate_states = runtime.backbone.summarize_texts(row["continuation"] for row in domain_examples)
+    candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
     shots_list = [int(shot) for shot in config["runtime"]["adapt_shots"]]
     max_steps = 1 if dry_run else int(config["runtime"]["adapt_steps"])
     adapt_lr = float(config["runtime"]["adapt_learning_rate"])

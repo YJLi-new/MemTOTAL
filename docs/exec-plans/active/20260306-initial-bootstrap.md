@@ -100,6 +100,9 @@
 - 2026-03-06 11:48 UTC: 新增 `configs/exp/m3_stage_{a,b,c}_qwen25_smoke.yaml`，并用 `python -m train ... --resume ...` 顺序真实跑通仓库内 smoke，产物位于 `runs/verify/m3-stage-a/`、`runs/verify/m3-stage-b/`、`runs/verify/m3-stage-c/`。
 - 2026-03-06 11:48 UTC: 统一 analysis 已补齐 M3 指标主分数字段识别；`best_adapt_query_accuracy`、`zero_shot_query_accuracy`、`mean_adaptation_gain` 不再在 `summary.csv` 中退化成 `none/0.0`。
 - 2026-03-06 11:48 UTC: 当前 M3 仍有一个明确阻塞未过 DoD：toy smoke 下 `Stage B mean_adaptation_gain` 依然为负，因此尚不能宣称 source-domain meta-train 收益已成立；该问题已登记进 `docs/tech-debt-tracker.md`。
+- 2026-03-06 11:55 UTC: 已将 `toy_meta_smoke` 改成“每域 2 label × 每 label 2 样本”的结构，并把 episode sampler 改为按 label 分层采样；Stage B/C 的分类目标也已切换到 domain 内 label prototype，而不是逐样本候选。
+- 2026-03-06 11:55 UTC: 重新跑通 M3 顺序 smoke 后，`runs/verify/m3-stage-b/metrics.json` 当前记录 `mean_adaptation_gain=0.02427813410758972`，说明 source-domain 上已经能观察到正向适配收益；原 blocker 已解除。
+- 2026-03-06 11:55 UTC: 当前 `runs/verify/m3-stage-c/adapt_curve.csv` 记录 target domain `narrative` 上 `zero_shot_query_loss=0.7023470401763916 -> best_adapt_query_loss=0.6856379508972168`，但 accuracy 仍为 `0.5 -> 0.5`；这说明 M3 smoke contract 已成立，但更强的 target few-shot 提升仍留给后续正式实验。
 
 ## Decision Log
 
@@ -119,6 +122,7 @@
 - 2026-03-06: Query-Gating 先按配置契约 + 样本级统计落地，不把当前单步 toy runtime 误写成“已经具备正式按-segment 统计”；真正多段统计留给后续 Stage runtime。
 - 2026-03-06: 对 `injection_position=none` 这类合法 ablation，不把“无梯度”视为配置错误；训练 harness 应显式记录而不是直接失败。
 - 2026-03-06: M3 当前优先保证 Stage A/B/C 的 artifact contract 与 resume 链路成立；若 smoke 结果尚未出现正向 meta gain，应把它记录为未达 DoD，而不是调文案掩盖。
+- 2026-03-06: 若 toy smoke 因任务构造本身阻碍 few-shot 观测，应优先重构 toy 数据与 episode 结构，而不是只盲扫学习率。
 
 ## Surprises & Discoveries
 

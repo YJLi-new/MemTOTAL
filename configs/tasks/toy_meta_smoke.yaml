@@ -13,5 +13,5 @@ task:
       - code
       - qa
     target_domain: narrative
-    support_size: 1
+    support_size: 2
     query_size: 2

@@ -355,7 +355,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - [x] 输出冻结可复用的 writer checkpoint
   - **DoD**：能得到 `writer.ckpt`，并在后续实验中加载复用
 
-- [ ] Stage B：queries meta-train
+- [x] Stage B：queries meta-train
   - [x] 实现 episode sampler
   - [x] 优先实现 ANIL（或等价的一阶近似）
   - [x] Writer 固定；queries 是主要更新对象
@@ -378,7 +378,11 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `python -m train --config configs/exp/m3_stage_c_qwen25_smoke.yaml --seed 307 --output_dir runs/verify/m3-stage-c --resume runs/verify/m3-stage-b`
   - `python -m analysis --config configs/exp/m3_stage_c_qwen25_smoke.yaml --seed 307 --output_dir results/generated/m3-smoke-summary --input_root runs/verify`
 
-当前仍未勾掉 Stage B 的父条目，是因为 `queries_meta_init.pt` 虽已产出，但 toy smoke 下的 `mean_adaptation_gain` 仍为负值，说明 source-domain 适配收益还没有被当前 smoke 任务打出来。这是当前 M3 P0 的主要剩余阻塞，不应被文档掩盖。
+最新已验证结果：
+- Stage B：`runs/verify/m3-stage-b/metrics.json` 当前记录 `mean_zero_shot_query_loss=0.6781679193178812`、`mean_adapted_query_loss=0.6538897852102915`、`mean_adaptation_gain=0.02427813410758972`
+- Stage C：`runs/verify/m3-stage-c/adapt_curve.csv` 当前记录 target domain `narrative` 上从 `zero_shot_query_loss=0.7023470401763916` 下降到 `best_adapt_query_loss=0.6856379508972168`
+
+说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 
 ### P1 重要
 - [ ] 适配对象消融

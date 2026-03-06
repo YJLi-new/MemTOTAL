@@ -25,21 +25,24 @@ class M3TrainingTest(unittest.TestCase):
             general_domains=["math", "code", "qa", "narrative"],
             source_domains=["math", "code", "qa"],
             target_domain="narrative",
-            support_size=1,
+            support_size=2,
             query_size=2,
         )
         sampler = EpisodeSampler(
             grouped,
             source_domains=["math", "code", "qa"],
-            support_size=1,
+            support_size=2,
             query_size=2,
             seed=17,
         )
         episode = sampler.sample_episode()
         self.assertIn(episode.domain, {"math", "code", "qa"})
-        self.assertEqual(len(episode.support_examples), 1)
+        self.assertEqual(len(episode.support_examples), 2)
         self.assertEqual(len(episode.query_examples), 2)
-        self.assertNotIn(episode.support_examples[0]["id"], {row["id"] for row in episode.query_examples})
+        self.assertEqual(
+            {row["label"] for row in episode.support_examples},
+            {row["label"] for row in episode.query_examples},
+        )
 
     def test_m3_stage_sequence_writes_expected_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -71,6 +71,24 @@ def validate_meta_split(
                 f"Domain '{domain}' has only {available} examples, "
                 f"but support_size + query_size = {support_size + query_size}."
             )
+        label_groups: dict[str, list[dict[str, str]]] = {}
+        for row in grouped_examples[domain]:
+            label_groups.setdefault(str(row["label"]), []).append(row)
+        num_labels = len(label_groups)
+        if num_labels == 0:
+            raise ValueError(f"Domain '{domain}' has no labels for stratified sampling.")
+        if support_size % num_labels != 0 or query_size % num_labels != 0:
+            raise ValueError(
+                f"support_size={support_size} and query_size={query_size} must be divisible by "
+                f"the number of labels ({num_labels}) in domain '{domain}'."
+            )
+        per_label = (support_size // num_labels) + (query_size // num_labels)
+        for label, rows in label_groups.items():
+            if len(rows) < per_label:
+                raise ValueError(
+                    f"Label '{label}' in domain '{domain}' has only {len(rows)} examples, "
+                    f"but needs at least {per_label} for stratified support/query sampling."
+                )
 
 
 class EpisodeSampler:
@@ -91,10 +109,12 @@ class EpisodeSampler:
 
     def sample_episode(self) -> Episode:
         domain = self.rng.choice(self.source_domains)
-        shuffled = list(self.grouped_examples[domain])
-        self.rng.shuffle(shuffled)
-        support_examples = shuffled[: self.support_size]
-        query_examples = shuffled[self.support_size : self.support_size + self.query_size]
+        support_examples, query_examples = _stratified_split(
+            self.grouped_examples[domain],
+            support_size=self.support_size,
+            query_size=self.query_size,
+            rng=self.rng,
+        )
         return Episode(
             domain=domain,
             support_examples=support_examples,
@@ -111,12 +131,39 @@ def split_target_domain_examples(
     seed: int,
 ) -> Episode:
     rng = random.Random(seed)
-    shuffled = list(grouped_examples[target_domain])
-    rng.shuffle(shuffled)
-    support_examples = shuffled[:support_size]
-    query_examples = shuffled[support_size : support_size + query_size]
+    support_examples, query_examples = _stratified_split(
+        grouped_examples[target_domain],
+        support_size=support_size,
+        query_size=query_size,
+        rng=rng,
+    )
     return Episode(
         domain=target_domain,
         support_examples=support_examples,
         query_examples=query_examples,
     )
+
+
+def _stratified_split(
+    examples: list[dict[str, str]],
+    *,
+    support_size: int,
+    query_size: int,
+    rng: random.Random,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    grouped_by_label: dict[str, list[dict[str, str]]] = {}
+    for row in examples:
+        grouped_by_label.setdefault(str(row["label"]), []).append(row)
+    labels = sorted(grouped_by_label)
+    support_per_label = support_size // len(labels)
+    query_per_label = query_size // len(labels)
+    support_examples: list[dict[str, str]] = []
+    query_examples: list[dict[str, str]] = []
+    for label in labels:
+        shuffled = list(grouped_by_label[label])
+        rng.shuffle(shuffled)
+        support_examples.extend(shuffled[:support_per_label])
+        query_examples.extend(shuffled[support_per_label : support_per_label + query_per_label])
+    rng.shuffle(support_examples)
+    rng.shuffle(query_examples)
+    return support_examples, query_examples
