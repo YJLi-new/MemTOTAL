@@ -210,3 +210,4 @@
   - qwen25: `results/generated/m5-prompt-baseline-real-smoke/summary.csv`
   - qwen3: `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
 - 当前 `Prompt Tuning / LoRA` 的最小 smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
+- 同一套 qwen3 adapter smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`

@@ -34,6 +34,8 @@ baseline:
 
 - `configs/exp/baseline_prompt_tuning_story_cloze_qwen25_smoke.yaml`
 - `configs/exp/baseline_lora_story_cloze_qwen25_smoke.yaml`
+- `configs/exp/baseline_prompt_tuning_story_cloze_qwen3_smoke.yaml`
+- `configs/exp/baseline_lora_story_cloze_qwen3_smoke.yaml`
 
 ## Verified Commands
 
@@ -43,17 +45,29 @@ python -m eval --config configs/exp/baseline_prompt_tuning_story_cloze_qwen25_sm
 python -m train --config configs/exp/baseline_lora_story_cloze_qwen25_smoke.yaml --seed 911 --output_dir runs/verify/m5-adapter-baseline-smoke/lora/train
 python -m eval --config configs/exp/baseline_lora_story_cloze_qwen25_smoke.yaml --seed 911 --output_dir runs/verify/m5-adapter-baseline-smoke/lora/eval --checkpoint runs/verify/m5-adapter-baseline-smoke/lora/train/checkpoint.pt
 python -m analysis --config configs/exp/baseline_prompt_tuning_story_cloze_qwen25_smoke.yaml --seed 911 --output_dir results/generated/m5-adapter-baseline-smoke --input_root runs/verify/m5-adapter-baseline-smoke
+python -m train --config configs/exp/baseline_prompt_tuning_story_cloze_qwen3_smoke.yaml --seed 921 --output_dir runs/verify/m5-adapter-baseline-smoke-qwen3/prompt-tuning/train
+python -m eval --config configs/exp/baseline_prompt_tuning_story_cloze_qwen3_smoke.yaml --seed 921 --output_dir runs/verify/m5-adapter-baseline-smoke-qwen3/prompt-tuning/eval --checkpoint runs/verify/m5-adapter-baseline-smoke-qwen3/prompt-tuning/train/checkpoint.pt
+python -m train --config configs/exp/baseline_lora_story_cloze_qwen3_smoke.yaml --seed 921 --output_dir runs/verify/m5-adapter-baseline-smoke-qwen3/lora/train
+python -m eval --config configs/exp/baseline_lora_story_cloze_qwen3_smoke.yaml --seed 921 --output_dir runs/verify/m5-adapter-baseline-smoke-qwen3/lora/eval --checkpoint runs/verify/m5-adapter-baseline-smoke-qwen3/lora/train/checkpoint.pt
+python -m analysis --config configs/exp/baseline_prompt_tuning_story_cloze_qwen3_smoke.yaml --seed 921 --output_dir results/generated/m5-adapter-baseline-smoke-qwen3 --input_root runs/verify/m5-adapter-baseline-smoke-qwen3
 ```
 
 ## Current Smoke Results
 
 汇总路径：
 - `results/generated/m5-adapter-baseline-smoke/summary.csv`
+- `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 
 当前 qwen25 stub smoke：
 - `prompt_tuning/train`: `final_loss=0.31129494309425354`, `trainable_parameter_count=256`
 - `prompt_tuning/eval`: `accuracy=1.0`
 - `lora/train`: `final_loss=0.2841453552246094`, `trainable_parameter_count=512`
 - `lora/eval`: `accuracy=1.0`
+
+当前 qwen3 stub smoke：
+- `prompt_tuning/train`: `final_loss=0.40971383452415466`, `trainable_parameter_count=256`
+- `prompt_tuning/eval`: `accuracy=0.5`
+- `lora/train`: `final_loss=0.36231037974357605`, `trainable_parameter_count=512`
+- `lora/eval`: `accuracy=0.5`
 
 这些数字只说明 adapter baseline harness 已接入统一训练/评测链，不是论文结果。
