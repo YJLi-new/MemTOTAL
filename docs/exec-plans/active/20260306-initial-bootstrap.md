@@ -85,6 +85,8 @@
 - 2026-03-06 18:59 UTC: 截至当前，MemGen 已在 `gsm8k`、`gpqa`、`triviaqa`、`kodcode`、`rocstories`、`story_cloze` 六个任务上完成统一 smoke 接入；M1 现阶段的主要剩余工作已从“任务接入”转为“trigger / insertion 配置对齐与验证”。
 - 2026-03-06 19:02 UTC: 已新增 `configs/exp/memgen_gsm8k_qwen25_smoke_eval_trigger_on.yaml`；`./scripts/run_memgen.sh --config configs/exp/memgen_gsm8k_qwen25_smoke_eval_trigger_on.yaml --seed 81 --output_dir runs/verify/memgen-gsm8k-trigger-on-smoke` 已真实成功，当前 `compute_reward=0.5`、`num_predictions=4`、`wall_time_sec=31.25347`。
 - 2026-03-06 19:02 UTC: 该 trigger-on 结果仅用于验证 `trigger.active=True` 路径和统一输出桥，不视为正式可比的 MemGen trigger baseline；后者仍需对齐触发器权重来源与插入配置口径。
+- 2026-03-06 19:06 UTC: 已将 `trigger_active / insertion_profile / requires_trained_checkpoint / load_model_path` 纳入 MemGen adapter 的显式配置契约，并新增 `configs/exp/memgen_gsm8k_qwen25_eval_trigger_trained_template.yaml` 作为正式 trigger baseline 模板。
+- 2026-03-06 19:06 UTC: `./scripts/run_memgen.sh --config configs/exp/memgen_gsm8k_qwen25_eval_trigger_trained_template.yaml --seed 91 --output_dir runs/verify/memgen-trigger-trained-template-preflight` 已验证 preflight 直报 checkpoint 缺失；`./scripts/run_memgen.sh --config configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml --seed 72 --output_dir runs/verify/memgen-kodcode-smoke-v2` 证明 `TOKENIZERS_PARALLELISM=false` 已消除先前稳定出现的 tokenizers fork 警告。
 
 ## Decision Log
 

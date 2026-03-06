@@ -16,12 +16,13 @@ baseline:
   task_name: gsm8k
   memgen_run_mode: evaluate
   memgen_config_path: configs/latent_memory/gsm8k.yaml
+  trigger_active: true
+  insertion_profile: trigger_path_smoke
   load_model_path: null
   max_prompt_aug_num: 1
   max_inference_aug_num: 1
   extra_options:
     - model.attn_implementation=sdpa
-    - model.trigger.active=True
     - dataset.mode=sft
     - dataset.sft.val_ratio=0.01
     - dataset.sft.num_workers=1

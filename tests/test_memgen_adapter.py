@@ -13,7 +13,14 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from memtotal.baselines.run_memgen import _preflight_failure, _translate_conversations_txt
+from memtotal.baselines.run_memgen import (
+    _baseline_metadata,
+    _build_memgen_options,
+    _memgen_runtime_env,
+    _preflight_failure,
+    _resolve_load_model_path,
+    _translate_conversations_txt,
+)
 
 
 class MemGenAdapterTest(unittest.TestCase):
@@ -52,6 +59,75 @@ class MemGenAdapterTest(unittest.TestCase):
             message = _preflight_failure({"baseline": {"task_name": "gpqa"}})
         self.assertIsNotNone(message)
         self.assertIn("huggingface-cli login", message)
+
+    def test_resolve_relative_load_model_path_from_repo_root(self) -> None:
+        config = {
+            "baseline": {
+                "repo_root": "MemGen-master",
+                "load_model_path": "results/train/example/trigger",
+            }
+        }
+        resolved = _resolve_load_model_path(config)
+        self.assertEqual(
+            resolved,
+            (ROOT / "MemGen-master" / "results/train/example/trigger").resolve(),
+        )
+
+    def test_preflight_requires_trained_checkpoint(self) -> None:
+        message = _preflight_failure(
+            {
+                "baseline": {
+                    "task_name": "gsm8k",
+                    "repo_root": "MemGen-master",
+                    "load_model_path": None,
+                    "requires_trained_checkpoint": True,
+                }
+            }
+        )
+        self.assertIsNotNone(message)
+        self.assertIn("requires a trained checkpoint", message)
+
+    def test_build_options_includes_explicit_trigger_active(self) -> None:
+        options = _build_memgen_options(
+            {
+                "baseline": {
+                    "repo_root": "MemGen-master",
+                    "task_name": "gsm8k",
+                    "memgen_run_mode": "evaluate",
+                    "trigger_active": True,
+                    "max_prompt_aug_num": 1,
+                    "max_inference_aug_num": 1,
+                    "load_model_path": None,
+                    "extra_options": [],
+                },
+                "backbone": {
+                    "model_id": "/tmp/qwen",
+                },
+            },
+            seed=7,
+        )
+        self.assertIn("model.trigger.active=True", options)
+
+    def test_baseline_metadata_and_runtime_env(self) -> None:
+        metadata = _baseline_metadata(
+            {
+                "baseline": {
+                    "repo_root": "MemGen-master",
+                    "task_name": "gsm8k",
+                    "trigger_active": False,
+                    "max_prompt_aug_num": 1,
+                    "max_inference_aug_num": 2,
+                    "requires_trained_checkpoint": False,
+                    "insertion_profile": "single_turn_smoke",
+                    "load_model_path": None,
+                }
+            }
+        )
+        self.assertEqual(metadata["insertion_profile"], "single_turn_smoke")
+        self.assertEqual(metadata["max_inference_aug_num"], 2)
+
+        env = _memgen_runtime_env()
+        self.assertEqual(env["TOKENIZERS_PARALLELISM"], "false")
 
 
 if __name__ == "__main__":

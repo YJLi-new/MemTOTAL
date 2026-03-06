@@ -257,16 +257,16 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 
 ### P1 重要
 - [x] 对齐 MemGen 主实验任务清单
-- [ ] 对齐它的插入/触发相关配置
+- [x] 对齐它的插入/触发相关配置
 - [x] 为 MemGen baseline 保存固定的 config/seed 模板
 - **DoD**：你们的 `TaskEvaluator` 能直接读取并汇总 MemGen 输出
 
-当前已对齐并真实 smoke 的 MemGen 任务：`gsm8k`、`gpqa`、`triviaqa`、`kodcode`、`rocstories`、`story_cloze`。统一模板与已验证种子见 `docs/baselines/memgen.md`；此外 `trigger.active=True` 的最小 gsm8k smoke 路径也已验证可跑。当前 M1 主要剩余项是正式 trigger / insertion 配置与权重来源对齐。
+当前已对齐并真实 smoke 的 MemGen 任务：`gsm8k`、`gpqa`、`triviaqa`、`kodcode`、`rocstories`、`story_cloze`。统一模板与已验证种子见 `docs/baselines/memgen.md`；`trigger_active / insertion_profile / requires_trained_checkpoint / load_model_path` 已进入显式配置契约，且 `trigger.active=True` 的最小 gsm8k smoke 路径已验证可跑。后续剩余的是“正式 trigger baseline 权重来源”问题，不再是配置层缺口。
 
 ### P2 加分
-- [ ] 跑通 trigger on / off 两种版本
+- [x] 跑通 trigger on / off 两种版本
 - [x] 记录 MemGen 训练/评测的常见坑，写回 repo
-- [ ] 如某个坑稳定重现，升级为脚本或文档规则
+- [x] 如某个坑稳定重现，升级为脚本或文档规则
 
 ---
 

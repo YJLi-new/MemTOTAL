@@ -9,7 +9,6 @@
 - 评估是否需要兼容官方 `load_model_path=<file>.safetensors` 的旧路径语义；当前 smoke 路径通过 `load_model_path=null` 绕过了这条版本漂移问题。
 - 验证 MemGen `trigger.active=True` 路径，并决定哪些坑需要升级为强制脚本规则。
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
-- 评估是否在 MemGen 入口层统一设置 `TOKENIZERS_PARALLELISM=false`，减少 `kodcode` 这类 code-eval 任务的 fork 警告噪声。
 - 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
 
 ## Resolved In This Bootstrap
@@ -22,3 +21,5 @@
 - 统一 analysis 之前没有把 MemGen `compute_reward` 当作主分数字段处理。
 - 动态环境任务之前只会写官方 `conversations.txt`，不会进入统一 `predictions.jsonl`；现已补齐动态翻译分支。
 - `gpqa` gated dataset 认证缺失此前会在官方进程里晚失败；现已补齐 adapter preflight 并写明 `huggingface-cli login` / `HF_TOKEN` 提示。
+- `trigger_active / insertion_profile / requires_trained_checkpoint / load_model_path` 已进入 MemGen adapter 的显式配置契约。
+- `kodcode` 的 tokenizers fork 警告已升级为脚本规则：adapter 默认设置 `TOKENIZERS_PARALLELISM=false`。

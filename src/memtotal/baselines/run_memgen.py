@@ -27,6 +27,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_load_model_path(config: dict) -> Path | None:
+    baseline_cfg = config["baseline"]
+    raw_path = baseline_cfg.get("load_model_path")
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = Path(baseline_cfg["repo_root"]).resolve() / path
+    return path.resolve()
+
+
 def _build_memgen_options(config: dict, seed: int) -> list[str]:
     baseline_cfg = config["baseline"]
     backbone_cfg = config["backbone"]
@@ -38,9 +49,12 @@ def _build_memgen_options(config: dict, seed: int) -> list[str]:
         f"model.weaver.model_name={backbone_cfg['model_id']}",
         f"model.trigger.model_name={backbone_cfg['model_id']}",
     ]
-    load_model_path = baseline_cfg.get("load_model_path")
-    if load_model_path:
+    load_model_path = _resolve_load_model_path(config)
+    if load_model_path is not None:
         options.append(f"model.load_model_path={load_model_path}")
+    trigger_active = baseline_cfg.get("trigger_active")
+    if trigger_active is not None:
+        options.append(f"model.trigger.active={str(trigger_active)}")
     if baseline_cfg.get("max_prompt_aug_num") is not None:
         options.append(f"model.max_prompt_aug_num={baseline_cfg['max_prompt_aug_num']}")
     if baseline_cfg.get("max_inference_aug_num") is not None:
@@ -73,14 +87,41 @@ def _has_hf_auth_token() -> bool:
     )
 
 
+def _memgen_runtime_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    return env
+
+
+def _baseline_metadata(config: dict) -> dict[str, object]:
+    baseline_cfg = config["baseline"]
+    load_model_path = _resolve_load_model_path(config)
+    return {
+        "trigger_active": baseline_cfg.get("trigger_active", False),
+        "max_prompt_aug_num": baseline_cfg.get("max_prompt_aug_num"),
+        "max_inference_aug_num": baseline_cfg.get("max_inference_aug_num"),
+        "requires_trained_checkpoint": baseline_cfg.get("requires_trained_checkpoint", False),
+        "insertion_profile": baseline_cfg.get("insertion_profile", "default"),
+        "load_model_path": str(load_model_path) if load_model_path is not None else None,
+    }
+
+
 def _preflight_failure(config: dict) -> str | None:
     baseline_cfg = config["baseline"]
+    load_model_path = _resolve_load_model_path(config)
     if baseline_cfg["task_name"] == "gpqa" and not _has_hf_auth_token():
         return (
             "GPQA requires Hugging Face authentication for gated dataset "
             "`Idavidrein/gpqa`. Run `huggingface-cli login` or export `HF_TOKEN` "
             "before launching this config."
         )
+    if baseline_cfg.get("requires_trained_checkpoint", False) and load_model_path is None:
+        return (
+            "This MemGen config requires a trained checkpoint, but `load_model_path` is empty. "
+            "Set `baseline.load_model_path` to a valid weaver/trigger checkpoint directory."
+        )
+    if load_model_path is not None and not load_model_path.exists():
+        return f"Configured load_model_path does not exist: {load_model_path}"
     return None
 
 
@@ -97,6 +138,7 @@ def _write_launch_files(output_dir: Path, command: list[str], config: dict) -> N
             ),
             "task_name": config["baseline"]["task_name"],
             "backbone": config["backbone"]["name"],
+            **_baseline_metadata(config),
         },
     )
 
@@ -221,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         "task_name": config["baseline"]["task_name"],
         "backbone": config["backbone"]["name"],
         "memgen_results_root": str(results_root),
+        **_baseline_metadata(config),
     }
 
     if args.dry_run:
@@ -250,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         check=False,
         text=True,
         capture_output=True,
+        env=_memgen_runtime_env(),
     )
     wall_time_sec = round(time.perf_counter() - start_time, 6)
     write_json(

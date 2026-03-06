@@ -51,11 +51,18 @@
 - smoke 配置默认锁定 `model.attn_implementation=sdpa`，避免当前环境缺少 `flash_attention_2` 时直接失败
 - smoke 配置默认锁定 `max_prompt_aug_num=1` 与 `max_inference_aug_num=1`，先验证可运行性，不提前做大 sweep
 - `gpqa` 在真正启动官方进程前会先做 Hugging Face 认证 preflight；未登录时直接在 adapter 层失败并写明原因
+- baseline 配置层现在显式暴露以下字段：
+  - `trigger_active`
+  - `insertion_profile`
+  - `requires_trained_checkpoint`
+  - `load_model_path`
 - 真实 run 输出会同时保留两层产物：
   - 统一层：`metrics.json`、`predictions.jsonl`
   - 官方原始层：`memgen_raw/answer.json`、`memgen_raw/launcher.json`、`memgen_raw/log.txt`
 - `run_memgen.py` 会把官方静态任务 `answer.json` 或动态任务 `conversations.txt` 翻译成统一 `predictions.jsonl`，并把 `compute_reward`、`num_predictions`、`wall_time_sec` 写回统一 `metrics.json`
 - 当前已验证 `model.trigger.active=True` 的最小 smoke 路径，配置见 `configs/exp/memgen_gsm8k_qwen25_smoke_eval_trigger_on.yaml`
+- 正式可比的 trigger baseline 模板见 `configs/exp/memgen_gsm8k_qwen25_eval_trigger_trained_template.yaml`；若 checkpoint 缺失，adapter 会在 preflight 阶段直接报错
+- adapter 运行 MemGen 时默认注入 `TOKENIZERS_PARALLELISM=false`，用脚本规则消除 `kodcode` 一类 code-eval task 的稳定 fork 警告
 
 ## Known Pitfalls
 
@@ -66,5 +73,5 @@
 - `gpqa` 使用的 `Idavidrein/gpqa` 当前是 gated dataset；没有 Hugging Face 认证时只能验证到 launch / config 层，不能完成真实 smoke
 - 现在这类 `gpqa` 认证缺失会由 adapter preflight 直接报错，不再先启动官方进程再失败
 - `triviaqa` 属于动态环境任务，官方输出不是 `answer.json` 而是 `conversations.txt`；统一 adapter 已补动态翻译分支
-- `kodcode` 评测会在 reward 计算里 fork 子进程执行测试代码；当前 smoke 可跑，但会出现 Hugging Face tokenizers 的 `forked after parallelism` 警告，后续可考虑在入口层显式设置 `TOKENIZERS_PARALLELISM=false`
+- `kodcode` 评测会在 reward 计算里 fork 子进程执行测试代码；该坑已升级为脚本规则，adapter 默认设置 `TOKENIZERS_PARALLELISM=false`
 - `trigger.active=True` 在 `load_model_path=null` 时也能跑通，但这只是 trigger-path smoke，不代表训练后的正式 MemGen trigger baseline；正式可比版本仍需要对齐触发器权重来源

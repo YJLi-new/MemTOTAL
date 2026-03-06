@@ -16,6 +16,8 @@ baseline:
   task_name: gsm8k
   memgen_run_mode: evaluate
   memgen_config_path: configs/latent_memory/gsm8k.yaml
+  trigger_active: false
+  insertion_profile: single_turn_smoke
   load_model_path: null
   max_prompt_aug_num: 1
   max_inference_aug_num: 1
