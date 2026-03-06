@@ -235,3 +235,4 @@
 - 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置
 - 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=76`
 - 当前 dual-import protocol suite 位于 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`：它已真实导入 qwen25 的 `MemGen` 点，并把尚未完成的 qwen3 `MemGen` 点记录为 skipped import
+- `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh` 现提供一个任务定制 watcher：等待 `runs/verify/memgen-story-cloze-qwen3-smoke/metrics.json` 出现后，自动刷新 dual-import protocol suite

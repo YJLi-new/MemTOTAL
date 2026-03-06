@@ -159,6 +159,7 @@
 - 2026-03-07 02:50 UTC: baseline grid 现已支持 `grid.reuse_existing_runs`，并已在 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke` 上真实验证缓存复用。相同输出目录下重跑 protocol-smoke suite 时，不再重复执行已有 cell；当前记录为 `train_run_count=0`、`eval_run_count=0`、`reused_train_run_count=52`、`reused_eval_run_count=76`。当前复用判定已收紧到 `required artifacts + config.snapshot + seed`，为后续追加 `MemGen / Qwen3-8B` 导入点时避免整套重跑提供了基础。
 - 2026-03-07 03:03 UTC: baseline grid 的 `imports` 现已支持 `allow_missing: true`。`./scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh 1001 results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke` 已在真实状态下验证：qwen25 的 `MemGen` 点成功导入，qwen3 的 `MemGen / story_cloze` 点因 `metrics.json` 尚未落地而被记为 `skipped_import`。当前 dual-import suite 结果为 `imported_eval_count=1`、`skipped_import_count=1`。
 - 2026-03-07 03:04 UTC: 已新增 `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` 并从该配置启动 `MemGen / Qwen3-8B / story_cloze` 的真实 smoke。当前官方 working dir 已落在 `MemGen-master/results/evaluate/story_cloze/Qwen3-8B/...`，但 run 仍处于 Hugging Face 权重下载/模型准备阶段，尚未产出统一 `metrics.json`。
+- 2026-03-07 03:06 UTC: 已新增 `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh`。`ONCE=1` 已验证其在目标文件未就绪时会把状态写为 `waiting`；实际 watcher 现已启动，并会在 `runs/verify/memgen-story-cloze-qwen3-smoke/metrics.json` 出现后自动刷新 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`。
 
 ## Decision Log
 

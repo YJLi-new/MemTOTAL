@@ -40,6 +40,7 @@
 - protocol-smoke script: `scripts/run_story_cloze_baseline_grid_protocol_smoke.sh`
 - dual-import protocol config: `configs/exp/m5_story_cloze_baseline_grid_protocol_with_memgen_dual_smoke.yaml`
 - dual-import protocol script: `scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh`
+- watcher script: `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh`
 
 ## Verified Commands
 
@@ -50,6 +51,7 @@
 python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --seed 701 --output_root data/benchmarks/materialized --manifest_root data/benchmarks/manifests --summary_path data/benchmarks/source_summary.json
 ./scripts/run_story_cloze_baseline_grid_protocol_smoke.sh 997 results/generated/m5-story-cloze-baseline-grid-protocol-smoke
 ./scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh 1001 results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke
+ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 ```
 
 ## Verified Outputs
@@ -69,6 +71,8 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
 - `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/adapt_cost.json`
 - `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/grid_plan.json`
 - `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/watcher_state.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/watcher.log`
 - `data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl`
 
 当前已验证：
@@ -91,6 +95,7 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
   - `skipped_import_count = 1`
   - 当前已导入 `MemGen / Qwen2.5-1.5B-Instruct`
   - 当前将 `MemGen / Qwen3-8B` 记录为 skipped import，等待真实 run 完成后同目录重跑
+  - watcher 当前已进入 `waiting` 状态，等待 `runs/verify/memgen-story-cloze-qwen3-smoke/metrics.json`
 
 ## Current Smoke Signals
 
