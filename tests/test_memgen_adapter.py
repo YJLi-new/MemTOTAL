@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from memtotal.baselines.run_memgen import (
     _build_memgen_options,
     _memgen_runtime_env,
     _preflight_failure,
+    _required_free_disk_gb,
     _resolve_load_model_path,
     _translate_conversations_txt,
 )
@@ -86,6 +88,25 @@ class MemGenAdapterTest(unittest.TestCase):
         )
         self.assertIsNotNone(message)
         self.assertIn("requires a trained checkpoint", message)
+
+    def test_preflight_failure_for_low_disk_space(self) -> None:
+        config = {
+            "baseline": {
+                "task_name": "story_cloze",
+                "repo_root": "MemGen-master",
+                "load_model_path": None,
+            },
+            "backbone": {
+                "name": "Qwen3-8B",
+            },
+        }
+        self.assertEqual(_required_free_disk_gb(config), 12.0)
+        fake_usage = shutil._ntuple_diskusage(30 * 1024**3, 29 * 1024**3, 1 * 1024**3)
+        with patch("memtotal.baselines.run_memgen.shutil.disk_usage", return_value=fake_usage):
+            message = _preflight_failure(config)
+        self.assertIsNotNone(message)
+        self.assertIn("Insufficient free disk", message)
+        self.assertIn("cleanup_hf_cache.sh", message)
 
     def test_build_options_includes_explicit_trigger_active(self) -> None:
         options = _build_memgen_options(

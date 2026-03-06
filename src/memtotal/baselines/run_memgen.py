@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -16,6 +17,11 @@ from memtotal.baselines.budgeting import build_baseline_budget_fields
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json, write_jsonl
 from memtotal.utils.repro import set_seed, validate_backbone_name
+
+_MIN_FREE_DISK_GB_BY_BACKBONE = {
+    "Qwen2.5-1.5B-Instruct": 4.0,
+    "Qwen3-8B": 12.0,
+}
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -94,6 +100,25 @@ def _memgen_runtime_env() -> dict[str, str]:
     return env
 
 
+def _required_free_disk_gb(config: dict) -> float:
+    baseline_override = config["baseline"].get("min_free_disk_gb")
+    if baseline_override is not None:
+        return float(baseline_override)
+    return _MIN_FREE_DISK_GB_BY_BACKBONE.get(config["backbone"]["name"], 8.0)
+
+
+def _free_disk_bytes(config: dict) -> int:
+    repo_root = Path(config["baseline"]["repo_root"]).resolve()
+    return shutil.disk_usage(repo_root).free
+
+
+def _cleanup_hint() -> str:
+    return (
+        "./scripts/cleanup_hf_cache.sh --drop-datasets --drop-incomplete-model-downloads "
+        "or move Hugging Face cache to /root/autodl-tmp"
+    )
+
+
 def _baseline_metadata(config: dict) -> dict[str, object]:
     baseline_cfg = config["baseline"]
     load_model_path = _resolve_load_model_path(config)
@@ -120,6 +145,14 @@ def _preflight_failure(config: dict) -> str | None:
         return (
             "This MemGen config requires a trained checkpoint, but `load_model_path` is empty. "
             "Set `baseline.load_model_path` to a valid weaver/trigger checkpoint directory."
+        )
+    required_free_disk_gb = _required_free_disk_gb(config)
+    free_disk_gb = _free_disk_bytes(config) / (1024**3)
+    if free_disk_gb < required_free_disk_gb:
+        return (
+            f"Insufficient free disk for MemGen {config['backbone']['name']} launch: "
+            f"need at least {required_free_disk_gb:.1f} GiB free, found {free_disk_gb:.1f} GiB. "
+            f"Suggested cleanup: `{_cleanup_hint()}`."
         )
     if load_model_path is not None and not load_model_path.exists():
         return f"Configured load_model_path does not exist: {load_model_path}"
@@ -302,15 +335,21 @@ def main(argv: list[str] | None = None) -> int:
         env=_memgen_runtime_env(),
     )
     wall_time_sec = round(time.perf_counter() - start_time, 6)
-    write_json(
-        output_dir / "memgen_process.json",
-        {
-            "returncode": result.returncode,
-            "wall_time_sec": wall_time_sec,
-            "stdout_tail": result.stdout[-4000:],
-            "stderr_tail": result.stderr[-4000:],
-        },
-    )
+    process_payload = {
+        "returncode": result.returncode,
+        "wall_time_sec": wall_time_sec,
+        "stdout_tail": result.stdout[-4000:],
+        "stderr_tail": result.stderr[-4000:],
+    }
+    try:
+        write_json(output_dir / "memgen_process.json", process_payload)
+    except OSError as error:
+        if error.errno != errno.ENOSPC:
+            raise
+        raise RuntimeError(
+            "MemGen subprocess finished but adapter could not write memgen_process.json because the filesystem is full. "
+            f"Free space and rerun. Suggested cleanup: `{_cleanup_hint()}`."
+        ) from error
     metrics["returncode"] = result.returncode
     metrics["wall_time_sec"] = wall_time_sec
     working_dir = _resolve_new_working_dir(results_root, before_dirs)

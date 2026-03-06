@@ -51,6 +51,16 @@
 
 - smoke 配置默认锁定 `model.attn_implementation=sdpa`，避免当前环境缺少 `flash_attention_2` 时直接失败
 - smoke 配置默认锁定 `max_prompt_aug_num=1` 与 `max_inference_aug_num=1`，先验证可运行性，不提前做大 sweep
+- adapter 现在会在真正启动官方进程前做磁盘空间 preflight：
+  - `Qwen2.5-1.5B-Instruct` 默认至少需要 `4 GiB` 空闲
+  - `Qwen3-8B` 默认至少需要 `12 GiB` 空闲
+  - 如需覆盖，可在配置里显式设 `baseline.min_free_disk_gb`
+- 当前机器上，Hugging Face cache 已迁到数据盘并通过符号链接回接：
+  - source path: `/root/.cache/huggingface`
+  - target path: `/root/autodl-tmp/.cache/huggingface`
+- 相关固定脚本：
+  - `./scripts/move_hf_cache_to_data_disk.sh`
+  - `./scripts/cleanup_hf_cache.sh --drop-datasets --drop-incomplete-model-downloads`
 - `gpqa` 在真正启动官方进程前会先做 Hugging Face 认证 preflight；未登录时直接在 adapter 层失败并写明原因
 - baseline 配置层现在显式暴露以下字段：
   - `trigger_active`
@@ -76,3 +86,4 @@
 - `triviaqa` 属于动态环境任务，官方输出不是 `answer.json` 而是 `conversations.txt`；统一 adapter 已补动态翻译分支
 - `kodcode` 评测会在 reward 计算里 fork 子进程执行测试代码；该坑已升级为脚本规则，adapter 默认设置 `TOKENIZERS_PARALLELISM=false`
 - `trigger.active=True` 在 `load_model_path=null` 时也能跑通，但这只是 trigger-path smoke，不代表训练后的正式 MemGen trigger baseline；正式可比版本仍需要对齐触发器权重来源
+- `Qwen3-8B` 的 `story_cloze` 首次真实 smoke 曾在系统盘 `30G` overlay 上因 `No space left on device` 失败；当前这一类问题已升级为 adapter preflight 和固定 cache 脚本，不再依赖临时手工清理

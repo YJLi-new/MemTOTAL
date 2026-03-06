@@ -8,6 +8,8 @@
 
 - `train.py` / `eval.py` / `analysis.py`: 根入口，满足 `python -m train|eval|analysis`
 - `scripts/run_memgen.sh`: MemGen baseline 的统一 adapter 入口，先支持 dry-run launch 计划与后续真实执行桥接
+- `scripts/move_hf_cache_to_data_disk.sh`: 将 `~/.cache/huggingface` 迁到数据盘并回接符号链接，避免系统盘被模型/数据缓存打满
+- `scripts/cleanup_hf_cache.sh`: 清理 Hugging Face datasets cache 与未完成的模型下载碎片，用于 real-source benchmark / MemGen 的磁盘治理
 - `src/memtotal/models/`: backbone wrapper、Writer/Reader/Fuser/Injector、Segmenter
 - `src/memtotal/training/`: smoke 训练闭环
 - `src/memtotal/training/m3.py`: Stage A/B/C 的 toy smoke runner，负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
@@ -206,6 +208,7 @@
   - 支持通过 `grid.reuse_existing_runs` 复用已存在的 `train/eval` 产物，并通过 `config.snapshot + seed` 校验避免误复用
   - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
+- `run_memgen.py` 现在会在启动前做磁盘空间 preflight，并在空间不足时直接给出固定清理建议，而不是等官方进程中途失败。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
 - `analysis` 会把 MemGen 的 `compute_reward` 视为主分数字段之一，与自有 eval 的 `accuracy` 一起进入 `summary.csv` / `summary.svg`。
 - prompt baseline 当前会额外写：

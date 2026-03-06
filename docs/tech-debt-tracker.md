@@ -55,3 +55,5 @@
 - `MetaPrompting` 当前已补到 `story_cloze` real-source smoke，但还没有进 `gsm8k / narrativeqa / gpqa` 等更强任务，也没有与 Prompt Tuning / LoRA 对齐到正式 shot/step 网格。
 - `baseline_budget_audit` 现已能自动检查 `prompting / meta_prompting / adapter` 的预算字段与双 backbone 覆盖；但 `MemGen` 仍未纳入同一条自动预算审计，因为它的外部训练/权重成本还没有在本仓库统一建模。
 - benchmark materialize 现在已支持按 `max_examples` 生成不同的 real-smoke 文件名，避免 `smoke4` 与 `smoke8` 互相覆盖；但目前 manifest 仍只记录每个 benchmark 最近一次 materialize 的那个子集，还不是“多子集并存”的完整台账。
+- Hugging Face cache 现已迁到 `/root/autodl-tmp/.cache/huggingface`，并新增了固定脚本做 cache 迁移/清理；但这仍是“本机 runbook 级”约束，后续若换机器或换容器镜像，最好把数据盘/cache 根路径做成更显式的配置。
+- `MemGen / Qwen3-8B / story_cloze` 的真实 smoke 目前不再被磁盘阻塞，但官方进程仍在长时间 CPU 侧下载/准备模型；等这条 run 完成后，还需要把结果正式接进 baseline grid 的 imported rows。
