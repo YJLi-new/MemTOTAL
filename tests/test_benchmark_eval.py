@@ -180,6 +180,12 @@ class BenchmarkEvalTest(unittest.TestCase):
                             "Alice leaves London.",
                             "She travels to Paris and solves a mystery.",
                         ],
+                        "story_chunk_pool": [
+                            "Alice leaves London.",
+                            "She waits at the station in silence.",
+                            "She travels to Paris and solves a mystery.",
+                            "The detective reviews the case notes.",
+                        ],
                         "question": "Where does Alice travel?",
                         "answer": "Paris",
                         "aliases": ["Paris", "She travels to Paris"],
@@ -189,9 +195,11 @@ class BenchmarkEvalTest(unittest.TestCase):
                         "story_word_count": 8,
                         "story_excerpt_chars": 44,
                         "story_segment_words": 160,
+                        "story_chunk_pool_size": 4,
                         "story_segments_materialized": 2,
-                        "story_total_segments": 2,
+                        "story_total_segments": 4,
                         "story_selection_strategy": "evenly_spaced_chunks",
+                        "story_selected_indexes": [0, 2],
                         "story_truncated_for_smoke": False,
                         "narrativeqa_view": "full_text_segmented",
                     }
@@ -212,6 +220,7 @@ class BenchmarkEvalTest(unittest.TestCase):
                     "smoke_subset": "hf_real_smoke4_full_text_segmented",
                     "dataset_path": str(dataset_path),
                     "metric_name": "f1",
+                    "narrativeqa_runtime": {"selector": "question_aware", "segment_budget": 2},
                     "evaluator": {"type": "qa_f1"},
                 },
                 "backbone": {
@@ -266,6 +275,8 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertEqual(metrics["f1"], 1.0)
             self.assertIn("extra_metrics", predictions[0])
             self.assertIn("f1", predictions[0]["extra_metrics"])
+            self.assertEqual(predictions[0]["benchmark_metadata"]["story_runtime_segment_budget"], 2)
+            self.assertEqual(predictions[0]["benchmark_metadata"]["story_runtime_selector"], "question_aware")
 
 
 if __name__ == "__main__":

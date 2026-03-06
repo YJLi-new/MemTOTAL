@@ -406,7 +406,7 @@ def _score_segment_for_query(segment: str, query_tokens: list[str]) -> float:
     return overlap + coverage + density
 
 
-def _select_story_segment_indexes(
+def select_narrativeqa_story_segment_indexes(
     segments: list[str],
     *,
     max_segments: int,
@@ -445,13 +445,13 @@ def _select_story_segment_indexes(
     return sorted(selected)[:max_segments], "_plus_".join(strategy_parts)
 
 
-def _select_story_segments(
+def select_narrativeqa_story_segments(
     segments: list[str],
     *,
     max_segments: int,
     query_text: str,
 ) -> tuple[list[str], list[int], str]:
-    selected_indexes, strategy = _select_story_segment_indexes(
+    selected_indexes, strategy = select_narrativeqa_story_segment_indexes(
         segments,
         max_segments=max_segments,
         query_text=query_text,
@@ -603,7 +603,7 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
         raise ValueError("NarrativeQA row is missing both full story text and summary text.")
     chunked_story = _trim_story_front_matter(_chunk_story_text(story_source, max_words=_NARRATIVEQA_SEGMENT_WORDS))
     question_text = str(row.get("question", {}).get("text", "")).strip()
-    selected_story_segments, selected_story_indexes, selection_strategy = _select_story_segments(
+    selected_story_segments, selected_story_indexes, selection_strategy = select_narrativeqa_story_segments(
         chunked_story,
         max_segments=_NARRATIVEQA_MAX_SEGMENTS,
         query_text=question_text,
@@ -613,6 +613,7 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
         "id": f"{document.get('id', 'narrativeqa')}-q{index}",
         "story": story_excerpt,
         "story_segments": selected_story_segments,
+        "story_chunk_pool": chunked_story,
         "question": question_text,
         "answer": answers[0],
         "aliases": answers,
@@ -622,6 +623,7 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
         "story_word_count": len(story_source.split()),
         "story_excerpt_chars": len(story_excerpt),
         "story_segment_words": _NARRATIVEQA_SEGMENT_WORDS,
+        "story_chunk_pool_size": len(chunked_story),
         "story_segments_materialized": len(selected_story_segments),
         "story_total_segments": len(chunked_story),
         "story_selected_indexes": selected_story_indexes,

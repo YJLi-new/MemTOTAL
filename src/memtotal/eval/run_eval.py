@@ -124,6 +124,21 @@ def main(argv: list[str] | None = None) -> int:
             capability_metric_names[capability_name] = str(
                 score_payload.get("capability_metric_name", example.get("capability_metric_name", evaluator.metric_name))
             )
+        benchmark_metadata = {
+            key: example[key]
+            for key in (
+                "narrativeqa_view",
+                "story_chunk_pool_size",
+                "story_segments_materialized",
+                "story_selected_indexes",
+                "story_selection_strategy",
+                "story_runtime_segment_budget",
+                "story_runtime_selector",
+                "story_query_token_count",
+                "story_truncated_for_smoke",
+            )
+            if key in example
+        }
         predictions.append(
             {
                 "id": example["id"],
@@ -154,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                 "injection_anchors": forward.injection_anchors,
                 "segment_stats": forward.segment_stats,
                 "generated_text": generated_text,
+                "benchmark_metadata": benchmark_metadata or None,
             }
         )
 

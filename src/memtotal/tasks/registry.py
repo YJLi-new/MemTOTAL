@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from memtotal.data import load_jsonl_dataset
+from memtotal.tasks.sources import select_narrativeqa_story_segments
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ TASK_SPECS: dict[str, TaskSpec] = {
         passthrough_fields=(
             "story",
             "story_segments",
+            "story_chunk_pool_size",
             "summary_title",
             "document_kind",
             "story_chars",
@@ -99,6 +101,8 @@ TASK_SPECS: dict[str, TaskSpec] = {
             "story_selected_indexes",
             "story_selection_strategy",
             "story_query_token_count",
+            "story_runtime_segment_budget",
+            "story_runtime_selector",
             "story_truncated_for_smoke",
             "narrativeqa_view",
         ),
@@ -210,6 +214,7 @@ def _build_canonical_benchmark_example(
     raw_row: dict[str, Any],
     spec: TaskSpec,
     *,
+    task_cfg: dict[str, Any],
     task_name: str,
     smoke_subset: str | None,
 ) -> dict[str, Any]:
@@ -217,7 +222,24 @@ def _build_canonical_benchmark_example(
     render_context = dict(raw_row)
     if spec.benchmark_id == "narrativeqa":
         title = str(raw_row.get("summary_title", "")).strip()
+        runtime_cfg = task_cfg.get("narrativeqa_runtime", {})
         story_segments = [str(segment).strip() for segment in raw_row.get("story_segments", []) if str(segment).strip()]
+        story_chunk_pool = [str(segment).strip() for segment in raw_row.get("story_chunk_pool", []) if str(segment).strip()]
+        if story_chunk_pool:
+            selected_segments, selected_indexes, selection_strategy = select_narrativeqa_story_segments(
+                story_chunk_pool,
+                max_segments=int(runtime_cfg.get("segment_budget", len(story_segments) or 6)),
+                query_text=str(raw_row.get("question", "")),
+            )
+            story_segments = selected_segments
+            render_context["story_segments"] = selected_segments
+            render_context["story_selected_indexes"] = selected_indexes
+            render_context["story_selection_strategy"] = selection_strategy
+            render_context["story_runtime_segment_budget"] = int(runtime_cfg.get("segment_budget", len(selected_segments)))
+            render_context["story_runtime_selector"] = str(runtime_cfg.get("selector", "question_aware"))
+            render_context["story_segments_materialized"] = len(selected_segments)
+            render_context["story_excerpt_chars"] = len(" ".join(selected_segments).strip())
+            render_context["story_truncated_for_smoke"] = len(selected_segments) < len(story_chunk_pool)
         if not story_segments:
             story_text = str(raw_row.get("story", "")).strip()
             if story_text:
@@ -225,8 +247,13 @@ def _build_canonical_benchmark_example(
         story_blocks: list[str] = []
         if title:
             story_blocks.append(f"Title: {title}")
+        pool_size = int(render_context.get("story_chunk_pool_size", len(story_segments)))
+        selected_indexes = [int(index) for index in render_context.get("story_selected_indexes", list(range(len(story_segments))))]
         for segment_index, segment_text in enumerate(story_segments):
-            story_blocks.append(f"Story segment {segment_index + 1}/{len(story_segments)}: {segment_text}")
+            pool_index = selected_indexes[segment_index] + 1 if segment_index < len(selected_indexes) else segment_index + 1
+            story_blocks.append(
+                f"Story segment {segment_index + 1}/{len(story_segments)} [pool {pool_index}/{pool_size}]: {segment_text}"
+            )
         render_context["story_segments_block"] = " || ".join(story_blocks)
     render_context["choices_block"] = _format_choices_block(choices)
     segment = spec.prompt_template.format(**render_context)
@@ -257,8 +284,8 @@ def _build_canonical_benchmark_example(
             raise ValueError(f"{spec.benchmark_id} aliases must be a list when provided.")
         example["aliases"] = [str(alias) for alias in aliases]
     for field_name in spec.passthrough_fields:
-        if field_name in raw_row:
-            example[field_name] = raw_row[field_name]
+        if field_name in render_context:
+            example[field_name] = render_context[field_name]
     return example
 
 
@@ -273,6 +300,7 @@ def load_task_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
         _build_canonical_benchmark_example(
             raw_row,
             spec,
+            task_cfg=task_cfg,
             task_name=str(task_cfg["name"]),
             smoke_subset=task_cfg.get("smoke_subset"),
         )

@@ -87,6 +87,14 @@ class TaskRegistryTest(unittest.TestCase):
                             "Alice leaves London.",
                             "She arrives in Paris and investigates a mystery.",
                         ],
+                        "story_chunk_pool": [
+                            "Alice leaves London.",
+                            "She waits at the station in silence.",
+                            "She arrives in Paris and investigates a mystery.",
+                            "A friend sends a telegram from Rome.",
+                            "The detective recovers the stolen map in Paris.",
+                            "The story closes with a report from London.",
+                        ],
                         "question": "Where does Alice investigate the mystery?",
                         "answer": "Paris",
                         "aliases": ["Paris"],
@@ -98,7 +106,8 @@ class TaskRegistryTest(unittest.TestCase):
                         "story_segment_words": 160,
                         "story_segments_materialized": 2,
                         "story_total_segments": 6,
-                        "story_selected_indexes": [1, 4],
+                        "story_chunk_pool_size": 6,
+                        "story_selected_indexes": [0, 2],
                         "story_selection_strategy": "anchors_plus_question_overlap",
                         "story_query_token_count": 3,
                         "story_truncated_for_smoke": True,
@@ -121,6 +130,7 @@ class TaskRegistryTest(unittest.TestCase):
                     "smoke_subset": "hf_real_smoke4_full_text_segmented",
                     "dataset_path": str(dataset_path),
                     "metric_name": "f1",
+                    "narrativeqa_runtime": {"selector": "question_aware", "segment_budget": 3},
                     "evaluator": {"type": "qa_f1"},
                 },
                 "backbone": {
@@ -156,12 +166,15 @@ class TaskRegistryTest(unittest.TestCase):
             dataset = load_task_dataset(load_config(config_path))
             self.assertEqual(len(dataset), 1)
             self.assertEqual(dataset[0]["benchmark_id"], "narrativeqa")
-            self.assertIn("Story segment 1/2", dataset[0]["segment"])
-            self.assertIn("Story segment 2/2", dataset[0]["segment"])
+            self.assertIn("Story segment 1/3 [pool 1/6]", dataset[0]["segment"])
+            self.assertIn("Story segment 2/3 [pool 3/6]", dataset[0]["segment"])
             self.assertIn("Question: Where does Alice investigate the mystery?", dataset[0]["segment"])
             self.assertEqual(dataset[0]["narrativeqa_view"], "full_text_segmented")
-            self.assertEqual(dataset[0]["story_selected_indexes"], [1, 4])
+            self.assertEqual(len(dataset[0]["story_segments"]), 3)
+            self.assertIn(2, dataset[0]["story_selected_indexes"])
             self.assertEqual(dataset[0]["story_query_token_count"], 3)
+            self.assertEqual(dataset[0]["story_runtime_segment_budget"], 3)
+            self.assertEqual(dataset[0]["story_runtime_selector"], "question_aware")
 
 
 if __name__ == "__main__":

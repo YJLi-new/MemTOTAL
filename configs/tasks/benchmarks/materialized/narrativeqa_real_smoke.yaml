@@ -3,8 +3,11 @@ task:
   benchmark_id: narrativeqa
   domain: narrative
   split: eval
-  smoke_subset: hf_real_smoke4_qaware6x128
+  smoke_subset: hf_real_smoke4_runtime_pool_qaware6x128
   dataset_path: data/benchmarks/materialized/narrativeqa/eval-real-smoke4.jsonl
   metric_name: f1
+  narrativeqa_runtime:
+    selector: question_aware
+    segment_budget: 6
   evaluator:
     type: qa_f1

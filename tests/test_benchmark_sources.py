@@ -20,11 +20,11 @@ from memtotal.tasks.sources import (
     _canonicalize_gsm8k,
     _canonicalize_math,
     _canonicalize_narrativeqa,
-    _select_story_segment_indexes,
     _canonicalize_story_cloze,
     _canonicalize_triviaqa,
     get_benchmark_source,
     materialize_benchmark_source,
+    select_narrativeqa_story_segment_indexes,
 )
 
 
@@ -107,6 +107,8 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(canonical["narrativeqa_view"], "full_text_segmented")
         self.assertEqual(canonical["story_segments_materialized"], 6)
         self.assertGreater(canonical["story_total_segments"], canonical["story_segments_materialized"])
+        self.assertEqual(canonical["story_chunk_pool_size"], canonical["story_total_segments"])
+        self.assertEqual(len(canonical["story_chunk_pool"]), canonical["story_total_segments"])
         self.assertTrue(canonical["story_truncated_for_smoke"])
         self.assertEqual(len(canonical["story_segments"]), 6)
         self.assertNotIn("PROJECT GUTENBERG", canonical["story_segments"][0].upper())
@@ -124,7 +126,7 @@ class BenchmarkSourcesTest(unittest.TestCase):
             "Everyone celebrates after the trial ends.",
             "A quiet epilogue closes the story.",
         ]
-        selected_indexes, strategy = _select_story_segment_indexes(
+        selected_indexes, strategy = select_narrativeqa_story_segment_indexes(
             segments,
             max_segments=4,
             query_text="Where is the red submarine hidden?",
