@@ -171,6 +171,10 @@ def _load_import_rows(config: dict[str, Any], *, dry_run: bool) -> list[dict[str
     return rows
 
 
+def _has_completed_artifacts(run_dir: Path, required_files: list[str]) -> bool:
+    return all((run_dir / name).exists() for name in required_files)
+
+
 def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bool) -> None:
     set_seed(seed)
     config_path = Path(config["_meta"]["config_path"]).resolve()
@@ -178,12 +182,15 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
     run_root = ensure_dir(output_dir / "runs")
     grid_cells = build_grid_plan(config)
     config_overrides = dict(config["grid"].get("config_overrides", {}))
+    reuse_existing_runs = bool(config["grid"].get("reuse_existing_runs", False))
     if dry_run:
         grid_cells = grid_cells[: max(1, min(4, len(grid_cells)))]
 
     executed_cells: list[dict[str, object]] = []
     train_run_count = 0
     eval_run_count = 0
+    reused_train_run_count = 0
+    reused_eval_run_count = 0
     for cell in grid_cells:
         template_path = _resolve_template(config_path, cell.template_config)
         generated_config_path = generated_config_root / f"{cell.slug}.yaml"
@@ -198,32 +205,40 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
         if cell.family == "adapter":
             train_dir = run_dir / "train"
             eval_dir = run_dir / "eval"
-            train_main(
-                [
-                    "--config",
-                    str(generated_config_path),
-                    "--seed",
-                    str(seed),
-                    "--output_dir",
-                    str(train_dir),
-                ]
-                + (["--dry-run"] if dry_run else [])
-            )
-            train_run_count += 1
-            eval_main(
-                [
-                    "--config",
-                    str(generated_config_path),
-                    "--seed",
-                    str(seed),
-                    "--output_dir",
-                    str(eval_dir),
-                    "--checkpoint",
-                    str(train_dir / "checkpoint.pt"),
-                ]
-                + (["--dry-run"] if dry_run else [])
-            )
-            eval_run_count += 1
+            train_reused = reuse_existing_runs and _has_completed_artifacts(train_dir, ["metrics.json", "checkpoint.pt"])
+            if train_reused:
+                reused_train_run_count += 1
+            else:
+                train_main(
+                    [
+                        "--config",
+                        str(generated_config_path),
+                        "--seed",
+                        str(seed),
+                        "--output_dir",
+                        str(train_dir),
+                    ]
+                    + (["--dry-run"] if dry_run else [])
+                )
+                train_run_count += 1
+            eval_reused = reuse_existing_runs and _has_completed_artifacts(eval_dir, ["metrics.json", "predictions.jsonl"])
+            if eval_reused:
+                reused_eval_run_count += 1
+            else:
+                eval_main(
+                    [
+                        "--config",
+                        str(generated_config_path),
+                        "--seed",
+                        str(seed),
+                        "--output_dir",
+                        str(eval_dir),
+                        "--checkpoint",
+                        str(train_dir / "checkpoint.pt"),
+                    ]
+                    + (["--dry-run"] if dry_run else [])
+                )
+                eval_run_count += 1
             executed_cells.append(
                 {
                     "family": cell.family,
@@ -233,22 +248,28 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
                     "step": cell.step,
                     "train_dir": str(train_dir),
                     "eval_dir": str(eval_dir),
+                    "train_reused": train_reused,
+                    "eval_reused": eval_reused,
                 }
             )
         else:
             eval_dir = run_dir / "eval"
-            eval_main(
-                [
-                    "--config",
-                    str(generated_config_path),
-                    "--seed",
-                    str(seed),
-                    "--output_dir",
-                    str(eval_dir),
-                ]
-                + (["--dry-run"] if dry_run else [])
-            )
-            eval_run_count += 1
+            eval_reused = reuse_existing_runs and _has_completed_artifacts(eval_dir, ["metrics.json", "predictions.jsonl"])
+            if eval_reused:
+                reused_eval_run_count += 1
+            else:
+                eval_main(
+                    [
+                        "--config",
+                        str(generated_config_path),
+                        "--seed",
+                        str(seed),
+                        "--output_dir",
+                        str(eval_dir),
+                    ]
+                    + (["--dry-run"] if dry_run else [])
+                )
+                eval_run_count += 1
             executed_cells.append(
                 {
                     "family": cell.family,
@@ -257,6 +278,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
                     "shot": cell.shot,
                     "step": cell.step,
                     "eval_dir": str(eval_dir),
+                    "eval_reused": eval_reused,
                 }
             )
 
@@ -280,8 +302,11 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
             "cell_count": len(grid_cells),
             "train_run_count": train_run_count,
             "eval_run_count": eval_run_count,
+            "reused_train_run_count": reused_train_run_count,
+            "reused_eval_run_count": reused_eval_run_count,
             "imported_eval_count": len(imported_rows),
             "dry_run": dry_run,
+            "reuse_existing_runs": reuse_existing_runs,
         },
     )
     write_json(

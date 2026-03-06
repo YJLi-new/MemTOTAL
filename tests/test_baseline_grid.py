@@ -309,6 +309,58 @@ class BaselineGridTest(unittest.TestCase):
             grid_plan = json.loads((output_dir / "grid_plan.json").read_text())
             self.assertEqual(grid_plan["config_overrides"]["task"]["smoke_subset"], "override_subset")
 
+    def test_grid_runner_reuses_existing_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "grid"
+            config = {
+                "grid": {
+                    "shots": [0],
+                    "steps": [0],
+                    "reuse_existing_runs": True,
+                    "variants": [
+                        {
+                            "family": "prompting",
+                            "mode": "vanilla",
+                            "backbone": "Qwen2.5-1.5B-Instruct",
+                            "template_config": str(ROOT / "configs/exp/baseline_vanilla_story_cloze_qwen25_real_smoke.yaml"),
+                        }
+                    ],
+                }
+            }
+            config_path = Path(tmpdir) / "grid.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            self.assertEqual(
+                grid_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "996",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            first_cost = json.loads((output_dir / "adapt_cost.json").read_text())
+            self.assertEqual(first_cost["reused_eval_run_count"], 0)
+            self.assertEqual(
+                grid_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "996",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            second_cost = json.loads((output_dir / "adapt_cost.json").read_text())
+            self.assertEqual(second_cost["eval_run_count"], 0)
+            self.assertEqual(second_cost["reused_eval_run_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ experiment:
 grid:
   shots: [0, 1, 2, 4]
   steps: [0, 1, 3, 5]
+  reuse_existing_runs: true
   config_overrides:
     task:
       smoke_subset: hf_real_smoke8

@@ -22,6 +22,7 @@
 - `adapter` 当前支持 `shot=0, step=0` 的 zero-adaptation init 点
 - `adapter` 的 `shot=0, step>0` 会被自动剪掉，因为没有 support 数据可更新
 - grid runner 现已支持 `grid.imports`，用于把外部 baseline 的既有评测点导入同一条 `adapt_curve.csv`
+- grid runner 现已支持 `grid.reuse_existing_runs`，可在同一输出目录上复用已有 `train/eval` 产物，避免只改汇总配置时把整套 grid 重跑一遍
 - 当前已验证导入 `MemGen` 的 `story_cloze` `Qwen2.5-1.5B-Instruct` `0-shot / 0-step` 外部评测点
 
 ## Entry Points
@@ -74,6 +75,7 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
   - `train_run_count = 52`
   - `eval_run_count = 76`
   - `imported_eval_count = 1`
+  - 重跑复用验证：`train_run_count = 0`、`eval_run_count = 0`、`reused_train_run_count = 52`、`reused_eval_run_count = 76`
 
 ## Current Smoke Signals
 
@@ -98,3 +100,4 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
 - 仓库已经具备“在单个 suite 内循环 shot/step 网格并产出 `adapt_curve.csv`”的最小能力
 - 统一 grid 现在也能把外部 baseline 点导入同一张曲线，而不需要手工抄数
 - materialize 层现在不会再因为不同 `max_examples` 覆盖同一个 real-smoke 文件，`smoke4` 和 `smoke8` 可以并存
+- 只改导入点或汇总配置时，grid suite 现在可以直接复用已有 run，避免重复计算
