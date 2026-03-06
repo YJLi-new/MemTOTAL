@@ -35,6 +35,7 @@
 - `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` with `--seed 62`
 - `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` with `--seed 53`
 - `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` with `--seed 71`
+- `configs/exp/memgen_gsm8k_qwen25_smoke_eval_trigger_on.yaml` with `--seed 81` for trigger-path smoke validation
 - `configs/exp/memgen_gsm8k_qwen25_eval.yaml` with `--seed 11` for dry-run launch-plan validation
 - `configs/exp/memgen_gsm8k_qwen3_eval.yaml` with `--seed 17` for dry-run launch-plan validation
 - `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` with `--seed 52` verifies gated-dataset preflight when HF auth is absent
@@ -54,6 +55,7 @@
   - 统一层：`metrics.json`、`predictions.jsonl`
   - 官方原始层：`memgen_raw/answer.json`、`memgen_raw/launcher.json`、`memgen_raw/log.txt`
 - `run_memgen.py` 会把官方静态任务 `answer.json` 或动态任务 `conversations.txt` 翻译成统一 `predictions.jsonl`，并把 `compute_reward`、`num_predictions`、`wall_time_sec` 写回统一 `metrics.json`
+- 当前已验证 `model.trigger.active=True` 的最小 smoke 路径，配置见 `configs/exp/memgen_gsm8k_qwen25_smoke_eval_trigger_on.yaml`
 
 ## Known Pitfalls
 
@@ -65,3 +67,4 @@
 - 现在这类 `gpqa` 认证缺失会由 adapter preflight 直接报错，不再先启动官方进程再失败
 - `triviaqa` 属于动态环境任务，官方输出不是 `answer.json` 而是 `conversations.txt`；统一 adapter 已补动态翻译分支
 - `kodcode` 评测会在 reward 计算里 fork 子进程执行测试代码；当前 smoke 可跑，但会出现 Hugging Face tokenizers 的 `forked after parallelism` 警告，后续可考虑在入口层显式设置 `TOKENIZERS_PARALLELISM=false`
+- `trigger.active=True` 在 `load_model_path=null` 时也能跑通，但这只是 trigger-path smoke，不代表训练后的正式 MemGen trigger baseline；正式可比版本仍需要对齐触发器权重来源

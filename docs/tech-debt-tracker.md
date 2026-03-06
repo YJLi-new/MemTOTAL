@@ -10,6 +10,7 @@
 - 验证 MemGen `trigger.active=True` 路径，并决定哪些坑需要升级为强制脚本规则。
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
 - 评估是否在 MemGen 入口层统一设置 `TOKENIZERS_PARALLELISM=false`，减少 `kodcode` 这类 code-eval 任务的 fork 警告噪声。
+- 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
 
 ## Resolved In This Bootstrap
 
