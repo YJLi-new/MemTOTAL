@@ -98,7 +98,9 @@ class TaskRegistryTest(unittest.TestCase):
                         "story_segment_words": 160,
                         "story_segments_materialized": 2,
                         "story_total_segments": 6,
-                        "story_selection_strategy": "evenly_spaced_chunks",
+                        "story_selected_indexes": [1, 4],
+                        "story_selection_strategy": "anchors_plus_question_overlap",
+                        "story_query_token_count": 3,
                         "story_truncated_for_smoke": True,
                         "narrativeqa_view": "full_text_segmented",
                     }
@@ -158,6 +160,8 @@ class TaskRegistryTest(unittest.TestCase):
             self.assertIn("Story segment 2/2", dataset[0]["segment"])
             self.assertIn("Question: Where does Alice investigate the mystery?", dataset[0]["segment"])
             self.assertEqual(dataset[0]["narrativeqa_view"], "full_text_segmented")
+            self.assertEqual(dataset[0]["story_selected_indexes"], [1, 4])
+            self.assertEqual(dataset[0]["story_query_token_count"], 3)
 
 
 if __name__ == "__main__":

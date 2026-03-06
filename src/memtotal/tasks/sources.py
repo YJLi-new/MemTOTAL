@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
@@ -12,8 +13,39 @@ from datasets import load_dataset
 from memtotal.tasks.alfworld_env import materialize_alfworld_textworld_smoke
 from memtotal.tasks.memoryagentbench import materialize_memoryagentbench_smoke
 
-_NARRATIVEQA_SEGMENT_WORDS = 160
-_NARRATIVEQA_MAX_SEGMENTS = 4
+_NARRATIVEQA_SEGMENT_WORDS = 128
+_NARRATIVEQA_MAX_SEGMENTS = 6
+_NARRATIVEQA_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
 
 
 @dataclass(frozen=True)
@@ -129,9 +161,10 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         license_note="Apache-2.0 (from the official Hugging Face dataset card metadata).",
         notes=(
             "Current smoke materializes the official full story text from the validation split, "
-            "then converts it into a small segment-aware excerpt with evenly spaced chunks. This "
-            "keeps the local smoke runnable while making the NarrativeQA path closer to the "
-            "paper-critical M_long -> M_short setting than the older summary-only scaffold."
+            "then converts it into a segment-aware excerpt with question-aware chunk selection "
+            "plus chronological anchors. This keeps the local smoke runnable while making the "
+            "NarrativeQA path closer to the paper-critical M_long -> M_short setting than the "
+            "older summary-only scaffold."
         ),
     ),
     "kodcode": BenchmarkSourceSpec(
@@ -332,19 +365,98 @@ def _chunk_story_text(text: str, *, max_words: int) -> list[str]:
     return segments or [_normalize_story_text(text)]
 
 
-def _select_story_segments(segments: list[str], *, max_segments: int) -> list[str]:
+def _selection_tokens(text: str) -> list[str]:
+    normalized = re.sub(r"[^a-z0-9\s]+", " ", text.lower())
+    return [
+        token
+        for token in normalized.split()
+        if token and token not in _NARRATIVEQA_STOPWORDS and (len(token) > 1 or token.isdigit())
+    ]
+
+
+def _evenly_spaced_indexes(total: int, count: int) -> list[int]:
+    if count <= 0 or total <= 0:
+        return []
+    if count >= total:
+        return list(range(total))
+    indexes = sorted({(slot * (total - 1)) // (count - 1) for slot in range(count)}) if count > 1 else [0]
+    candidate = 0
+    while len(indexes) < count and candidate < total:
+        if candidate not in indexes:
+            indexes.append(candidate)
+        candidate += 1
+    return sorted(indexes[:count])
+
+
+def _score_segment_for_query(segment: str, query_tokens: list[str]) -> float:
+    if not query_tokens:
+        return 0.0
+    segment_tokens = _selection_tokens(segment)
+    if not segment_tokens:
+        return 0.0
+    segment_counter = Counter(segment_tokens)
+    query_counter = Counter(query_tokens)
+    overlap_tokens = sorted(set(query_counter) & set(segment_counter))
+    overlap = float(sum(min(query_counter[token], segment_counter[token]) for token in overlap_tokens))
+    if overlap <= 0:
+        return 0.0
+    unique_overlap = float(len(overlap_tokens))
+    coverage = unique_overlap / max(1.0, float(len(set(query_tokens))))
+    density = overlap / max(1.0, float(len(segment_tokens)))
+    return overlap + coverage + density
+
+
+def _select_story_segment_indexes(
+    segments: list[str],
+    *,
+    max_segments: int,
+    query_text: str,
+) -> tuple[list[int], str]:
     if len(segments) <= max_segments:
-        return segments
+        return list(range(len(segments))), "full_story_no_truncation"
     if max_segments <= 1:
-        return [segments[0]]
-    selected_indexes = sorted({(slot * (len(segments) - 1)) // (max_segments - 1) for slot in range(max_segments)})
-    next_index = 0
-    while len(selected_indexes) < max_segments and next_index < len(segments):
-        if next_index not in selected_indexes:
-            selected_indexes.append(next_index)
-        next_index += 1
-    selected_indexes = sorted(selected_indexes[:max_segments])
-    return [segments[index] for index in selected_indexes]
+        return [0], "head_only_truncation"
+
+    query_tokens = _selection_tokens(query_text)
+    selected = set(_evenly_spaced_indexes(len(segments), min(2, max_segments)))
+    strategy_parts = ["anchors"]
+    remaining_slots = max_segments - len(selected)
+
+    if remaining_slots > 0 and query_tokens:
+        scored_indexes = [
+            (index, _score_segment_for_query(segment, query_tokens))
+            for index, segment in enumerate(segments)
+            if index not in selected
+        ]
+        for index, score in sorted(scored_indexes, key=lambda item: (-item[1], item[0])):
+            if len(selected) >= max_segments or score <= 0.0:
+                break
+            selected.add(index)
+        if len(selected) > min(2, max_segments):
+            strategy_parts.append("question_overlap")
+
+    if len(selected) < max_segments:
+        for index in _evenly_spaced_indexes(len(segments), max_segments):
+            if len(selected) >= max_segments:
+                break
+            selected.add(index)
+        strategy_parts.append("even_fill")
+
+    return sorted(selected)[:max_segments], "_plus_".join(strategy_parts)
+
+
+def _select_story_segments(
+    segments: list[str],
+    *,
+    max_segments: int,
+    query_text: str,
+) -> tuple[list[str], list[int], str]:
+    selected_indexes, strategy = _select_story_segment_indexes(
+        segments,
+        max_segments=max_segments,
+        query_text=query_text,
+    )
+    return [segments[index] for index in selected_indexes], selected_indexes, strategy
 
 
 def _trim_story_front_matter(segments: list[str]) -> list[str]:
@@ -490,13 +602,18 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
     if not story_source:
         raise ValueError("NarrativeQA row is missing both full story text and summary text.")
     chunked_story = _trim_story_front_matter(_chunk_story_text(story_source, max_words=_NARRATIVEQA_SEGMENT_WORDS))
-    selected_story_segments = _select_story_segments(chunked_story, max_segments=_NARRATIVEQA_MAX_SEGMENTS)
+    question_text = str(row.get("question", {}).get("text", "")).strip()
+    selected_story_segments, selected_story_indexes, selection_strategy = _select_story_segments(
+        chunked_story,
+        max_segments=_NARRATIVEQA_MAX_SEGMENTS,
+        query_text=question_text,
+    )
     story_excerpt = " ".join(selected_story_segments).strip()
     return {
         "id": f"{document.get('id', 'narrativeqa')}-q{index}",
         "story": story_excerpt,
         "story_segments": selected_story_segments,
-        "question": str(row.get("question", {}).get("text", "")).strip(),
+        "question": question_text,
         "answer": answers[0],
         "aliases": answers,
         "document_kind": str(document.get("kind", "")),
@@ -507,7 +624,9 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
         "story_segment_words": _NARRATIVEQA_SEGMENT_WORDS,
         "story_segments_materialized": len(selected_story_segments),
         "story_total_segments": len(chunked_story),
-        "story_selection_strategy": "evenly_spaced_chunks",
+        "story_selected_indexes": selected_story_indexes,
+        "story_selection_strategy": selection_strategy,
+        "story_query_token_count": len(_selection_tokens(question_text)),
         "story_truncated_for_smoke": len(selected_story_segments) < len(chunked_story),
         "narrativeqa_view": "full_text_segmented" if full_story else "summary_only_fallback",
     }

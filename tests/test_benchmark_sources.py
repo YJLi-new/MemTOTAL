@@ -20,6 +20,7 @@ from memtotal.tasks.sources import (
     _canonicalize_gsm8k,
     _canonicalize_math,
     _canonicalize_narrativeqa,
+    _select_story_segment_indexes,
     _canonicalize_story_cloze,
     _canonicalize_triviaqa,
     get_benchmark_source,
@@ -85,7 +86,7 @@ class BenchmarkSourcesTest(unittest.TestCase):
     def test_narrativeqa_canonicalizer_keeps_multiple_answers(self) -> None:
         long_story = (
             "*** START OF THIS PROJECT GUTENBERG EBOOK SAMPLE *** "
-            + " ".join(f"scene{i}" for i in range(720))
+            + " ".join(f"scene{i}" for i in range(1400))
             + " *** END OF THIS PROJECT GUTENBERG EBOOK SAMPLE ***"
         )
         row = {
@@ -104,12 +105,32 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(canonical["answer"], "Paris")
         self.assertEqual(len(canonical["aliases"]), 2)
         self.assertEqual(canonical["narrativeqa_view"], "full_text_segmented")
-        self.assertEqual(canonical["story_segments_materialized"], 4)
+        self.assertEqual(canonical["story_segments_materialized"], 6)
         self.assertGreater(canonical["story_total_segments"], canonical["story_segments_materialized"])
         self.assertTrue(canonical["story_truncated_for_smoke"])
-        self.assertEqual(len(canonical["story_segments"]), 4)
+        self.assertEqual(len(canonical["story_segments"]), 6)
         self.assertNotIn("PROJECT GUTENBERG", canonical["story_segments"][0].upper())
         self.assertNotIn("PRODUCED BY", canonical["story_segments"][0].upper())
+        self.assertEqual(len(canonical["story_selected_indexes"]), canonical["story_segments_materialized"])
+        self.assertIn("anchors", canonical["story_selection_strategy"])
+
+    def test_narrativeqa_question_overlap_selection_keeps_relevant_segment(self) -> None:
+        segments = [
+            "Alice wakes up in London and reads a letter.",
+            "Bob studies ancient geometry and number theory in silence.",
+            "The red submarine is hidden beneath the glacier cave near Iceland.",
+            "A crowd gathers in the market square before sunset.",
+            "The detective later returns to London with the evidence.",
+            "Everyone celebrates after the trial ends.",
+            "A quiet epilogue closes the story.",
+        ]
+        selected_indexes, strategy = _select_story_segment_indexes(
+            segments,
+            max_segments=4,
+            query_text="Where is the red submarine hidden?",
+        )
+        self.assertIn(2, selected_indexes)
+        self.assertIn("question_overlap", strategy)
 
     def test_fever_canonicalizer_maps_three_way_labels(self) -> None:
         row = {

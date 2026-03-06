@@ -129,11 +129,11 @@
   - `data/benchmarks/manifests/<benchmark_id>.json`
   - `data/benchmarks/source_summary.json`
   - `alfworld` 目前通过 `src/memtotal/tasks/alfworld_env.py` 走官方 TextWorld 资产与一次 expert transition materialize，不再停留在手写 contract 样例
-  - `narrativeqa` 目前通过 `deepmind/narrativeqa` 的官方 HF 数据源走 `full_text_segmented` smoke 视图：从 `document.text` 切出均匀分布的 story chunks，再通过 segment-aware prompt 接入 Narrative 域 real-source harness；统一评测当前仍使用 `qa_f1` 代理口径
+  - `narrativeqa` 目前通过 `deepmind/narrativeqa` 的官方 HF 数据源走 `full_text_segmented` smoke 视图：从 `document.text` 切出 `128`-word chunks，保留 `6` 段 budget，并通过 `chronological anchors + question-overlap` 选择 story chunks，再用 segment-aware prompt 接入 Narrative 域 real-source harness；统一评测当前仍使用 `qa_f1` 代理口径
   - `memoryagentbench` 目前通过 `src/memtotal/tasks/memoryagentbench.py` 走官方 Hugging Face 数据源，并在 manifest 中显式记录 `AR / TTL / LRU / CR` 四类能力的 smoke source 与当前的 context truncation 预算
-  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T153938Z/summary.csv`
+  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T160937Z/summary.csv`
 
-当前 `M4` 已不只是本地 contract smoke。现在已有 11 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。其中特别需要区分：`MemoryAgentBench` 当前是“真实 source + 截断 context 的 smoke scaffold”，`NarrativeQA` 当前是“真实 full story source + 4-chunk segment-aware excerpt + qa_f1 代理评测”的 smoke scaffold，二者都不是正式长上下文主结果。
+当前 `M4` 已不只是本地 contract smoke。现在已有 11 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。其中特别需要区分：`MemoryAgentBench` 当前是“真实 source + 截断 context 的 smoke scaffold”，`NarrativeQA` 当前是“真实 full story source + question-aware 6-chunk segment-aware excerpt + qa_f1 代理评测”的 smoke scaffold，二者都不是正式长上下文主结果。
 
 ## M3 Failure Checks
 

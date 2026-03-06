@@ -467,9 +467,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `TTL`: `icl_trec_coarse_6600shot_balance`
   - `LRU`: `infbench_sum_eng_shots2`
   - `CR`: `factconsolidation_mh_6k`
-- `NarrativeQA` 当前通过官方 `deepmind/narrativeqa` 的 `validation` split 接入 real-source smoke，并已从早期 `summary_only` scaffold 升级为 `full_text_segmented` 视图：当前会从官方 `document.text` 切出 4 个均匀分布的 story chunks，再以 segment-aware prompt 进入统一 harness；统一评测仍先使用 `qa_f1` 代理指标。
+- `NarrativeQA` 当前通过官方 `deepmind/narrativeqa` 的 `validation` split 接入 real-source smoke，并已进一步升级为 `question-aware full_text_segmented` 视图：当前会从官方 `document.text` 切出 `128`-word chunks，保留 `6` 段 budget，并用 `chronological anchors + question-overlap` 选择 story chunks，再以 segment-aware prompt 进入统一 harness；统一评测仍先使用 `qa_f1` 代理指标。
 - `qa_f1` 与 `memoryagentbench` 这类生成式任务现在已经改为真正评估 `generated_text`，不再误用空字符串占位；因此 `MemoryAgentBench` smoke 的 capability 分项从 `20260306T153938Z` 这版开始才是有效的统一代理结果。
-- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T153938Z/summary.csv`
+- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T160937Z/summary.csv`
 - 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果；`MemoryAgentBench` 当前为了本地 stub-harness 可运行，会把 context 截断到 `512` tokens，`NarrativeQA` 当前也只是“官方 full story -> 4 chunk excerpt”的 smoke 版本，因此两者都不是正式长上下文协议结果
 
 ### P0 必须
