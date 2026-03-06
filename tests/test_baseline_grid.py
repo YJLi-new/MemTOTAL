@@ -165,6 +165,69 @@ class BaselineGridTest(unittest.TestCase):
             self.assertGreaterEqual(cost["cell_count"], 1)
             self.assertGreaterEqual(cost["eval_run_count"], 1)
 
+    def test_grid_runner_imports_external_baseline_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            imported_run = tmp / "memgen-run"
+            imported_run.mkdir()
+            (imported_run / "run_info.json").write_text(
+                json.dumps(
+                    {
+                        "backbone": "Qwen2.5-1.5B-Instruct",
+                        "task_name": "story_cloze",
+                        "smoke_subset": "hf_real_smoke4",
+                    }
+                )
+            )
+            (imported_run / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "memgen_adapter",
+                        "compute_reward": 0.75,
+                    }
+                )
+            )
+            config = {
+                "grid": {
+                    "shots": [0],
+                    "steps": [0],
+                    "variants": [],
+                    "imports": [
+                        {
+                            "family": "memgen",
+                            "mode": "external_eval",
+                            "backbone": "Qwen2.5-1.5B-Instruct",
+                            "shot": 0,
+                            "step": 0,
+                            "run_dir": str(imported_run),
+                        }
+                    ],
+                }
+            }
+            config_path = tmp / "grid.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "grid-output"
+            self.assertEqual(
+                grid_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "993",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            with (output_dir / "adapt_curve.csv").open() as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["baseline_family"], "memgen")
+            self.assertEqual(rows[0]["primary_metric"], "compute_reward")
+            cost = json.loads((output_dir / "adapt_cost.json").read_text())
+            self.assertEqual(cost["imported_eval_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

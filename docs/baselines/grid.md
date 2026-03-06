@@ -21,18 +21,23 @@
 - `prompting / meta_prompting` 当前只有 `step=0`
 - `adapter` 当前支持 `shot=0, step=0` 的 zero-adaptation init 点
 - `adapter` 的 `shot=0, step>0` 会被自动剪掉，因为没有 support 数据可更新
+- grid runner 现已支持 `grid.imports`，用于把外部 baseline 的既有评测点导入同一条 `adapt_curve.csv`
+- 当前已验证导入 `MemGen` 的 `story_cloze` `Qwen2.5-1.5B-Instruct` `0-shot / 0-step` 外部评测点
 
 ## Entry Points
 
 - config: `configs/exp/m5_story_cloze_baseline_grid_smoke.yaml`
 - script: `scripts/run_story_cloze_baseline_grid.sh`
 - module: `python -m memtotal.baselines.grid_runner`
+- import variant config: `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml`
+- import variant script: `scripts/run_story_cloze_baseline_grid_with_memgen.sh`
 
 ## Verified Commands
 
 ```bash
 ./scripts/run_story_cloze_baseline_grid.sh 991 results/generated/m5-story-cloze-baseline-grid-smoke
 ./scripts/run_story_cloze_baseline_grid.sh 992 results/generated/m5-story-cloze-baseline-grid-smoke-dryrun --dry-run
+./scripts/run_story_cloze_baseline_grid_with_memgen.sh 993 results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke
 ```
 
 ## Verified Outputs
@@ -41,6 +46,10 @@
 - `results/generated/m5-story-cloze-baseline-grid-smoke/adapt_cost.json`
 - `results/generated/m5-story-cloze-baseline-grid-smoke/summary.csv`
 - `results/generated/m5-story-cloze-baseline-grid-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_curve.csv`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/summary.csv`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/summary.svg`
 
 当前已验证：
 
@@ -48,6 +57,7 @@
 - `variant_count = 10`
 - `train_run_count = 12`
 - `eval_run_count = 24`
+- `imported_eval_count = 1`
 
 ## Current Smoke Signals
 
@@ -58,8 +68,11 @@
 - qwen3:
   - `prompting / meta_prompting`: 当前 `0-shot` 与 `2-shot` 都是 `1.0 / 0.75` 这一量级，不形成明显 few-shot 差异
   - `adapter`: 当前 `0-step` 就已达到 `1.0`，`4-step` 不再提升
+- imported external point:
+  - `MemGen / Qwen2.5-1.5B-Instruct / 0-shot / 0-step`: `compute_reward = 0.75`
 
 这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：
 
 - baseline 家族现在不再只是孤立单点 smoke
 - 仓库已经具备“在单个 suite 内循环 shot/step 网格并产出 `adapt_curve.csv`”的最小能力
+- 统一 grid 现在也能把外部 baseline 点导入同一张曲线，而不需要手工抄数

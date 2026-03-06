@@ -200,6 +200,7 @@
 - `src/memtotal/baselines/grid_runner.py` 现提供最小 baseline grid runner：
   - 当前针对 `story_cloze` real-source smoke
   - 会在单个 suite 内循环 `shots / steps`
+  - 支持通过 `grid.imports` 把外部 baseline run 导入同一条 `adapt_curve.csv`
   - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
@@ -227,3 +228,4 @@
 - baseline run 当前会统一写出 `support_examples / train_steps / trainable_parameter_count / budget_signature`
 - `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter` 三个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
 - 当前最小 baseline grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`，并已真实产出 `adapt_curve.csv`
+- 当前 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 外部评测点已可通过 `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml` 导入到同一套 grid 汇总，产物位于 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`

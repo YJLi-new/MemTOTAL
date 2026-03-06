@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from memtotal.analysis.reporting import collect_metrics, write_sanity_plot, write_summary_csv
+from memtotal.analysis.reporting import collect_metrics, resolve_primary_metric, write_sanity_plot, write_summary_csv
 from memtotal.eval.run_eval import main as eval_main
 from memtotal.training.run_train import main as train_main
 from memtotal.utils.config import load_config
@@ -120,6 +121,43 @@ def _write_adapt_curve(output_path: Path, rows: list[dict[str, object]]) -> None
             writer.writerow({key: row.get(key) for key in fieldnames})
 
 
+def _load_import_rows(config: dict[str, Any], *, dry_run: bool) -> list[dict[str, object]]:
+    imports = list(config["grid"].get("imports", []))
+    if dry_run:
+        imports = imports[: max(1, min(1, len(imports)))]
+    rows: list[dict[str, object]] = []
+    for item in imports:
+        run_dir = Path(item["run_dir"]).resolve()
+        metrics = json.loads((run_dir / "metrics.json").read_text())
+        run_info_path = run_dir / "run_info.json"
+        run_info = json.loads(run_info_path.read_text()) if run_info_path.exists() else {}
+        row: dict[str, object] = {
+            "run_dir": str(run_dir),
+            "mode": metrics.get("mode", "unknown"),
+            "backbone": item.get("backbone", run_info.get("backbone", metrics.get("backbone", "unknown"))),
+            "task_name": item.get("task_name", run_info.get("task_name", metrics.get("task_name", "unknown"))),
+            "benchmark_id": run_info.get("benchmark_id", metrics.get("benchmark_id")),
+            "smoke_subset": item.get("smoke_subset", run_info.get("smoke_subset", metrics.get("smoke_subset"))),
+            "baseline_family": item["family"],
+            "baseline_mode": item["mode"],
+            "support_examples": int(item.get("shot", metrics.get("support_examples", 0))),
+            "train_steps": int(item.get("step", metrics.get("train_steps", 0))),
+            "trainable_parameter_count": int(item.get("trainable_parameter_count", metrics.get("trainable_parameter_count", 0))),
+        }
+        for key, value in metrics.items():
+            row[key] = value
+        row["baseline_family"] = item["family"]
+        row["baseline_mode"] = item["mode"]
+        row["support_examples"] = int(item.get("shot", row.get("support_examples", 0)))
+        row["train_steps"] = int(item.get("step", row.get("train_steps", 0)))
+        row["trainable_parameter_count"] = int(item.get("trainable_parameter_count", row.get("trainable_parameter_count", 0)))
+        primary_metric, primary_score = resolve_primary_metric(row)
+        row["primary_metric"] = primary_metric
+        row["primary_score"] = primary_score
+        rows.append(row)
+    return rows
+
+
 def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bool) -> None:
     set_seed(seed)
     config_path = Path(config["_meta"]["config_path"]).resolve()
@@ -207,8 +245,9 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
                 }
             )
 
-    rows = collect_metrics(run_root)
-    eval_rows = [row for row in rows if str(row.get("mode")) == "eval_baseline"]
+    imported_rows = _load_import_rows(config, dry_run=dry_run)
+    rows = collect_metrics(run_root) + imported_rows
+    eval_rows = [row for row in rows if str(row.get("mode")) in {"eval_baseline", "memgen_adapter"}]
     summary_path = output_dir / "summary.csv"
     plot_path = output_dir / "summary.svg"
     adapt_curve_path = output_dir / "adapt_curve.csv"
@@ -226,6 +265,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
             "cell_count": len(grid_cells),
             "train_run_count": train_run_count,
             "eval_run_count": eval_run_count,
+            "imported_eval_count": len(imported_rows),
             "dry_run": dry_run,
         },
     )
@@ -235,6 +275,17 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
             "seed": seed,
             "output_dir": str(output_dir.resolve()),
             "cells": executed_cells,
+            "imports": [
+                {
+                    "run_dir": row["run_dir"],
+                    "baseline_family": row["baseline_family"],
+                    "baseline_mode": row["baseline_mode"],
+                    "backbone": row["backbone"],
+                    "support_examples": row["support_examples"],
+                    "train_steps": row["train_steps"],
+                }
+                for row in imported_rows
+            ],
         },
     )
 
