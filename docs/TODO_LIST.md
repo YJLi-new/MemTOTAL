@@ -556,6 +556,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - qwen25: `runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke/metrics.json`
   - qwen3: `runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke/metrics.json`
 - 当前会额外写出 `mean_thought_sketch_tokens / lightthinker_compression_prompt / lightthinker_thought_sketch`
+- `lightthinker` 当前已进一步接入 `story_cloze` baseline grid：
+  - minimal grid: `results/generated/m5-story-cloze-baseline-grid-smoke/`
+  - protocol-smoke grid: `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
 - 已新增最小 `rag` baseline family，支持 `family=rag`、`mode=retrieval_augmented`，当前提供 `lexical_overlap / dense_stub` 两档 retriever
 - 当前已真实跑通 `story_cloze` real-source smoke：
   - qwen25: `runs/verify/baseline_rag_story_cloze_qwen25_real_smoke/metrics.json`

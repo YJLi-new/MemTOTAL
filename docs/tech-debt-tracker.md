@@ -53,7 +53,7 @@
 - `M5` 的 `adapter` baseline family 现已接入最小 `Prompt Tuning / LoRA` 闭环，并补到了两档固定 backbone和 `story_cloze` real-source smoke；但当前仍只支持 candidate-selection 任务，后续还需要补到更多任务和更正式的 few-shot/step 网格。
 - `M5` 的 `MetaPrompting` 现已接入最小 `planner_critic` scaffold，但当前仍是单次 prompt protocol，而不是正式多轮/多-agent MetaPrompting 复现；后续若要进入主表，需要补更接近原方法的交互与预算口径。
 - `MetaPrompting` 当前已补到 `story_cloze` real-source smoke，但还没有进 `gsm8k / narrativeqa / gpqa` 等更强任务，也没有与 Prompt Tuning / LoRA 对齐到正式 shot/step 网格。
-- `M5 / P1` 的最小 `LightThinker` 路线现已接入 `story_cloze` real-source smoke 与预算审计；但当前只是一条 `compress -> answer` prompt scaffold，不是正式 `LightThinker` 论文级复现。
+- `M5 / P1` 的最小 `LightThinker` 路线现已接入 `story_cloze` real-source smoke、budget audit 与 baseline grid；但当前只是一条 `compress -> answer` prompt scaffold，不是正式 `LightThinker` 论文级复现。
 - `M5 / P1` 的最小 `RAG` 路线现已接入 `story_cloze` real-source smoke 与 protocol-smoke grid；但当前只是一条检索式 prompt baseline，不是 `MemoryBank / ExpeL / AWM` 级别的完整系统对照。
 - `baseline_budget_audit` 现已能自动检查 `prompting / meta_prompting / adapter / rag / lightthinker` 的预算字段与双 backbone 覆盖；但 `MemGen` 仍未纳入同一条自动预算审计，因为它的外部训练/权重成本还没有在本仓库统一建模。
 - benchmark materialize 现在已支持按 `max_examples` 生成不同的 real-smoke 文件名，避免 `smoke4` 与 `smoke8` 互相覆盖；但目前 manifest 仍只记录每个 benchmark 最近一次 materialize 的那个子集，还不是“多子集并存”的完整台账。

@@ -136,8 +136,6 @@ def main(argv: list[str] | None = None) -> int:
             predicted_text = ""
             if baseline_family == "adapter" and not uses_candidate_selection:
                 raise ValueError("Adapter baselines currently support only candidate-selection tasks.")
-            if baseline_family == "lightthinker" and baseline_support_examples:
-                raise ValueError("LightThinker baseline does not currently support external support_examples.")
             if uses_candidate_selection:
                 if evaluator.evaluator_type == "multiple_choice":
                     choices = example.get("choices", [])
@@ -154,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
                     candidate_texts=candidate_texts,
                     **(
                         {"support_examples": baseline_support_examples}
-                        if baseline_family in {"prompting", "meta_prompting", "rag"}
+                        if baseline_family in {"prompting", "meta_prompting", "rag", "lightthinker"}
                         else {}
                     ),
                 )
@@ -170,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
                     example,
                     **(
                         {"support_examples": baseline_support_examples}
-                        if baseline_family in {"prompting", "meta_prompting", "rag"}
+                        if baseline_family in {"prompting", "meta_prompting", "rag", "lightthinker"}
                         else {}
                     ),
                 )

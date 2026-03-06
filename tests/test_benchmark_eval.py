@@ -657,6 +657,96 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertIn("Think through the task", predictions[0]["lightthinker_compression_prompt"])
             self.assertTrue(predictions[0]["lightthinker_thought_sketch"])
 
+    def test_lightthinker_support_examples_are_injected_into_compression_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze_lightthinker_support.jsonl"
+            dataset_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "story-cloze-lightthinker-support-000",
+                                "story": "Mia packed extra notebooks before class.",
+                                "choices": [
+                                    {"label": "A", "text": "She could share supplies with her classmates."},
+                                    {"label": "B", "text": "The school turned into a submarine."},
+                                ],
+                                "label": "A",
+                                "answer": "She could share supplies with her classmates.",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "story-cloze-lightthinker-support-001",
+                                "story": "Noah charged his laptop before the meeting.",
+                                "choices": [
+                                    {"label": "A", "text": "He presented without losing power."},
+                                    {"label": "B", "text": "The office vanished into a portal."},
+                                ],
+                                "label": "A",
+                                "answer": "He presented without losing power.",
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_lightthinker_story_cloze_support_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-lightthinker-support",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "lightthinker",
+                    "mode": "compress_then_answer",
+                    "support_examples": 1,
+                    "lightthinker": {"max_sketch_tokens": 8},
+                },
+                "runtime": {
+                    "eval_examples": 2,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "lightthinker_story_cloze_support.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "lightthinker_story_cloze_support_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "551",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["support_examples"], 1)
+            self.assertIn("Demo 1 Input:", predictions[0]["lightthinker_compression_prompt"])
+            self.assertEqual(len(predictions[0]["baseline_support_ids"]), 1)
+
     def test_narrativeqa_eval_writes_f1_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

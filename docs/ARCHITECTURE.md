@@ -236,6 +236,7 @@
   - qwen25: `runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke/metrics.json`
   - qwen3: `runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke/metrics.json`
 - `lightthinker` baseline 当前会额外写出 `mean_thought_sketch_tokens / lightthinker_compression_prompt / lightthinker_thought_sketch`
+- `lightthinker` 现已进入 `story_cloze` 的 minimal/protocol baseline grid；当前会以 prompt-style family 的方式沿 `shot` 维展开，而不占用 `step>0` 训练预算
 - 当前 `Prompt Tuning / LoRA` 的最小 smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
 - 同一套 qwen3 adapter smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 - 同一套 `Prompt Tuning / LoRA` 现已推进到 `story_cloze` real-source smoke，汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
@@ -243,7 +244,7 @@
 - `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter / rag / lightthinker` 五个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
 - 当前最小 baseline grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`，并已真实产出 `adapt_curve.csv`
 - 当前 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 外部评测点已可通过 `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml` 导入到同一套 grid 汇总，产物位于 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
-- 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置；当前 variant 数已扩到 `12`，其中包含 `rag`
-- 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=76`；本轮新增 `rag` 后只补跑了 `8` 个 eval cell
+- 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置；当前 variant 数已扩到 `14`，其中包含 `rag + lightthinker`
+- 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=84`；本轮新增 `lightthinker` 后只补跑了 `8` 个 eval cell
 - 当前 dual-import protocol suite 位于 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`：它已真实导入 qwen25 的 `MemGen` 点，并把尚未完成的 qwen3 `MemGen` 点记录为 skipped import
 - `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh` 现提供一个任务定制 watcher：等待 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后，自动刷新 dual-import protocol suite

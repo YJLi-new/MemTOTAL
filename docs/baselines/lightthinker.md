@@ -19,9 +19,9 @@
 
 - 入口仍是 `python -m eval --config ...`
 - 当前不做训练：
-  - `support_examples = 0`
   - `train_steps = 0`
   - `trainable_parameter_count = 0`
+- 当前已支持 `support_examples > 0` 的 demo 注入
 - 预算 scope:
   - `compressed_reasoning_prompt`
 
@@ -36,6 +36,8 @@
 ```bash
 python -m eval --config configs/exp/baseline_lightthinker_story_cloze_qwen25_real_smoke.yaml --seed 1201 --output_dir runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke
 python -m eval --config configs/exp/baseline_lightthinker_story_cloze_qwen3_real_smoke.yaml --seed 1201 --output_dir runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke
+./scripts/run_story_cloze_baseline_grid.sh 991 results/generated/m5-story-cloze-baseline-grid-smoke
+./scripts/run_story_cloze_baseline_grid_protocol_smoke.sh 997 results/generated/m5-story-cloze-baseline-grid-protocol-smoke
 python -m analysis --config configs/exp/m5_baseline_budget_audit.yaml --seed 961 --output_dir results/generated/m5-baseline-budget-audit --input_root runs/verify
 ```
 
@@ -43,6 +45,8 @@ python -m analysis --config configs/exp/m5_baseline_budget_audit.yaml --seed 961
 
 - `runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke/metrics.json`
 - `runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke/metrics.json`
+- `results/generated/m5-story-cloze-baseline-grid-smoke/adapt_curve.csv`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_curve.csv`
 - `results/generated/m5-baseline-budget-audit/summary.csv`
 
 当前已验证结果：
@@ -53,6 +57,12 @@ python -m analysis --config configs/exp/m5_baseline_budget_audit.yaml --seed 961
 - qwen3 real-source smoke:
   - `accuracy = 0.5`
   - `mean_thought_sketch_tokens = 16.0`
+- minimal grid:
+  - qwen25: `0-shot=0.75`，`2-shot=0.75`
+  - qwen3: `0-shot=1.0`，`2-shot=1.0`
+- protocol-smoke grid:
+  - qwen25: `0-shot=0.625`，`1~4-shot=0.625`
+  - qwen3: `0-shot=0.375`，`1~4-shot=0.5`
 - `baseline_budget_audit` 当前已把 `lightthinker` 纳入自动检查：
   - `rows_collected = 50`
   - `checks_pass_rate = 1.0`

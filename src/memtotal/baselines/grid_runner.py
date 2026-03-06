@@ -60,7 +60,7 @@ def build_grid_plan(config: dict[str, Any]) -> list[GridCell]:
         mode = str(variant["mode"])
         backbone = str(variant["backbone"])
         template_config = str(variant["template_config"])
-        if family in {"prompting", "meta_prompting", "rag"}:
+        if family in {"prompting", "meta_prompting", "rag", "lightthinker"}:
             for shot in shots:
                 cells.append(
                     GridCell(

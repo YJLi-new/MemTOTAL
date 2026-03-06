@@ -29,6 +29,10 @@ grid:
       mode: retrieval_augmented
       backbone: Qwen2.5-1.5B-Instruct
       template_config: baseline_rag_story_cloze_qwen25_real_smoke.yaml
+    - family: lightthinker
+      mode: compress_then_answer
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_lightthinker_story_cloze_qwen25_real_smoke.yaml
     - family: adapter
       mode: prompt_tuning
       backbone: Qwen2.5-1.5B-Instruct
@@ -53,6 +57,10 @@ grid:
       mode: retrieval_augmented
       backbone: Qwen3-8B
       template_config: baseline_rag_story_cloze_qwen3_real_smoke.yaml
+    - family: lightthinker
+      mode: compress_then_answer
+      backbone: Qwen3-8B
+      template_config: baseline_lightthinker_story_cloze_qwen3_real_smoke.yaml
     - family: adapter
       mode: prompt_tuning
       backbone: Qwen3-8B
