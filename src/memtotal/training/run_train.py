@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from memtotal.data import load_toy_dataset
 from memtotal.pipeline import MemoryRuntime
+from memtotal.training.m3 import run_stage_a, run_stage_b, run_stage_c
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json
 from memtotal.utils.profiling import ProfileTracker
@@ -25,16 +26,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
-    config = load_config(args.config)
-    set_seed(args.seed)
-    initialize_run_artifacts(
-        output_dir=args.output_dir,
-        config=config,
-        seed=args.seed,
-        argv=sys.argv if argv is None else ["train", *argv],
-    )
+def _run_bootstrap_train(args: argparse.Namespace, config: dict) -> int:
     dataset = load_toy_dataset(config["task"]["dataset_path"])
     runtime = MemoryRuntime(config=config, seed=args.seed)
     optimizer = torch.optim.Adam(runtime.parameters(), lr=float(config["runtime"]["learning_rate"]))
@@ -124,6 +116,42 @@ def main(argv: list[str] | None = None) -> int:
     write_json(Path(args.output_dir) / "metrics.json", metrics)
     write_json(Path(args.output_dir) / "train_events.json", {"events": events})
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    config = load_config(args.config)
+    set_seed(args.seed)
+    initialize_run_artifacts(
+        output_dir=args.output_dir,
+        config=config,
+        seed=args.seed,
+        argv=sys.argv if argv is None else ["train", *argv],
+    )
+    training_stage = str(config["runtime"].get("training_stage", "bootstrap"))
+    output_dir = Path(args.output_dir)
+    if training_stage == "stage_a":
+        run_stage_a(config=config, seed=args.seed, output_dir=output_dir, dry_run=args.dry_run)
+        return 0
+    if training_stage == "stage_b":
+        run_stage_b(
+            config=config,
+            seed=args.seed,
+            output_dir=output_dir,
+            resume=args.resume,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if training_stage == "stage_c":
+        run_stage_c(
+            config=config,
+            seed=args.seed,
+            output_dir=output_dir,
+            resume=args.resume,
+            dry_run=args.dry_run,
+        )
+        return 0
+    return _run_bootstrap_train(args, config)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@
 - 验证 MemGen `trigger.active=True` 路径，并决定哪些坑需要升级为强制脚本规则。
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
 - 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
+- 当前 `toy_meta_smoke` 已打通 M3 Stage A/B/C 工件链路，但 `Stage B mean_adaptation_gain` 仍为负值；需要继续调整 toy 任务设计或 meta/adapt 目标，直到 smoke 至少能体现 source-domain 适配收益。
 
 ## Resolved In This Bootstrap
 

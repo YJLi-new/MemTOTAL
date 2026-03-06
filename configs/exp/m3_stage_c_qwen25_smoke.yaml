@@ -1,0 +1,23 @@
+includes:
+  - ../tasks/toy_meta_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: m3_stage_c_qwen25_smoke
+  stage: M3-stage-c
+  method_variant: ours-stage-c-fewshot-adapt
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  training_stage: stage_c
+  adapt_steps: 3
+  adapt_learning_rate: 0.2
+  adapt_shots:
+    - 0
+    - 1
+  device: cpu

@@ -96,6 +96,10 @@
 - 2026-03-06 11:33 UTC: 已补齐 `method.injector.position` 配置契约，支持 `segment / delimiter / random / none` 四档，并新增对应 smoke 配置；已真实验证 `delimiter`、`random`、`none` 以及默认 `segment` 的 train/eval 路径。
 - 2026-03-06 11:33 UTC: 已固定 `method.reader.conditioning` 契约：统一保存 `domain_name` 与可选 `task_name`，若缺少 `domain_key` 会在 forward 早期报错；`train/eval metrics.json` 会额外写出 `conditioning_schema`。
 - 2026-03-06 11:33 UTC: `position=none` 暴露出 toy train 在“无注入即无梯度”配置下的 harness 缺口，现已修复为显式记录 `loss_has_grad=false` 并安全结束 run，而不是在 `backward()` 阶段崩溃。
+- 2026-03-06 11:48 UTC: 已新增 `toy_meta_smoke` 数据与 M3 的 Stage A/B/C runner：`run_stage_a()` 会产出 `writer.ckpt` 与 `meta_data_manifest.json`，`run_stage_b()` 会产出 `queries_meta_init.pt`，`run_stage_c()` 会产出 `queries_adapted.pt` 与 `adapt_curve.csv`。
+- 2026-03-06 11:48 UTC: 新增 `configs/exp/m3_stage_{a,b,c}_qwen25_smoke.yaml`，并用 `python -m train ... --resume ...` 顺序真实跑通仓库内 smoke，产物位于 `runs/verify/m3-stage-a/`、`runs/verify/m3-stage-b/`、`runs/verify/m3-stage-c/`。
+- 2026-03-06 11:48 UTC: 统一 analysis 已补齐 M3 指标主分数字段识别；`best_adapt_query_accuracy`、`zero_shot_query_accuracy`、`mean_adaptation_gain` 不再在 `summary.csv` 中退化成 `none/0.0`。
+- 2026-03-06 11:48 UTC: 当前 M3 仍有一个明确阻塞未过 DoD：toy smoke 下 `Stage B mean_adaptation_gain` 依然为负，因此尚不能宣称 source-domain meta-train 收益已成立；该问题已登记进 `docs/tech-debt-tracker.md`。
 
 ## Decision Log
 
@@ -114,6 +118,7 @@
 - 2026-03-06: M2 当前只收口“可验证的模块骨架与配置契约”，不提前宣称 Stage A/B/C 已完成；训练流水线仍留在 M3。
 - 2026-03-06: Query-Gating 先按配置契约 + 样本级统计落地，不把当前单步 toy runtime 误写成“已经具备正式按-segment 统计”；真正多段统计留给后续 Stage runtime。
 - 2026-03-06: 对 `injection_position=none` 这类合法 ablation，不把“无梯度”视为配置错误；训练 harness 应显式记录而不是直接失败。
+- 2026-03-06: M3 当前优先保证 Stage A/B/C 的 artifact contract 与 resume 链路成立；若 smoke 结果尚未出现正向 meta gain，应把它记录为未达 DoD，而不是调文案掩盖。
 
 ## Surprises & Discoveries
 

@@ -349,22 +349,36 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 > - `EXPERIMENTS_INFO.md`：few-shot 协议、meta-split、适配对象消融
 
 ### P0 必须
-- [ ] Stage A：Writer 通用预训
-  - [ ] 搭建 general-field 数据管线
-  - [ ] 记录数据版本 / hash / 采样规则
-  - [ ] 输出冻结可复用的 writer checkpoint
+- [x] Stage A：Writer 通用预训
+  - [x] 搭建 general-field 数据管线
+  - [x] 记录数据版本 / hash / 采样规则
+  - [x] 输出冻结可复用的 writer checkpoint
   - **DoD**：能得到 `writer.ckpt`，并在后续实验中加载复用
 
 - [ ] Stage B：queries meta-train
-  - [ ] 实现 episode sampler
-  - [ ] 优先实现 ANIL（或等价的一阶近似）
-  - [ ] Writer 固定；queries 是主要更新对象
+  - [x] 实现 episode sampler
+  - [x] 优先实现 ANIL（或等价的一阶近似）
+  - [x] Writer 固定；queries 是主要更新对象
   - **DoD**：得到 `queries_meta_init.pt`，并能在 source domains 上观察到适配收益
 
-- [ ] Stage C：few-shot / 少步数适配
-  - [ ] 输入：新域 k-shot
-  - [ ] 输出：适配后的 queries checkpoint + 适配曲线
+- [x] Stage C：few-shot / 少步数适配
+  - [x] 输入：新域 k-shot
+  - [x] 输出：适配后的 queries checkpoint + 适配曲线
   - **DoD**：固定一个 target domain，自动产出 shot-curve 与 step-curve
+
+当前 M3 smoke 已完成并验证的部分：
+- 已新增 `toy_meta_smoke` 数据与 meta split；当前配置是 `source={math, code, qa}`、`target=narrative`、`support_size=1`、`query_size=2`
+- Stage A 已真实产出 `writer.ckpt`，并把 `dataset_sha256`、domain 采样规则写入 `meta_data_manifest.json`
+- Stage B 已真实产出 `queries_meta_init.pt`，当前实现是 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`，Writer 固定
+- Stage C 已真实产出 `queries_adapted.pt` 与 `adapt_curve.csv`，当前 target domain smoke 位于 `runs/verify/m3-stage-c/`
+- 已验证命令：
+  - `python -m unittest discover -s tests -v`
+  - `python -m train --config configs/exp/m3_stage_a_qwen25_smoke.yaml --seed 301 --output_dir runs/verify/m3-stage-a`
+  - `python -m train --config configs/exp/m3_stage_b_qwen25_smoke.yaml --seed 303 --output_dir runs/verify/m3-stage-b --resume runs/verify/m3-stage-a`
+  - `python -m train --config configs/exp/m3_stage_c_qwen25_smoke.yaml --seed 307 --output_dir runs/verify/m3-stage-c --resume runs/verify/m3-stage-b`
+  - `python -m analysis --config configs/exp/m3_stage_c_qwen25_smoke.yaml --seed 307 --output_dir results/generated/m3-smoke-summary --input_root runs/verify`
+
+当前仍未勾掉 Stage B 的父条目，是因为 `queries_meta_init.pt` 虽已产出，但 toy smoke 下的 `mean_adaptation_gain` 仍为负值，说明 source-domain 适配收益还没有被当前 smoke 任务打出来。这是当前 M3 P0 的主要剩余阻塞，不应被文档掩盖。
 
 ### P1 重要
 - [ ] 适配对象消融

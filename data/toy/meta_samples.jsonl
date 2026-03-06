@@ -1,0 +1,12 @@
+{"id": "math-a", "domain": "math", "segment": "Question: 2 plus 3? || Plan: add the integers", "continuation": "Answer: 5", "label": "math-5"}
+{"id": "math-b", "domain": "math", "segment": "Question: 9 minus 4? || Plan: subtract the second number", "continuation": "Answer: 5", "label": "math-minus-5"}
+{"id": "math-c", "domain": "math", "segment": "Question: 3 times 4? || Plan: multiply the numbers", "continuation": "Answer: 12", "label": "math-12"}
+{"id": "code-a", "domain": "code", "segment": "Task: return the square of n || Plan: multiply n by n", "continuation": "def solve(n): return n * n", "label": "code-square"}
+{"id": "code-b", "domain": "code", "segment": "Task: return whether n is even || Plan: use modulo two", "continuation": "def solve(n): return n % 2 == 0", "label": "code-even"}
+{"id": "code-c", "domain": "code", "segment": "Task: reverse a list xs || Plan: slice in reverse order", "continuation": "def solve(xs): return xs[::-1]", "label": "code-reverse"}
+{"id": "qa-a", "domain": "qa", "segment": "Question: capital of France || Plan: recall the country capital pair", "continuation": "Answer: Paris", "label": "qa-paris"}
+{"id": "qa-b", "domain": "qa", "segment": "Question: largest planet || Plan: recall the solar system sizes", "continuation": "Answer: Jupiter", "label": "qa-jupiter"}
+{"id": "qa-c", "domain": "qa", "segment": "Question: chemical symbol for water || Plan: recall the common formula", "continuation": "Answer: H2O", "label": "qa-h2o"}
+{"id": "narrative-a", "domain": "narrative", "segment": "Story: Mia lost her keys || Plan: search the bag and coat pockets", "continuation": "Resolution: Mia finds the keys in the coat pocket.", "label": "narrative-coat-pocket"}
+{"id": "narrative-b", "domain": "narrative", "segment": "Story: Leo missed the bus || Plan: check the bike in the garage", "continuation": "Resolution: Leo rides his bike to school.", "label": "narrative-bike"}
+{"id": "narrative-c", "domain": "narrative", "segment": "Story: Sana forgot lunch || Plan: ask the office to call home", "continuation": "Resolution: Her parent drops lunch at school.", "label": "narrative-lunch-drop"}

@@ -190,8 +190,15 @@ class MemoryRuntime(nn.Module):
         candidate_labels: list[str],
     ) -> tuple[str, float, ExampleForward]:
         forward = self.forward_example(example)
-        normalized_pred = torch.nn.functional.normalize(forward.predicted_state, dim=-1)
-        normalized_candidates = torch.nn.functional.normalize(candidate_states, dim=-1)
-        scores = torch.matmul(normalized_pred, normalized_candidates.transpose(0, 1)).squeeze(0)
+        scores = self.score_candidates(forward.predicted_state, candidate_states)
         best_index = int(torch.argmax(scores).item())
         return candidate_labels[best_index], float(scores[best_index].item()), forward
+
+    def score_candidates(
+        self,
+        predicted_state: torch.Tensor,
+        candidate_states: torch.Tensor,
+    ) -> torch.Tensor:
+        normalized_pred = torch.nn.functional.normalize(predicted_state, dim=-1)
+        normalized_candidates = torch.nn.functional.normalize(candidate_states, dim=-1)
+        return torch.matmul(normalized_pred, normalized_candidates.transpose(0, 1)).squeeze(0)

@@ -10,6 +10,7 @@
 - `scripts/run_memgen.sh`: MemGen baseline 的统一 adapter 入口，先支持 dry-run launch 计划与后续真实执行桥接
 - `src/memtotal/models/`: backbone wrapper、Writer/Reader/Fuser/Injector、Segmenter
 - `src/memtotal/training/`: smoke 训练闭环
+- `src/memtotal/training/m3.py`: Stage A/B/C 的 toy smoke runner，负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/baselines/`: 外部 baseline 适配层，当前已接入 MemGen launch adapter
@@ -57,6 +58,21 @@
 - `predictions.jsonl` 中每个样本的 `conditioning`
 
 这些实现当前仍运行在 deterministic stub backbone 与 toy pipeline 上，用于先验证接口、梯度、注入路径与结果治理；真实 Qwen 权重加载保留在 `BackboneWrapper` 扩展点中。
+
+## M3 Smoke Boundary
+
+- `toy_meta_smoke` 目前承载 Stage A/B/C 的最小验证：`data/toy/meta_samples.jsonl`
+- Stage A：
+  - 产出 `writer.ckpt`
+  - 保存 `meta_data_manifest.json`，记录 `dataset_sha256` 与 domain split
+- Stage B：
+  - 产出 `queries_meta_init.pt`
+  - 当前实现为 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`
+- Stage C：
+  - 产出 `queries_adapted.pt`
+  - 产出 `adapt_curve.csv` / `adapt_curve.json`
+
+当前 M3 smoke 已经把工件和目录契约搭起来，但还不能把 toy 结果误写成“已经验证 meta-train 收益成立”；这部分仍需后续数据与目标函数继续调通。
 
 ## Backbone Policy
 

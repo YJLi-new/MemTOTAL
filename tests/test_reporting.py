@@ -36,13 +36,32 @@ class ReportingTest(unittest.TestCase):
             )
             (train_dir / "metrics.json").write_text(json.dumps({"mode": "train", "mean_loss": 0.5}))
 
+            stage_c_dir = temp_root / "stage_c"
+            stage_c_dir.mkdir()
+            (stage_c_dir / "run_info.json").write_text(
+                json.dumps({"backbone": "Qwen2.5-1.5B-Instruct", "task_name": "toy_meta_smoke"})
+            )
+            (stage_c_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "train",
+                        "training_stage": "stage_c",
+                        "best_adapt_query_accuracy": 0.5,
+                        "best_adapt_query_loss": 1.2,
+                    }
+                )
+            )
+
             rows = collect_metrics(temp_root)
             by_mode = {str(row["mode"]): row for row in rows}
+            by_stage = {str(row.get("training_stage", "")): row for row in rows}
 
             self.assertEqual(by_mode["memgen_adapter"]["primary_metric"], "compute_reward")
             self.assertEqual(by_mode["memgen_adapter"]["primary_score"], 0.25)
             self.assertEqual(by_mode["train"]["primary_metric"], "inv_mean_loss")
             self.assertAlmostEqual(by_mode["train"]["primary_score"], 2.0 / 3.0)
+            self.assertEqual(by_stage["stage_c"]["primary_metric"], "best_adapt_query_accuracy")
+            self.assertEqual(by_stage["stage_c"]["primary_score"], 0.5)
 
     def test_write_sanity_plot_uses_primary_metric_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
