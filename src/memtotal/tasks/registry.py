@@ -99,6 +99,7 @@ TASK_SPECS: dict[str, TaskSpec] = {
             "story_segments_materialized",
             "story_total_segments",
             "story_selected_indexes",
+            "story_start_index",
             "story_selection_strategy",
             "story_query_token_count",
             "story_runtime_segment_budget",

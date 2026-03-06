@@ -1,0 +1,20 @@
+includes:
+  - ../tasks/benchmarks/materialized/narrativeqa_real_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: benchmark_narrativeqa_qwen3_real_smoke
+  stage: M4
+  method_variant: ours-benchmark-real-smoke
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  train_steps: 2
+  eval_examples: 4
+  learning_rate: 0.01
+  device: cpu

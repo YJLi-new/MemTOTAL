@@ -480,6 +480,44 @@ def _trim_story_front_matter(segments: list[str]) -> list[str]:
     return trimmed or segments
 
 
+def _detect_structural_story_start_index(segments: list[str]) -> int:
+    strong_head_patterns = (
+        r"\bdramatis personae\b",
+        r"\bchapter\s+(?:1|i|one)\b",
+        r"\bbook\s+(?:1|i|one)\b",
+        r"\bact\s+i\b",
+        r"\bscene\s+i\b",
+    )
+    secondary_head_patterns = (
+        r"\bprologue\b",
+        r"\binduction\b",
+    )
+    def _near_head_match_count(patterns: tuple[str, ...], text: str) -> int:
+        hits = 0
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match and match.start() <= 48:
+                hits += 1
+        return hits
+
+    for index, segment in enumerate(segments[:200]):
+        head = segment[:220]
+        head_lower = head.lower()
+        strong_hits = _near_head_match_count(strong_head_patterns, head_lower)
+        secondary_hits = _near_head_match_count(secondary_head_patterns, head_lower)
+        dialogue_hits = len(re.findall(r"\b[A-Z][A-Z' -]{2,}\.", head))
+        if strong_hits >= 2:
+            return index
+        if strong_hits >= 1 and (secondary_hits >= 1 or dialogue_hits >= 2 or "enter " in head_lower):
+            return index
+        if re.search(r"\bdramatis personae\b", head_lower, flags=re.IGNORECASE) and head_lower.index("dramatis personae") <= 48:
+            return index
+        chapter_match = re.search(r"\bchapter\s+(?:1|i|one)\b", head_lower, flags=re.IGNORECASE)
+        if chapter_match and chapter_match.start() <= 48 and index > 0:
+            return index
+    return 0
+
+
 def _canonicalize_gsm8k(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
     answer = str(row["answer"]).split("\n####")[-1].strip()
     return {
@@ -602,6 +640,8 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
     if not story_source:
         raise ValueError("NarrativeQA row is missing both full story text and summary text.")
     chunked_story = _trim_story_front_matter(_chunk_story_text(story_source, max_words=_NARRATIVEQA_SEGMENT_WORDS))
+    story_start_index = _detect_structural_story_start_index(chunked_story)
+    chunked_story = chunked_story[story_start_index:] or chunked_story
     question_text = str(row.get("question", {}).get("text", "")).strip()
     selected_story_segments, selected_story_indexes, selection_strategy = select_narrativeqa_story_segments(
         chunked_story,
@@ -627,6 +667,7 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
         "story_segments_materialized": len(selected_story_segments),
         "story_total_segments": len(chunked_story),
         "story_selected_indexes": selected_story_indexes,
+        "story_start_index": story_start_index,
         "story_selection_strategy": selection_strategy,
         "story_query_token_count": len(_selection_tokens(question_text)),
         "story_truncated_for_smoke": len(selected_story_segments) < len(chunked_story),

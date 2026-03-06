@@ -108,6 +108,7 @@ class TaskRegistryTest(unittest.TestCase):
                         "story_total_segments": 6,
                         "story_chunk_pool_size": 6,
                         "story_selected_indexes": [0, 2],
+                        "story_start_index": 24,
                         "story_selection_strategy": "anchors_plus_question_overlap",
                         "story_query_token_count": 3,
                         "story_truncated_for_smoke": True,
@@ -172,6 +173,7 @@ class TaskRegistryTest(unittest.TestCase):
             self.assertEqual(dataset[0]["narrativeqa_view"], "full_text_segmented")
             self.assertEqual(len(dataset[0]["story_segments"]), 3)
             self.assertIn(2, dataset[0]["story_selected_indexes"])
+            self.assertEqual(dataset[0]["story_start_index"], 24)
             self.assertEqual(dataset[0]["story_query_token_count"], 3)
             self.assertEqual(dataset[0]["story_runtime_segment_budget"], 3)
             self.assertEqual(dataset[0]["story_runtime_selector"], "question_aware")

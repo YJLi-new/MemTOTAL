@@ -20,6 +20,7 @@ from memtotal.tasks.sources import (
     _canonicalize_gsm8k,
     _canonicalize_math,
     _canonicalize_narrativeqa,
+    _detect_structural_story_start_index,
     _canonicalize_story_cloze,
     _canonicalize_triviaqa,
     get_benchmark_source,
@@ -84,9 +85,13 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(canonical["answer"], "Ending 2")
 
     def test_narrativeqa_canonicalizer_keeps_multiple_answers(self) -> None:
+        intro_words = " ".join(f"intro{i}" for i in range(320))
+        body_words = " ".join(f"scene{i}" for i in range(1400))
         long_story = (
             "*** START OF THIS PROJECT GUTENBERG EBOOK SAMPLE *** "
-            + " ".join(f"scene{i}" for i in range(1400))
+            + intro_words
+            + " DRAMATIS PERSONAE. CYNTHIA. ECHO. MERCURY. ACT I. SCENE I. ENTER THREE CHILDREN. "
+            + body_words
             + " *** END OF THIS PROJECT GUTENBERG EBOOK SAMPLE ***"
         )
         row = {
@@ -115,6 +120,16 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertNotIn("PRODUCED BY", canonical["story_segments"][0].upper())
         self.assertEqual(len(canonical["story_selected_indexes"]), canonical["story_segments_materialized"])
         self.assertIn("anchors", canonical["story_selection_strategy"])
+        self.assertGreaterEqual(canonical["story_start_index"], 0)
+
+    def test_narrativeqa_detects_structural_story_start(self) -> None:
+        segments = [
+            "Introduction. This edition was prepared for students and includes a long biography.",
+            "More introduction and editorial notes about the author and publication history.",
+            "DRAMATIS PERSONAE. CYNTHIA. ECHO. MERCURY. INDUCTION. ENTER THREE CHILDREN.",
+            "CHILD. I begin the play now that the house is ready.",
+        ]
+        self.assertEqual(_detect_structural_story_start_index(segments), 2)
 
     def test_narrativeqa_question_overlap_selection_keeps_relevant_segment(self) -> None:
         segments = [
