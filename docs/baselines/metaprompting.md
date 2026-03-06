@@ -30,6 +30,8 @@ baseline:
 
 - `configs/exp/baseline_metaprompting_story_cloze_qwen25_smoke.yaml`
 - `configs/exp/baseline_metaprompting_story_cloze_qwen3_smoke.yaml`
+- `configs/exp/baseline_metaprompting_story_cloze_qwen25_real_smoke.yaml`
+- `configs/exp/baseline_metaprompting_story_cloze_qwen3_real_smoke.yaml`
 
 ## Verified Commands
 
@@ -37,15 +39,23 @@ baseline:
 python -m eval --config configs/exp/baseline_metaprompting_story_cloze_qwen25_smoke.yaml --seed 941 --output_dir runs/verify/m5-metaprompting-smoke/qwen25
 python -m eval --config configs/exp/baseline_metaprompting_story_cloze_qwen3_smoke.yaml --seed 941 --output_dir runs/verify/m5-metaprompting-smoke/qwen3
 python -m analysis --config configs/exp/baseline_metaprompting_story_cloze_qwen25_smoke.yaml --seed 941 --output_dir results/generated/m5-metaprompting-smoke --input_root runs/verify/m5-metaprompting-smoke
+python -m eval --config configs/exp/baseline_metaprompting_story_cloze_qwen25_real_smoke.yaml --seed 951 --output_dir runs/verify/m5-metaprompting-real-smoke/qwen25
+python -m eval --config configs/exp/baseline_metaprompting_story_cloze_qwen3_real_smoke.yaml --seed 951 --output_dir runs/verify/m5-metaprompting-real-smoke/qwen3
+python -m analysis --config configs/exp/baseline_metaprompting_story_cloze_qwen25_real_smoke.yaml --seed 951 --output_dir results/generated/m5-metaprompting-real-smoke --input_root runs/verify/m5-metaprompting-real-smoke
 ```
 
 ## Current Smoke Results
 
 汇总路径：
 - `results/generated/m5-metaprompting-smoke/summary.csv`
+- `results/generated/m5-metaprompting-real-smoke/summary.csv`
 
 当前 stub smoke：
 - `qwen25`: `accuracy=0.0`
+- `qwen3`: `accuracy=1.0`
+
+当前 real-source `story_cloze` smoke：
+- `qwen25`: `accuracy=0.75`
 - `qwen3`: `accuracy=1.0`
 
 这些数字只说明 `MetaPrompting` scaffold 已接入统一 baseline 评测链，不是论文结果。
