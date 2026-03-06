@@ -535,6 +535,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 已新增最小 `adapter` baseline family，支持 `Prompt Tuning / LoRA` 的 `train -> checkpoint -> eval -> summary` 闭环；当前先在 `story_cloze` qwen25 smoke 上真实验证，汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
 - 同一套 `Prompt Tuning / LoRA` smoke 现已补到 `Qwen3-8B`，汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 - 同一套 `Prompt Tuning / LoRA` 现已进一步补到 `story_cloze` real-source smoke，统一汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
+- 已新增最小 `MetaPrompting` scaffold，当前先在 `story_cloze` 的 qwen25/qwen3 smoke 上真实验证，汇总位于 `results/generated/m5-metaprompting-smoke/summary.csv`
 - 说明：这一步完成的是“baseline harness 接入统一评测链”，还不是 `shot/step` 网格、也不是主表级 baseline DoD
 
 ### P1 重要

@@ -1,0 +1,21 @@
+includes:
+  - ../tasks/benchmarks/story_cloze_smoke.yaml
+
+experiment:
+  name: baseline_metaprompting_story_cloze_qwen3_smoke
+  stage: M5
+  method_variant: baseline-metaprompting
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: meta_prompting
+  mode: planner_critic
+
+runtime:
+  eval_examples: 2
+  device: cpu

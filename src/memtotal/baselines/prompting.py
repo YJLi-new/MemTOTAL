@@ -21,10 +21,13 @@ class PromptBaselineRuntime:
     def __init__(self, config: dict[str, Any], seed: int) -> None:
         baseline_cfg = config.get("baseline", {})
         family = str(baseline_cfg.get("family", "prompting"))
-        if family != "prompting":
+        if family not in {"prompting", "meta_prompting"}:
             raise ValueError(f"Unsupported baseline family: {family}")
-        mode = str(baseline_cfg.get("mode", "vanilla"))
-        if mode not in {"vanilla", "cot"}:
+        default_mode = "planner_critic" if family == "meta_prompting" else "vanilla"
+        mode = str(baseline_cfg.get("mode", default_mode))
+        if family == "prompting" and mode not in {"vanilla", "cot"}:
+            raise ValueError(f"Unsupported prompt baseline mode: {mode}")
+        if family == "meta_prompting" and mode not in {"planner_critic"}:
             raise ValueError(f"Unsupported prompt baseline mode: {mode}")
         backbone_cfg = config["backbone"]
         self.backbone = BackboneWrapper(
@@ -41,9 +44,25 @@ class PromptBaselineRuntime:
                 "Think step by step, then give the final answer.",
             )
         )
+        self.meta_roles = {
+            "planner": str(baseline_cfg.get("planner_role", "Planner: decompose the task into concise reasoning steps.")),
+            "solver": str(baseline_cfg.get("solver_role", "Solver: solve using the plan and inspect each option.")),
+            "critic": str(baseline_cfg.get("critic_role", "Critic: verify the draft and correct any mistakes.")),
+            "finalizer": str(
+                baseline_cfg.get("finalizer_role", "Finalizer: provide only the final answer or option label.")
+            ),
+        }
 
     def build_prompt(self, example: dict[str, Any]) -> str:
         prompt = str(example["segment"])
+        if self.family == "meta_prompting":
+            return (
+                f"{self.meta_roles['planner']} || "
+                f"{self.meta_roles['solver']} || "
+                f"{self.meta_roles['critic']} || "
+                f"{self.meta_roles['finalizer']} || "
+                f"Task: {prompt}"
+            )
         if self.mode == "cot":
             return f"{prompt} || {self.cot_suffix}"
         return prompt

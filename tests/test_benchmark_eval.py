@@ -313,6 +313,79 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertIn("Think step by step and then answer.", predictions[0]["baseline_prompt"])
             self.assertEqual(predictions[0]["generated_text"], "4")
 
+    def test_meta_prompting_eval_writes_meta_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze_meta.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "story-cloze-meta-000",
+                        "story": "Ava rehearsed her violin solo every evening.",
+                        "choices": [
+                            {"label": "A", "text": "She performed confidently at the recital."},
+                            {"label": "B", "text": "She forgot her violin at home and quit music forever."},
+                        ],
+                        "label": "A",
+                        "answer": "She performed confidently at the recital.",
+                    }
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_metaprompting_story_cloze_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-metaprompting",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "meta_prompting",
+                    "mode": "planner_critic",
+                },
+                "runtime": {
+                    "eval_examples": 1,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "metaprompting_story_cloze.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "metaprompting_story_cloze_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "531",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["baseline_family"], "meta_prompting")
+            self.assertEqual(metrics["baseline_mode"], "planner_critic")
+            self.assertIn("Planner:", predictions[0]["baseline_prompt"])
+            self.assertIn("Critic:", predictions[0]["baseline_prompt"])
+
     def test_narrativeqa_eval_writes_f1_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

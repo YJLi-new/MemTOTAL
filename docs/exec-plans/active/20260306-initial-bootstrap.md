@@ -146,6 +146,8 @@
 - 2026-03-06 17:25 UTC: 已真实跑通 `configs/exp/baseline_prompt_tuning_story_cloze_qwen25_smoke.yaml` 与 `configs/exp/baseline_lora_story_cloze_qwen25_smoke.yaml` 的 `train -> eval -> analysis` 闭环。统一汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`；当前结果为 `prompt_tuning/train final_loss=0.31129494309425354`、`prompt_tuning/eval accuracy=1.0`、`lora/train final_loss=0.2841453552246094`、`lora/eval accuracy=1.0`。
 - 2026-03-06 17:57 UTC: 已把同一套 `Prompt Tuning / LoRA` smoke 配置补到 `Qwen3-8B`。统一汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`；当前结果为 `prompt_tuning/train final_loss=0.40971383452415466`、`prompt_tuning/eval accuracy=0.5`、`lora/train final_loss=0.36231037974357605`、`lora/eval accuracy=0.5`。
 - 2026-03-06 17:59 UTC: 已把 `Prompt Tuning / LoRA` 进一步推进到 `story_cloze` real-source smoke。统一汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`；当前结果为 qwen25 `prompt_tuning/lora eval accuracy=0.75/0.75`，qwen3 `prompt_tuning/lora eval accuracy=1.0/1.0`。
+- 2026-03-06 18:01 UTC: 已新增最小 `MetaPrompting` scaffold。`src/memtotal/baselines/prompting.py` 现支持 `family=meta_prompting`、`mode=planner_critic`，并通过 `Planner / Solver / Critic / Finalizer` prompt protocol 接入统一 eval。
+- 2026-03-06 18:01 UTC: 已真实跑通 `configs/exp/baseline_metaprompting_story_cloze_qwen25_smoke.yaml` 与 `configs/exp/baseline_metaprompting_story_cloze_qwen3_smoke.yaml`；统一汇总位于 `results/generated/m5-metaprompting-smoke/summary.csv`。当前 stub 结果为 qwen25 `accuracy=0.0`、qwen3 `accuracy=1.0`。
 
 ## Decision Log
 

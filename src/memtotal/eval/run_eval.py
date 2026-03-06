@@ -41,8 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluator = build_task_evaluator(config)
     baseline_cfg = config.get("baseline", {})
     baseline_family = str(baseline_cfg.get("family", ""))
-    use_baseline = baseline_family in {"prompting", "adapter"}
-    if baseline_family == "prompting":
+    use_baseline = baseline_family in {"prompting", "adapter", "meta_prompting"}
+    if baseline_family in {"prompting", "meta_prompting"}:
         runtime = PromptBaselineRuntime(config=config, seed=args.seed)
     elif baseline_family == "adapter":
         runtime = AdapterBaselineRuntime(config=config, seed=args.seed)
