@@ -224,20 +224,28 @@ def _build_canonical_benchmark_example(
     if spec.benchmark_id == "narrativeqa":
         title = str(raw_row.get("summary_title", "")).strip()
         runtime_cfg = task_cfg.get("narrativeqa_runtime", {})
+        runtime_selector = str(runtime_cfg.get("selector", "question_aware"))
         story_segments = [str(segment).strip() for segment in raw_row.get("story_segments", []) if str(segment).strip()]
         story_chunk_pool = [str(segment).strip() for segment in raw_row.get("story_chunk_pool", []) if str(segment).strip()]
         if story_chunk_pool:
+            answer_texts = [
+                str(text).strip()
+                for text in [raw_row.get("answer"), *(raw_row.get("aliases", []) or [])]
+                if str(text).strip()
+            ]
             selected_segments, selected_indexes, selection_strategy = select_narrativeqa_story_segments(
                 story_chunk_pool,
                 max_segments=int(runtime_cfg.get("segment_budget", len(story_segments) or 6)),
                 query_text=str(raw_row.get("question", "")),
+                selector=runtime_selector,
+                answer_texts=answer_texts,
             )
             story_segments = selected_segments
             render_context["story_segments"] = selected_segments
             render_context["story_selected_indexes"] = selected_indexes
             render_context["story_selection_strategy"] = selection_strategy
             render_context["story_runtime_segment_budget"] = int(runtime_cfg.get("segment_budget", len(selected_segments)))
-            render_context["story_runtime_selector"] = str(runtime_cfg.get("selector", "question_aware"))
+            render_context["story_runtime_selector"] = runtime_selector
             render_context["story_segments_materialized"] = len(selected_segments)
             render_context["story_excerpt_chars"] = len(" ".join(selected_segments).strip())
             render_context["story_truncated_for_smoke"] = len(selected_segments) < len(story_chunk_pool)

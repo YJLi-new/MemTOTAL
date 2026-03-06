@@ -201,6 +201,12 @@ def main(argv: list[str] | None = None) -> int:
         "metric_name": config["task"]["metric_name"],
         **profile_metrics,
     }
+    narrativeqa_runtime_cfg = config["task"].get("narrativeqa_runtime")
+    if isinstance(narrativeqa_runtime_cfg, dict):
+        metrics["story_runtime_selector"] = str(narrativeqa_runtime_cfg.get("selector", "question_aware"))
+        metrics["story_runtime_segment_budget"] = int(
+            narrativeqa_runtime_cfg.get("segment_budget", 0)
+        )
     if capability_scores:
         metrics["capability_scores"] = {
             capability: sum(values) / len(values) for capability, values in sorted(capability_scores.items())

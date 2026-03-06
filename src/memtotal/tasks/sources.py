@@ -406,34 +406,66 @@ def _score_segment_for_query(segment: str, query_tokens: list[str]) -> float:
     return overlap + coverage + density
 
 
+def _score_segment_for_oracle_proxy(
+    segment: str,
+    query_tokens: list[str],
+    answer_tokens: list[str],
+) -> float:
+    query_score = _score_segment_for_query(segment, query_tokens)
+    if not answer_tokens:
+        return query_score
+    answer_score = _score_segment_for_query(segment, answer_tokens)
+    return query_score + (3.0 * answer_score)
+
+
 def select_narrativeqa_story_segment_indexes(
     segments: list[str],
     *,
     max_segments: int,
     query_text: str,
+    selector: str = "question_aware",
+    answer_texts: list[str] | None = None,
 ) -> tuple[list[int], str]:
     if len(segments) <= max_segments:
         return list(range(len(segments))), "full_story_no_truncation"
     if max_segments <= 1:
         return [0], "head_only_truncation"
 
+    selector_name = selector.strip().lower()
+    if selector_name == "anchor_only":
+        return _evenly_spaced_indexes(len(segments), max_segments), "anchor_only_even_spacing"
+
+    if selector_name not in {"question_aware", "oracle_like_proxy"}:
+        raise ValueError(f"Unsupported NarrativeQA runtime selector: {selector}")
+
     query_tokens = _selection_tokens(query_text)
+    answer_tokens = []
+    if selector_name == "oracle_like_proxy":
+        answer_pool = [str(text).strip() for text in (answer_texts or []) if str(text).strip()]
+        answer_tokens = _selection_tokens(" ".join(answer_pool))
+
     selected = set(_evenly_spaced_indexes(len(segments), min(2, max_segments)))
     strategy_parts = ["anchors"]
-    remaining_slots = max_segments - len(selected)
 
-    if remaining_slots > 0 and query_tokens:
-        scored_indexes = [
-            (index, _score_segment_for_query(segment, query_tokens))
-            for index, segment in enumerate(segments)
-            if index not in selected
-        ]
-        for index, score in sorted(scored_indexes, key=lambda item: (-item[1], item[0])):
-            if len(selected) >= max_segments or score <= 0.0:
-                break
-            selected.add(index)
-        if len(selected) > min(2, max_segments):
-            strategy_parts.append("question_overlap")
+    scored_indexes = []
+    for index, segment in enumerate(segments):
+        if index in selected:
+            continue
+        if selector_name == "oracle_like_proxy":
+            score = _score_segment_for_oracle_proxy(segment, query_tokens, answer_tokens)
+        else:
+            score = _score_segment_for_query(segment, query_tokens)
+        scored_indexes.append((index, score))
+
+    for index, score in sorted(scored_indexes, key=lambda item: (-item[1], item[0])):
+        if len(selected) >= max_segments or score <= 0.0:
+            break
+        selected.add(index)
+
+    if selector_name == "oracle_like_proxy" and answer_tokens and len(selected) > min(2, max_segments):
+        strategy_parts.append("oracle_answer_overlap")
+    elif len(selected) > min(2, max_segments):
+        strategy_parts.append("question_overlap")
 
     if len(selected) < max_segments:
         for index in _evenly_spaced_indexes(len(segments), max_segments):
@@ -450,11 +482,15 @@ def select_narrativeqa_story_segments(
     *,
     max_segments: int,
     query_text: str,
+    selector: str = "question_aware",
+    answer_texts: list[str] | None = None,
 ) -> tuple[list[str], list[int], str]:
     selected_indexes, strategy = select_narrativeqa_story_segment_indexes(
         segments,
         max_segments=max_segments,
         query_text=query_text,
+        selector=selector,
+        answer_texts=answer_texts,
     )
     return [segments[index] for index in selected_indexes], selected_indexes, strategy
 

@@ -273,6 +273,8 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertEqual(metrics["benchmark_id"], "narrativeqa")
             self.assertEqual(metrics["metric_name"], "f1")
             self.assertEqual(metrics["f1"], 1.0)
+            self.assertEqual(metrics["story_runtime_selector"], "question_aware")
+            self.assertEqual(metrics["story_runtime_segment_budget"], 2)
             self.assertIn("extra_metrics", predictions[0])
             self.assertIn("f1", predictions[0]["extra_metrics"])
             self.assertEqual(predictions[0]["benchmark_metadata"]["story_runtime_segment_budget"], 2)

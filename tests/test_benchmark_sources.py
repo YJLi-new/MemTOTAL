@@ -149,6 +149,56 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertIn(2, selected_indexes)
         self.assertIn("question_overlap", strategy)
 
+    def test_narrativeqa_anchor_only_selection_uses_even_spacing(self) -> None:
+        segments = [
+            "Intro paragraph.",
+            "Travel notes.",
+            "After the gala, Alice feared betrayal but had no proof.",
+            "A quiet marketplace scene unfolds.",
+            "Victor later confessed that he betrayed the team.",
+            "The detective revisits old notes.",
+            "An epilogue closes the book.",
+            "Credits roll.",
+        ]
+        selected_indexes, strategy = select_narrativeqa_story_segment_indexes(
+            segments,
+            max_segments=3,
+            query_text="Who betrayed Alice after the gala?",
+            selector="anchor_only",
+        )
+        self.assertEqual(selected_indexes, [0, 3, 7])
+        self.assertEqual(strategy, "anchor_only_even_spacing")
+
+    def test_narrativeqa_oracle_like_selector_can_use_answer_overlap(self) -> None:
+        segments = [
+            "Intro paragraph.",
+            "Travel notes.",
+            "After the gala, Alice feared betrayal but had no proof.",
+            "A quiet marketplace scene unfolds.",
+            "Victor later confessed that he betrayed the team.",
+            "The detective revisits old notes.",
+            "An epilogue closes the book.",
+            "Credits roll.",
+        ]
+        selected_indexes, strategy = select_narrativeqa_story_segment_indexes(
+            segments,
+            max_segments=3,
+            query_text="Who betrayed Alice after the gala?",
+            selector="oracle_like_proxy",
+            answer_texts=["Victor"],
+        )
+        self.assertIn(4, selected_indexes)
+        self.assertIn("oracle_answer_overlap", strategy)
+
+    def test_narrativeqa_selector_rejects_unknown_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported NarrativeQA runtime selector"):
+            select_narrativeqa_story_segment_indexes(
+                ["a", "b", "c", "d"],
+                max_segments=2,
+                query_text="Where?",
+                selector="unknown_mode",
+            )
+
     def test_fever_canonicalizer_maps_three_way_labels(self) -> None:
         row = {
             "id": 7,
