@@ -1,0 +1,11 @@
+includes:
+  - ./baseline_vanilla_gsm8k_qwen25_smoke.yaml
+
+experiment:
+  name: baseline_cot_gsm8k_qwen25_smoke
+  method_variant: baseline-cot
+
+baseline:
+  family: prompting
+  mode: cot
+  cot_suffix: Think step by step, then give the final answer.

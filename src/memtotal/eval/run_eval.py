@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from memtotal.baselines import PromptBaselineRuntime
 from memtotal.pipeline import MemoryRuntime
 from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.utils.config import load_config
@@ -38,10 +39,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     dataset = load_task_dataset(config)
     evaluator = build_task_evaluator(config)
-    runtime = MemoryRuntime(config=config, seed=args.seed)
-    if args.checkpoint:
-        checkpoint = torch.load(args.checkpoint, map_location="cpu")
-        runtime.load_state_dict(checkpoint["model_state"])
+    baseline_cfg = config.get("baseline", {})
+    use_prompt_baseline = str(baseline_cfg.get("family", "")) == "prompting"
+    if use_prompt_baseline:
+        runtime = PromptBaselineRuntime(config=config, seed=args.seed)
+    else:
+        runtime = MemoryRuntime(config=config, seed=args.seed)
+        if args.checkpoint:
+            checkpoint = torch.load(args.checkpoint, map_location="cpu")
+            runtime.load_state_dict(checkpoint["model_state"])
 
     max_examples = min(len(dataset), 2 if args.dry_run else int(config["runtime"]["eval_examples"]))
     predictions = []
@@ -65,80 +71,140 @@ def main(argv: list[str] | None = None) -> int:
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
         uses_candidate_selection = evaluator.evaluator_type in {"dataset_label_classification", "multiple_choice"}
-        if uses_candidate_selection:
-            if evaluator.evaluator_type == "multiple_choice":
-                choices = example.get("choices", [])
-                if not choices:
-                    raise ValueError("multiple_choice evaluation requires per-example `choices`.")
-                candidate_labels = [str(choice["label"]) for choice in choices]
-                candidate_texts = [str(choice["text"]) for choice in choices]
-            else:
-                candidate_labels = [str(row["label"]) for row in dataset]
-                candidate_texts = [str(row["continuation"]) for row in dataset]
-            candidate_states = runtime.backbone.summarize_texts(candidate_texts)
-            predicted_label, similarity, forward = runtime.predict_label(
-                example,
-                candidate_states=candidate_states,
-                candidate_labels=candidate_labels,
-            )
-            predicted_text = ""
-            if evaluator.evaluator_type == "multiple_choice":
-                predicted_text = next(
-                    choice["text"] for choice in example["choices"] if choice["label"] == predicted_label
-                )
-            score_payload = evaluator.evaluate_prediction(
-                {"label": predicted_label, "text": predicted_text},
-                example,
-            )
-        else:
-            forward = runtime.forward_example(example)
-            similarity = float(
-                F.cosine_similarity(forward.predicted_state, forward.target_state, dim=-1).mean().item()
-            )
+        if use_prompt_baseline:
+            baseline_output = None
+            similarity = 0.0
+            generated_text = ""
             predicted_label = ""
             predicted_text = ""
-            score_payload = {}
-        profiler.add_tokens(runtime.backbone.count_tokens(forward.next_prompt))
-        generated_text = runtime.backbone.generate(
-            [forward.next_prompt],
-            memory_tokens=forward.generation_memory,
-        )[0]
-        profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
-        if not uses_candidate_selection:
-            score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
-            predicted_text = generated_text
+            if uses_candidate_selection:
+                if evaluator.evaluator_type == "multiple_choice":
+                    choices = example.get("choices", [])
+                    if not choices:
+                        raise ValueError("multiple_choice evaluation requires per-example `choices`.")
+                    candidate_labels = [str(choice["label"]) for choice in choices]
+                    candidate_texts = [str(choice["text"]) for choice in choices]
+                else:
+                    candidate_labels = [str(row["label"]) for row in dataset]
+                    candidate_texts = [str(row["continuation"]) for row in dataset]
+                baseline_output = runtime.predict_multiple_choice(
+                    example,
+                    candidate_labels=candidate_labels,
+                    candidate_texts=candidate_texts,
+                )
+                predicted_label = baseline_output.predicted_label
+                predicted_text = baseline_output.predicted_text
+                similarity = float(baseline_output.similarity or 0.0)
+                score_payload = evaluator.evaluate_prediction(
+                    {"label": predicted_label, "text": predicted_text},
+                    example,
+                )
+            else:
+                baseline_output = runtime.generate_text(example)
+                generated_text = baseline_output.predicted_text
+                predicted_text = generated_text
+                score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
+            profiler.add_tokens(runtime.backbone.count_tokens(baseline_output.prompt))
+            if generated_text:
+                profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
+            forward = None
+            gate_mean = 0.0
+            active_queries = 0
+            benchmark_metadata = {
+                key: example[key]
+                for key in (
+                    "narrativeqa_view",
+                    "story_chunk_pool_size",
+                    "story_segments_materialized",
+                    "story_selected_indexes",
+                    "story_selection_strategy",
+                    "story_runtime_segment_budget",
+                    "story_runtime_selector",
+                    "story_query_token_count",
+                    "story_truncated_for_smoke",
+                )
+                if key in example
+            }
+            candidate_scores = baseline_output.candidate_scores
+            prompt_text = baseline_output.prompt
+        else:
+            if uses_candidate_selection:
+                if evaluator.evaluator_type == "multiple_choice":
+                    choices = example.get("choices", [])
+                    if not choices:
+                        raise ValueError("multiple_choice evaluation requires per-example `choices`.")
+                    candidate_labels = [str(choice["label"]) for choice in choices]
+                    candidate_texts = [str(choice["text"]) for choice in choices]
+                else:
+                    candidate_labels = [str(row["label"]) for row in dataset]
+                    candidate_texts = [str(row["continuation"]) for row in dataset]
+                candidate_states = runtime.backbone.summarize_texts(candidate_texts)
+                predicted_label, similarity, forward = runtime.predict_label(
+                    example,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+                predicted_text = ""
+                if evaluator.evaluator_type == "multiple_choice":
+                    predicted_text = next(
+                        choice["text"] for choice in example["choices"] if choice["label"] == predicted_label
+                    )
+                score_payload = evaluator.evaluate_prediction(
+                    {"label": predicted_label, "text": predicted_text},
+                    example,
+                )
+            else:
+                forward = runtime.forward_example(example)
+                similarity = float(
+                    F.cosine_similarity(forward.predicted_state, forward.target_state, dim=-1).mean().item()
+                )
+                predicted_label = ""
+                predicted_text = ""
+                score_payload = {}
+            profiler.add_tokens(runtime.backbone.count_tokens(forward.next_prompt))
+            generated_text = runtime.backbone.generate(
+                [forward.next_prompt],
+                memory_tokens=forward.generation_memory,
+            )[0]
+            profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
+            if not uses_candidate_selection:
+                score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
+                predicted_text = generated_text
+            gate_mean = float(forward.gating.mean().item())
+            active_queries = int((forward.gating > 0.5).sum().item())
+            benchmark_metadata = {
+                key: example[key]
+                for key in (
+                    "narrativeqa_view",
+                    "story_chunk_pool_size",
+                    "story_segments_materialized",
+                    "story_selected_indexes",
+                    "story_selection_strategy",
+                    "story_runtime_segment_budget",
+                    "story_runtime_selector",
+                    "story_query_token_count",
+                    "story_truncated_for_smoke",
+                )
+                if key in example
+            }
+            candidate_scores = None
+            prompt_text = forward.next_prompt
         is_correct = bool(score_payload["correct"])
         score_value = float(score_payload["score"])
         correct += int(is_correct)
         score_total += score_value
         similarities.append(similarity)
-        gate_mean = float(forward.gating.mean().item())
-        active_queries = int((forward.gating > 0.5).sum().item())
         gate_means.append(gate_mean)
         active_query_counts.append(active_queries)
-        segment_gate_means.extend(float(item["mean_gate"]) for item in forward.segment_stats)
-        segment_active_query_counts.extend(int(item["active_queries"]) for item in forward.segment_stats)
+        if forward is not None:
+            segment_gate_means.extend(float(item["mean_gate"]) for item in forward.segment_stats)
+            segment_active_query_counts.extend(int(item["active_queries"]) for item in forward.segment_stats)
         capability_name = str(score_payload.get("capability", example.get("capability", "")))
         if capability_name:
             capability_scores.setdefault(capability_name, []).append(score_value)
             capability_metric_names[capability_name] = str(
                 score_payload.get("capability_metric_name", example.get("capability_metric_name", evaluator.metric_name))
             )
-        benchmark_metadata = {
-            key: example[key]
-            for key in (
-                "narrativeqa_view",
-                "story_chunk_pool_size",
-                "story_segments_materialized",
-                "story_selected_indexes",
-                "story_selection_strategy",
-                "story_runtime_segment_budget",
-                "story_runtime_selector",
-                "story_query_token_count",
-                "story_truncated_for_smoke",
-            )
-            if key in example
-        }
         predictions.append(
             {
                 "id": example["id"],
@@ -160,14 +226,18 @@ def main(argv: list[str] | None = None) -> int:
                     example.get("capability_metric_name"),
                 ),
                 "similarity": similarity,
-                "gating_mode": runtime.reader.gating_mode,
-                "gates": [float(value) for value in forward.gating.squeeze(0).tolist()],
+                "baseline_family": baseline_cfg.get("family") if use_prompt_baseline else None,
+                "baseline_mode": baseline_cfg.get("mode") if use_prompt_baseline else None,
+                "baseline_prompt": prompt_text if use_prompt_baseline else None,
+                "candidate_scores": candidate_scores,
+                "gating_mode": None if use_prompt_baseline else runtime.reader.gating_mode,
+                "gates": None if use_prompt_baseline else [float(value) for value in forward.gating.squeeze(0).tolist()],
                 "mean_gate": gate_mean,
                 "active_queries": active_queries,
-                "conditioning": forward.conditioning,
-                "injection_position": runtime.injector.position,
-                "injection_anchors": forward.injection_anchors,
-                "segment_stats": forward.segment_stats,
+                "conditioning": None if use_prompt_baseline else forward.conditioning,
+                "injection_position": None if use_prompt_baseline else runtime.injector.position,
+                "injection_anchors": [] if use_prompt_baseline else forward.injection_anchors,
+                "segment_stats": [] if use_prompt_baseline else forward.segment_stats,
                 "generated_text": generated_text,
                 "benchmark_metadata": benchmark_metadata or None,
             }
@@ -177,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     mean_accuracy = correct / max_examples
     mean_score = score_total / max_examples
     metrics = {
-        "mode": "eval",
+        "mode": "eval_baseline" if use_prompt_baseline else "eval",
         "examples_evaluated": max_examples,
         "accuracy": mean_accuracy,
         "mean_score": mean_score,
@@ -187,20 +257,33 @@ def main(argv: list[str] | None = None) -> int:
         "smoke_subset": config["task"].get("smoke_subset"),
         "evaluator_type": evaluator.evaluator_type,
         "mean_similarity": sum(similarities) / len(similarities),
-        "gating_mode": runtime.reader.gating_mode,
+        "gating_mode": "disabled" if use_prompt_baseline else runtime.reader.gating_mode,
         "mean_gate": sum(gate_means) / len(gate_means),
         "mean_active_queries": sum(active_query_counts) / len(active_query_counts),
-        "mean_segment_gate": sum(segment_gate_means) / len(segment_gate_means),
-        "mean_segment_active_queries": sum(segment_active_query_counts) / len(segment_active_query_counts),
-        "injection_position": runtime.injector.position,
+        "mean_segment_gate": (
+            sum(segment_gate_means) / len(segment_gate_means) if segment_gate_means else 0.0
+        ),
+        "mean_segment_active_queries": (
+            sum(segment_active_query_counts) / len(segment_active_query_counts)
+            if segment_active_query_counts
+            else 0.0
+        ),
+        "injection_position": None if use_prompt_baseline else runtime.injector.position,
         "conditioning_schema": {
-            "domain_name": runtime.conditioning_cfg["domain_key"],
-            "task_name": "config.task.name" if runtime.conditioning_cfg["include_task_name"] else "disabled",
+            "domain_name": "disabled" if use_prompt_baseline else runtime.conditioning_cfg["domain_key"],
+            "task_name": (
+                "disabled"
+                if use_prompt_baseline
+                else ("config.task.name" if runtime.conditioning_cfg["include_task_name"] else "disabled")
+            ),
         },
         "backbone": config["backbone"]["name"],
         "metric_name": config["task"]["metric_name"],
         **profile_metrics,
     }
+    if use_prompt_baseline:
+        metrics["baseline_family"] = str(baseline_cfg.get("family", "prompting"))
+        metrics["baseline_mode"] = str(baseline_cfg.get("mode", "vanilla"))
     narrativeqa_runtime_cfg = config["task"].get("narrativeqa_runtime")
     if isinstance(narrativeqa_runtime_cfg, dict):
         metrics["story_runtime_selector"] = str(narrativeqa_runtime_cfg.get("selector", "question_aware"))

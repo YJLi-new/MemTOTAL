@@ -167,6 +167,152 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertEqual(predictions[0]["capability"], "AR")
             self.assertIn("extra_metrics", predictions[0])
 
+    def test_prompt_baseline_multiple_choice_eval_writes_baseline_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "story-cloze-000",
+                        "story": "Alice packed her bag and hurried to the station.",
+                        "choices": [
+                            {"label": "A", "text": "She boarded the train before sunset."},
+                            {"label": "B", "text": "She stayed home and ignored the ticket."},
+                        ],
+                        "label": "A",
+                        "answer": "She boarded the train before sunset.",
+                    }
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_vanilla_story_cloze_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-vanilla",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "prompting",
+                    "mode": "vanilla",
+                },
+                "runtime": {
+                    "eval_examples": 1,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "baseline_story_cloze.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "baseline_story_cloze_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "521",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["mode"], "eval_baseline")
+            self.assertEqual(metrics["baseline_family"], "prompting")
+            self.assertEqual(metrics["baseline_mode"], "vanilla")
+            self.assertEqual(predictions[0]["baseline_mode"], "vanilla")
+            self.assertIn("Story:", predictions[0]["baseline_prompt"])
+            self.assertIsNotNone(predictions[0]["candidate_scores"])
+
+    def test_prompt_baseline_cot_eval_uses_cot_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "gsm8k.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "gsm8k-000",
+                        "question": "What is 2 + 2?",
+                        "answer": "4",
+                    }
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_cot_gsm8k_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-cot",
+                },
+                "task": {
+                    "name": "gsm8k_smoke",
+                    "benchmark_id": "gsm8k",
+                    "domain": "math",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "exact_match",
+                    "evaluator": {"type": "exact_match"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "prompting",
+                    "mode": "cot",
+                    "cot_suffix": "Think step by step and then answer.",
+                },
+                "runtime": {
+                    "eval_examples": 1,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "baseline_gsm8k.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "baseline_gsm8k_eval"
+            with patch("memtotal.models.backbone.BackboneWrapper.generate", return_value=["4"]):
+                self.assertEqual(
+                    eval_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "--seed",
+                            "523",
+                            "--output_dir",
+                            str(output_dir),
+                        ]
+                    ),
+                    0,
+                )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["mode"], "eval_baseline")
+            self.assertEqual(metrics["baseline_mode"], "cot")
+            self.assertEqual(metrics["exact_match"], 1.0)
+            self.assertIn("Think step by step and then answer.", predictions[0]["baseline_prompt"])
+            self.assertEqual(predictions[0]["generated_text"], "4")
+
     def test_narrativeqa_eval_writes_f1_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

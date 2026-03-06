@@ -526,6 +526,12 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - [ ] MetaPrompting
 - **DoD**：这些 baseline 都能在同一套 shot/step 网格下运行，并进入统一汇总器
 
+当前进展：
+- 已新增最小 `prompting` baseline family，支持 `Vanilla / CoT`
+- 统一入口仍是 `python -m eval --config ...`
+- 当前已真实 smoke 验证 `GSM8K + Story Cloze`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
+- 说明：这一步完成的是“baseline harness 接入统一评测链”，还不是 `shot/step` 网格、也不是主表级 baseline DoD
+
 ### P1 重要
 - [ ] LightThinker
 - [ ] 外部记忆 / RAG 强 baseline（如果主表需要）

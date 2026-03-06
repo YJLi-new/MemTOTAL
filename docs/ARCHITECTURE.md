@@ -187,6 +187,16 @@
 ## Baseline Boundary
 
 - `MemGen-master/` 保持为官方参考实现目录。
+- `src/memtotal/baselines/prompting.py` 现提供最小 prompt baseline family：
+  - `family=prompting`
+  - `mode in {vanilla, cot}`
+  - 统一走 `python -m eval`，但绕过 `MemoryRuntime`
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
 - `analysis` 会把 MemGen 的 `compute_reward` 视为主分数字段之一，与自有 eval 的 `accuracy` 一起进入 `summary.csv` / `summary.svg`。
+- prompt baseline 当前会额外写：
+  - `metrics.json.baseline_family`
+  - `metrics.json.baseline_mode`
+  - `predictions.jsonl[].baseline_prompt`
+  - `predictions.jsonl[].candidate_scores`
+- 当前已真实 smoke 验证 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
