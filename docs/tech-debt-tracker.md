@@ -15,8 +15,8 @@
 - Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
 - `M4` 当前新增的是本地 benchmark smoke contract，而不是正式 benchmark 数据接入；后续仍需要把 `data/benchmarks/smoke/*.jsonl` 替换成与 `EXPERIMENTS_INFO.md` 对齐的真实下载 / 缓存 / 许可路径。
-- `TaskEvaluator` 当前只覆盖 `exact_match / multiple_choice / dataset_label_classification`；如果后续接 `MemoryAgentBench` 分项、代码执行式评测或更复杂 agent reward，需要扩成任务专属 evaluator。
-- `M4` 当前虽然已经 materialize 并验证了 `gsm8k / math / gpqa / triviaqa / kodcode / story_cloze / rocstories / fever / alfworld` 的真实来源 smoke 子集，但 `MemoryAgentBench` 的正式数据入口仍未打通。
+- `TaskEvaluator` 现已扩到 `memoryagentbench` 专属 evaluator，但当前只覆盖官方非 API 指标的本地代理版本：`exact_match / f1 / substring / rougeL / rougeLsum / keypoint_recall`。若后续要严格复现实验论文中的 `Long-Range Understanding` 评测，还需要补官方 LLM judge 路线与对外部评测依赖的治理。
+- `MemoryAgentBench` 的真实来源 smoke 已打通，但当前为了本地 stub-harness 可运行，materialize 时会把 context 截断到 `512` tokens；正式长上下文实验仍需要补无截断路径、预算说明和更强的 runtime。
 - `ALFWorld` 当前打通的是 TextWorld transition-style smoke，而不是完整 THOR / visual stack；如果后续论文需要 embodied 视觉结果，需要补 `ai2thor/cv2` 环境、预算说明和更重的运行治理。
 - 当前若上游 Hugging Face metadata 没有结构化 license 字段，仓库只会写“需核对上游卡片”而不会自行补写；后续若要对外发布数据副本，需要补更严格的 license 审核流程。
 - `rocstories` 当前通过 `hf://` CSV 路径 materialize，而不是老式 dataset script；后续需要确认这种路径在 CI/离线缓存环境中的稳定性。
@@ -37,3 +37,4 @@
 - `writer_noise` failure check 已改为可配置的多次噪声抽样均值，避免 tiny smoke 上单次噪声抽样导致的高方差误判；当前 canonical 配置使用 `writer_noise_trials=8`。
 - `M4` benchmark foundation 已补齐统一 registry / prompt template / evaluator scaffold，本地 smoke 子集与 `scripts/run_benchmark_smoke_suite.sh` 已能真实跑通 6 个代表任务并进入统一汇总。
 - `M4` 已进一步补齐 benchmark source registry、数据来源文档、materialize 脚本与 manifest；真实来源 smoke 子集现已覆盖 `gsm8k / gpqa / triviaqa / kodcode / story_cloze / rocstories` 并通过统一 eval 汇总。
+- `MemoryAgentBench` 的真实来源 smoke、四类能力分项与统一汇总入口现已接入：`AR / TTL / LRU / CR` 当前都会进入 `metrics.json` 的 `capability_scores`，并在 `summary.csv` 里展开成独立列。

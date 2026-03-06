@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import re
+import string
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from rouge_score import rouge_scorer
+
 from memtotal.tasks.registry import get_task_spec
+
+
+_MEMORYAGENTBENCH_ROUGE = rouge_scorer.RougeScorer(["rougeL", "rougeLsum"], use_stemmer=True)
 
 
 def _normalize_text(text: str) -> str:
@@ -29,6 +36,99 @@ def _apply_normalizer(text: str, normalizer: str) -> str:
     return _normalize_text(text)
 
 
+def _normalize_qa_text(text: str) -> str:
+    lowered = text.lower()
+    no_punctuation = "".join(char for char in lowered if char not in string.punctuation)
+    no_articles = re.sub(r"\b(a|an|the)\b", " ", no_punctuation)
+    return " ".join(no_articles.split())
+
+
+def _memoryagentbench_f1_score(prediction: str, ground_truth: str) -> float:
+    normalized_prediction = _normalize_qa_text(prediction)
+    normalized_ground_truth = _normalize_qa_text(ground_truth)
+    special_answers = {"yes", "no", "noanswer"}
+    if (
+        normalized_prediction in special_answers or normalized_ground_truth in special_answers
+    ) and normalized_prediction != normalized_ground_truth:
+        return 0.0
+    prediction_tokens = normalized_prediction.split()
+    ground_truth_tokens = normalized_ground_truth.split()
+    common_tokens = Counter(prediction_tokens) & Counter(ground_truth_tokens)
+    overlap = sum(common_tokens.values())
+    if overlap == 0:
+        return 0.0
+    precision = overlap / len(prediction_tokens)
+    recall = overlap / len(ground_truth_tokens)
+    return (2 * precision * recall) / (precision + recall)
+
+
+def _flatten_references(values: object) -> list[str]:
+    if isinstance(values, str):
+        text = values.strip()
+        return [text] if text else []
+    if isinstance(values, list):
+        flattened: list[str] = []
+        for value in values:
+            flattened.extend(_flatten_references(value))
+        return flattened
+    if values is None:
+        return []
+    text = str(values).strip()
+    return [text] if text else []
+
+
+def _metric_max_over_references(prediction: str, references: list[str], metric_name: str) -> float:
+    if not references:
+        return 0.0
+    if metric_name == "exact_match":
+        return float(max(_normalize_qa_text(prediction) == _normalize_qa_text(reference) for reference in references))
+    if metric_name == "f1":
+        return max(_memoryagentbench_f1_score(prediction, reference) for reference in references)
+    if metric_name == "substring_exact_match":
+        normalized_prediction = _normalize_qa_text(prediction)
+        return float(max(_normalize_qa_text(reference) in normalized_prediction for reference in references))
+    if metric_name in {"rougeL_f1", "rougeL_recall", "rougeLsum_f1", "rougeLsum_recall"}:
+        rouge_name, field_name = metric_name.rsplit("_", maxsplit=1)
+        best_score = 0.0
+        for reference in references:
+            score = _MEMORYAGENTBENCH_ROUGE.score(target=reference, prediction=prediction)[rouge_name]
+            best_score = max(best_score, score.fmeasure if field_name == "f1" else score.recall)
+        return best_score
+    raise ValueError(f"Unsupported MemoryAgentBench metric: {metric_name}")
+
+
+def _memoryagentbench_keypoint_recall(prediction: str, keypoints: list[str]) -> float:
+    if not keypoints:
+        return 0.0
+    normalized_prediction = _normalize_qa_text(prediction)
+    hits = 0
+    for keypoint in keypoints:
+        normalized_keypoint = _normalize_qa_text(keypoint)
+        if normalized_keypoint and normalized_keypoint in normalized_prediction:
+            hits += 1
+    return hits / len(keypoints)
+
+
+def _calculate_memoryagentbench_metrics(
+    prediction: str,
+    references: list[str],
+    *,
+    keypoints: list[str] | None,
+) -> dict[str, float]:
+    metrics = {
+        "exact_match": _metric_max_over_references(prediction, references, "exact_match"),
+        "f1": _metric_max_over_references(prediction, references, "f1"),
+        "substring_exact_match": _metric_max_over_references(prediction, references, "substring_exact_match"),
+        "rougeL_f1": _metric_max_over_references(prediction, references, "rougeL_f1"),
+        "rougeL_recall": _metric_max_over_references(prediction, references, "rougeL_recall"),
+        "rougeLsum_f1": _metric_max_over_references(prediction, references, "rougeLsum_f1"),
+        "rougeLsum_recall": _metric_max_over_references(prediction, references, "rougeLsum_recall"),
+    }
+    if keypoints:
+        metrics["keypoint_recall"] = _memoryagentbench_keypoint_recall(prediction, keypoints)
+    return metrics
+
+
 @dataclass(frozen=True)
 class TaskEvaluator:
     evaluator_type: str
@@ -37,6 +137,23 @@ class TaskEvaluator:
     benchmark_id: str | None = None
 
     def evaluate_prediction(self, prediction: dict[str, Any], example: dict[str, Any]) -> dict[str, Any]:
+        if self.evaluator_type == "memoryagentbench":
+            predicted_text = str(prediction.get("text", ""))
+            references = _flatten_references(example.get("aliases", example.get("gold_answer", example["continuation"])))
+            keypoints = [str(item) for item in example.get("keypoints", [])]
+            metrics = _calculate_memoryagentbench_metrics(predicted_text, references, keypoints=keypoints)
+            primary_metric = str(example.get("capability_metric_name", "exact_match"))
+            score = float(metrics.get(primary_metric, metrics["exact_match"]))
+            return {
+                "correct": bool(metrics["exact_match"]),
+                "score": score,
+                "normalized_prediction": _normalize_qa_text(predicted_text),
+                "normalized_reference": _normalize_qa_text(references[0] if references else ""),
+                "extra_metrics": metrics,
+                "capability": str(example.get("capability", "")),
+                "capability_metric_name": primary_metric,
+            }
+
         if self.evaluator_type == "multiple_choice":
             predicted_label = str(prediction.get("label", ""))
             predicted_text = str(prediction.get("text", ""))

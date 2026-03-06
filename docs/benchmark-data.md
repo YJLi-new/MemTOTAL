@@ -29,6 +29,7 @@
 | `rocstories` | `hf://datasets/wza/roc_stories/ROCStories__spring2016.csv` | public | auto | `data/benchmarks/materialized/rocstories/eval-real-smoke4.jsonl` | CSV-backed dataset; verify upstream card manually |
 | `fever` | `Dzeniks/fever_3way` / `validation` | public | auto | `data/benchmarks/materialized/fever/eval-real-smoke4.jsonl` | MIT (from dataset card README metadata) |
 | `alfworld` | official ALFWorld TextWorld release assets / `valid_seen` | public | auto | `data/benchmarks/materialized/alfworld/eval-real-smoke4.jsonl` | MIT (from the official ALFWorld GitHub repository) |
+| `memoryagentbench` | `ai-hyz/MemoryAgentBench` / representative smoke rows from `Accurate_Retrieval + Test_Time_Learning + Long_Range_Understanding + Conflict_Resolution` | public | auto | `data/benchmarks/materialized/memoryagentbench/eval-real-smoke4.jsonl` | MIT (from the official dataset card metadata) |
 
 ## Notes
 
@@ -39,3 +40,5 @@
 - `fever` 当前使用公开的 3-way 变体，并在 materialize 时把标签映射为 `SUPPORTS / REFUTES / NOT_ENOUGH_INFO`。
 - `alfworld` 当前走官方 TextWorld 资产路径，外部资产会放在 `data/benchmarks/external/alfworld/`，并在 materialize 时真实执行一次 hand-coded expert transition，再导出 `eval-real-smoke4.jsonl`。
 - `alfworld` 这轮打通的是 text-only TextWorld smoke，不是完整 THOR/视觉栈；后者若要跑，需要额外的 `ai2thor/cv2` 依赖和更重的执行环境。
+- `memoryagentbench` 当前使用官方 Hugging Face 数据集里的 4 个代表 source：`ruler_qa1_197K`、`icl_trec_coarse_6600shot_balance`、`infbench_sum_eng_shots2`、`factconsolidation_mh_6k`，各取 1 个 query 组成 `eval-real-smoke4.jsonl`。
+- `memoryagentbench` 的 current smoke 是“真实 source + 截断 context”的 scaffold：为了让本仓库现有 stub runtime 可运行，materialize 时会把 context 截断到 `512` tokens，并在 `data/benchmarks/manifests/memoryagentbench.json` 里显式记录这一点。它不是正式长上下文协议结果。

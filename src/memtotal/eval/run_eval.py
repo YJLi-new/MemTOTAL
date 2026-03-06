@@ -46,11 +46,14 @@ def main(argv: list[str] | None = None) -> int:
     max_examples = min(len(dataset), 2 if args.dry_run else int(config["runtime"]["eval_examples"]))
     predictions = []
     correct = 0
+    score_total = 0.0
     similarities = []
     gate_means = []
     active_query_counts = []
     segment_gate_means: list[float] = []
     segment_active_query_counts: list[int] = []
+    capability_scores: dict[str, list[float]] = {}
+    capability_metric_names: dict[str, str] = {}
     profiler = ProfileTracker(
         output_dir=Path(args.output_dir),
         device=str(config["runtime"].get("device", "cpu")),
@@ -104,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
             score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
             predicted_text = generated_text
         is_correct = bool(score_payload["correct"])
+        score_value = float(score_payload["score"])
         correct += int(is_correct)
+        score_total += score_value
         similarities.append(similarity)
         gate_mean = float(forward.gating.mean().item())
         active_queries = int((forward.gating > 0.5).sum().item())
@@ -112,6 +117,12 @@ def main(argv: list[str] | None = None) -> int:
         active_query_counts.append(active_queries)
         segment_gate_means.extend(float(item["mean_gate"]) for item in forward.segment_stats)
         segment_active_query_counts.extend(int(item["active_queries"]) for item in forward.segment_stats)
+        capability_name = str(score_payload.get("capability", example.get("capability", "")))
+        if capability_name:
+            capability_scores.setdefault(capability_name, []).append(score_value)
+            capability_metric_names[capability_name] = str(
+                score_payload.get("capability_metric_name", example.get("capability_metric_name", evaluator.metric_name))
+            )
         predictions.append(
             {
                 "id": example["id"],
@@ -122,10 +133,16 @@ def main(argv: list[str] | None = None) -> int:
                 "predicted_label": predicted_label,
                 "predicted_text": predicted_text,
                 "correct": is_correct,
-                "score": float(score_payload["score"]),
+                "score": score_value,
                 "normalized_prediction": score_payload["normalized_prediction"],
                 "normalized_reference": score_payload["normalized_reference"],
                 "evaluator_type": evaluator.evaluator_type,
+                "extra_metrics": score_payload.get("extra_metrics", {}),
+                "capability": capability_name or None,
+                "capability_metric_name": score_payload.get(
+                    "capability_metric_name",
+                    example.get("capability_metric_name"),
+                ),
                 "similarity": similarity,
                 "gating_mode": runtime.reader.gating_mode,
                 "gates": [float(value) for value in forward.gating.squeeze(0).tolist()],
@@ -140,11 +157,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     profile_metrics = profiler.finalize()
+    mean_accuracy = correct / max_examples
+    mean_score = score_total / max_examples
     metrics = {
         "mode": "eval",
         "examples_evaluated": max_examples,
-        "accuracy": correct / max_examples,
-        evaluator.metric_name: correct / max_examples,
+        "accuracy": mean_accuracy,
+        "mean_score": mean_score,
+        evaluator.metric_name: mean_score,
         "benchmark_id": config["task"].get("benchmark_id"),
         "task_domain": config["task"].get("domain"),
         "smoke_subset": config["task"].get("smoke_subset"),
@@ -164,6 +184,13 @@ def main(argv: list[str] | None = None) -> int:
         "metric_name": config["task"]["metric_name"],
         **profile_metrics,
     }
+    if capability_scores:
+        metrics["capability_scores"] = {
+            capability: sum(values) / len(values) for capability, values in sorted(capability_scores.items())
+        }
+        metrics["capability_metric_names"] = {
+            capability: capability_metric_names[capability] for capability in sorted(capability_metric_names)
+        }
     write_json(Path(args.output_dir) / "metrics.json", metrics)
     write_jsonl(Path(args.output_dir) / "predictions.jsonl", predictions)
     return 0

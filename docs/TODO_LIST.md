@@ -460,8 +460,14 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `rocstories`
   - `fever`
   - `alfworld`
-- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T141831Z/summary.csv`
-- 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果
+  - `memoryagentbench`
+- `MemoryAgentBench` 当前已通过真实 HF 数据源打通 4 类能力 smoke：
+  - `AR`: `ruler_qa1_197K`
+  - `TTL`: `icl_trec_coarse_6600shot_balance`
+  - `LRU`: `infbench_sum_eng_shots2`
+  - `CR`: `factconsolidation_mh_6k`
+- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T144612Z/summary.csv`
+- 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果；`MemoryAgentBench` 当前为了本地 stub-harness 可运行，会把 context 截断到 `512` tokens，因此它是 real-source smoke，不是正式长上下文协议结果
 
 ### P0 必须
 - [ ] 接入主套件 benchmark
@@ -483,7 +489,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - [ ] 尽量再接 NarrativeQA
   - **DoD**：可以构造 `Math+Code` vs `Math+Narrative`
 
-- [ ] 接入 MemoryAgentBench（强烈建议）
+- [x] 接入 MemoryAgentBench（强烈建议）
   - **DoD**：能跑出四类能力分项结果
 
 ### P1 重要

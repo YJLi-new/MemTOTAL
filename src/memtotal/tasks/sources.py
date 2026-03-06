@@ -10,6 +10,7 @@ from typing import Any
 from datasets import load_dataset
 
 from memtotal.tasks.alfworld_env import materialize_alfworld_textworld_smoke
+from memtotal.tasks.memoryagentbench import materialize_memoryagentbench_smoke
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,26 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         homepage="https://alfworld.github.io/",
         license_note="MIT (from the official ALFWorld GitHub repository).",
         notes="Uses the official TextWorld release assets. The smoke subset executes the first hand-coded expert action, then predicts the next expert action.",
+    ),
+    "memoryagentbench": BenchmarkSourceSpec(
+        benchmark_id="memoryagentbench",
+        display_name="MemoryAgentBench",
+        access="public",
+        source_kind="memoryagentbench_huggingface",
+        dataset_name="ai-hyz/MemoryAgentBench",
+        dataset_config=None,
+        dataset_configs=None,
+        split=None,
+        data_files=None,
+        output_filename="eval-real-smoke4.jsonl",
+        source_url="https://huggingface.co/datasets/ai-hyz/MemoryAgentBench",
+        homepage="https://github.com/HUST-AI-HYZ/MemoryAgentBench",
+        license_note="MIT (from the official Hugging Face dataset card metadata).",
+        notes=(
+            "The smoke scaffold materializes one official representative row for each of the "
+            "four MemoryAgentBench capabilities (AR/TTL/LRU/CR) and expands them into a small "
+            "query subset. For local stub execution, context is truncated to a fixed token budget."
+        ),
     ),
 }
 
@@ -419,6 +440,26 @@ def materialize_benchmark_source(
             asset_root=asset_root,
             max_examples=max_examples,
             split=str(spec.split),
+        )
+        output_path = output_dir / spec.output_filename
+        output_path.write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in canonical_rows) + ("\n" if canonical_rows else "")
+        )
+        manifest = {
+            **asdict(spec),
+            "status": "materialized",
+            "materialized_path": str(output_path),
+            "num_rows": len(canonical_rows),
+            "max_examples": max_examples,
+            "seed": seed,
+            **extra_manifest,
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        return manifest
+    elif spec.source_kind == "memoryagentbench_huggingface":
+        canonical_rows, extra_manifest = materialize_memoryagentbench_smoke(
+            max_examples=max_examples,
+            seed=seed,
         )
         output_path = output_dir / spec.output_filename
         output_path.write_text(

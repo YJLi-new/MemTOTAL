@@ -83,12 +83,31 @@ class ReportingTest(unittest.TestCase):
                 )
             )
 
+            memoryagentbench_dir = temp_root / "memoryagentbench"
+            memoryagentbench_dir.mkdir()
+            (memoryagentbench_dir / "run_info.json").write_text(
+                json.dumps({"backbone": "Qwen2.5-1.5B-Instruct", "task_name": "memoryagentbench_real_smoke"})
+            )
+            (memoryagentbench_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "eval",
+                        "benchmark_id": "memoryagentbench",
+                        "memoryagent_score": 0.125,
+                        "accuracy": 0.0,
+                        "capability_scores": {"AR": 0.0, "LRU": 0.5},
+                        "capability_metric_names": {"AR": "exact_match", "LRU": "rougeLsum_f1"},
+                    }
+                )
+            )
+
             rows = collect_metrics(temp_root)
             by_mode = {str(row["mode"]): row for row in rows}
             by_stage = {str(row.get("training_stage", "")): row for row in rows}
             by_mode_and_query = {
                 (str(row["mode"]), str(row.get("query_learning_mode", ""))): row for row in rows
             }
+            memoryagentbench_row = next(row for row in rows if row.get("benchmark_id") == "memoryagentbench")
 
             self.assertEqual(by_mode["memgen_adapter"]["primary_metric"], "compute_reward")
             self.assertEqual(by_mode["memgen_adapter"]["primary_score"], 0.25)
@@ -106,6 +125,10 @@ class ReportingTest(unittest.TestCase):
             )
             self.assertEqual(by_mode["analysis_failure_checks"]["primary_metric"], "checks_pass_rate")
             self.assertAlmostEqual(by_mode["analysis_failure_checks"]["primary_score"], 2.0 / 3.0)
+            self.assertEqual(memoryagentbench_row["primary_metric"], "memoryagent_score")
+            self.assertEqual(memoryagentbench_row["primary_score"], 0.125)
+            self.assertEqual(memoryagentbench_row["capability_AR_metric"], "exact_match")
+            self.assertEqual(memoryagentbench_row["capability_LRU_score"], 0.5)
 
     def test_write_sanity_plot_uses_primary_metric_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

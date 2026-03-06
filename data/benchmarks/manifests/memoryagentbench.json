@@ -1,0 +1,53 @@
+{
+  "access": "public",
+  "benchmark_id": "memoryagentbench",
+  "context_token_budget": 512,
+  "data_files": null,
+  "dataset_config": null,
+  "dataset_configs": null,
+  "dataset_name": "ai-hyz/MemoryAgentBench",
+  "display_name": "MemoryAgentBench",
+  "homepage": "https://github.com/HUST-AI-HYZ/MemoryAgentBench",
+  "license_note": "MIT (from the official Hugging Face dataset card metadata).",
+  "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/memoryagentbench/eval-real-smoke4.jsonl",
+  "max_examples": 4,
+  "notes": "The smoke scaffold materializes one official representative row for each of the four MemoryAgentBench capabilities (AR/TTL/LRU/CR) and expands them into a small query subset. For local stub execution, context is truncated to a fixed token budget.",
+  "num_rows": 4,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "seed": 701,
+  "selected_capabilities": {
+    "AR": {
+      "display_name": "Accurate Retrieval",
+      "primary_metric": "exact_match",
+      "questions_materialized": 1,
+      "source": "ruler_qa1_197K",
+      "split_name": "Accurate_Retrieval"
+    },
+    "CR": {
+      "display_name": "Conflict Resolution",
+      "primary_metric": "exact_match",
+      "questions_materialized": 1,
+      "source": "factconsolidation_mh_6k",
+      "split_name": "Conflict_Resolution"
+    },
+    "LRU": {
+      "display_name": "Long-Range Understanding",
+      "primary_metric": "rougeLsum_f1",
+      "questions_materialized": 1,
+      "source": "infbench_sum_eng_shots2",
+      "split_name": "Long_Range_Understanding"
+    },
+    "TTL": {
+      "display_name": "Test-Time Learning",
+      "primary_metric": "exact_match",
+      "questions_materialized": 1,
+      "source": "icl_trec_coarse_6600shot_balance",
+      "split_name": "Test_Time_Learning"
+    }
+  },
+  "smoke_note": "This MemoryAgentBench smoke materialization uses official HF rows but truncates context to a small token budget for local stub-harness validation. It is not a formal long-context benchmark run.",
+  "source_kind": "memoryagentbench_huggingface",
+  "source_url": "https://huggingface.co/datasets/ai-hyz/MemoryAgentBench",
+  "split": null,
+  "status": "materialized"
+}

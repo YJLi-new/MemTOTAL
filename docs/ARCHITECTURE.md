@@ -119,6 +119,7 @@
     - `rocstories`
     - `fever`
     - `alfworld`
+    - `memoryagentbench`
 - 新增真实数据入口脚本：
   - `scripts/setup_benchmark_data.sh`
   - `scripts/run_real_benchmark_smoke_suite.sh`
@@ -127,9 +128,10 @@
   - `data/benchmarks/manifests/<benchmark_id>.json`
   - `data/benchmarks/source_summary.json`
   - `alfworld` 目前通过 `src/memtotal/tasks/alfworld_env.py` 走官方 TextWorld 资产与一次 expert transition materialize，不再停留在手写 contract 样例
-  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T141831Z/summary.csv`
+  - `memoryagentbench` 目前通过 `src/memtotal/tasks/memoryagentbench.py` 走官方 Hugging Face 数据源，并在 manifest 中显式记录 `AR / TTL / LRU / CR` 四类能力的 smoke source 与当前的 context truncation 预算
+  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T144612Z/summary.csv`
 
-当前 `M4` 已不只是本地 contract smoke。现在已有 9 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。
+当前 `M4` 已不只是本地 contract smoke。现在已有 10 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。其中特别需要区分：`MemoryAgentBench` 当前是“真实 source + 截断 context 的 smoke scaffold”，不是正式长上下文主结果。
 
 ## M3 Failure Checks
 

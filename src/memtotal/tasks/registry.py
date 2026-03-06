@@ -21,6 +21,7 @@ class TaskSpec:
     choice_text_field: str = "text"
     normalizer: str = "text"
     supports_tools: bool = False
+    passthrough_fields: tuple[str, ...] = ()
 
 
 TASK_SPECS: dict[str, TaskSpec] = {
@@ -106,6 +107,30 @@ TASK_SPECS: dict[str, TaskSpec] = {
         prompt_template="Observation: {observation} || Goal: {goal} || What is the next action?",
         normalizer="action",
         supports_tools=True,
+    ),
+    "memoryagentbench": TaskSpec(
+        benchmark_id="memoryagentbench",
+        display_name="MemoryAgentBench",
+        domain="agent",
+        evaluator_type="memoryagentbench",
+        metric_name="memoryagent_score",
+        prompt_template="Context: {context} || Instruction: {question}",
+        passthrough_fields=(
+            "question",
+            "capability",
+            "capability_name",
+            "memoryagent_source",
+            "question_index",
+            "capability_metric_name",
+            "keypoints",
+            "qa_pair_id",
+            "question_type",
+            "context_token_budget",
+            "context_tokens_total",
+            "context_tokens_used",
+            "context_was_truncated",
+            "full_context_chars",
+        ),
     ),
 }
 
@@ -193,6 +218,9 @@ def _build_canonical_benchmark_example(
         if not isinstance(aliases, list):
             raise ValueError(f"{spec.benchmark_id} aliases must be a list when provided.")
         example["aliases"] = [str(alias) for alias in aliases]
+    for field_name in spec.passthrough_fields:
+        if field_name in raw_row:
+            example[field_name] = raw_row[field_name]
     return example
 
 

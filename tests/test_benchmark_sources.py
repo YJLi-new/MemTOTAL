@@ -132,6 +132,11 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(source.access, "public")
         self.assertEqual(source.source_kind, "alfworld_textworld")
 
+    def test_source_registry_marks_memoryagentbench_real_source(self) -> None:
+        source = get_benchmark_source("memoryagentbench")
+        self.assertEqual(source.access, "public")
+        self.assertEqual(source.source_kind, "memoryagentbench_huggingface")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,7 @@ class TaskRegistryTest(unittest.TestCase):
                 "rocstories",
                 "fever",
                 "alfworld",
+                "memoryagentbench",
             }.issubset(benchmark_ids)
         )
 

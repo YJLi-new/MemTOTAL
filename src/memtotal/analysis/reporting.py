@@ -15,6 +15,8 @@ def _coerce_float(value: object) -> float | None:
 
 def resolve_primary_metric(row: dict[str, object]) -> tuple[str, float]:
     metric_preferences = [
+        ("memoryagent_score", _coerce_float(row.get("memoryagent_score"))),
+        ("mean_score", _coerce_float(row.get("mean_score"))),
         ("accuracy", _coerce_float(row.get("accuracy"))),
         ("compute_reward", _coerce_float(row.get("compute_reward"))),
         ("checks_pass_rate", _coerce_float(row.get("checks_pass_rate"))),
@@ -66,6 +68,13 @@ def collect_metrics(input_root: str | Path) -> list[dict[str, object]]:
         }
         for key, value in metrics.items():
             row[key] = value
+        capability_scores = metrics.get("capability_scores")
+        capability_metric_names = metrics.get("capability_metric_names", {})
+        if isinstance(capability_scores, dict):
+            for capability, score in capability_scores.items():
+                row[f"capability_{capability}_score"] = score
+                if isinstance(capability_metric_names, dict) and capability in capability_metric_names:
+                    row[f"capability_{capability}_metric"] = capability_metric_names[capability]
         primary_metric, primary_score = resolve_primary_metric(row)
         row["primary_metric"] = primary_metric
         row["primary_score"] = primary_score
