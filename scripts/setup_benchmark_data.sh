@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BENCHMARKS="${BENCHMARKS:-gsm8k,gpqa,triviaqa,story_cloze,kodcode,rocstories,fever,alfworld}"
+BENCHMARKS="${BENCHMARKS:-gsm8k,math,gpqa,triviaqa,story_cloze,kodcode,rocstories,fever,alfworld}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-4}"
 SEED="${SEED:-701}"
 

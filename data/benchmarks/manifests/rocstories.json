@@ -5,6 +5,7 @@
     "test": "hf://datasets/wza/roc_stories/ROCStories__spring2016.csv"
   },
   "dataset_config": null,
+  "dataset_configs": null,
   "dataset_name": "csv",
   "display_name": "ROCStories",
   "homepage": null,

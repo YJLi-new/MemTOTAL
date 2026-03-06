@@ -3,6 +3,7 @@
   "benchmark_id": "triviaqa",
   "data_files": null,
   "dataset_config": "rc.wikipedia.nocontext",
+  "dataset_configs": null,
   "dataset_name": "mandarjoshi/trivia_qa",
   "display_name": "TriviaQA",
   "homepage": null,

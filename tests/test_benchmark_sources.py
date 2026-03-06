@@ -13,8 +13,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from memtotal.tasks.sources import (
+    _canonicalize_fever,
     _canonicalize_gpqa,
     _canonicalize_gsm8k,
+    _canonicalize_math,
     _canonicalize_story_cloze,
     _canonicalize_triviaqa,
     get_benchmark_source,
@@ -27,6 +29,17 @@ class BenchmarkSourcesTest(unittest.TestCase):
         row = {"question": "What is 2+2?", "answer": "We add.\n#### 4"}
         canonical = _canonicalize_gsm8k(row, index=0, seed=11)
         self.assertEqual(canonical["answer"], "4")
+
+    def test_math_canonicalizer_extracts_boxed_answer(self) -> None:
+        row = {
+            "problem": "Compute f(2).",
+            "solution": "After simplification we get \\boxed{\\frac{3}{5}}.",
+            "level": "Level 1",
+            "_source_config": "algebra",
+        }
+        canonical = _canonicalize_math(row, index=0, seed=11)
+        self.assertEqual(canonical["answer"], "\\frac{3}{5}")
+        self.assertEqual(canonical["math_subject"], "algebra")
 
     def test_gpqa_canonicalizer_builds_deterministic_choices(self) -> None:
         row = {
@@ -65,6 +78,18 @@ class BenchmarkSourcesTest(unittest.TestCase):
         canonical = _canonicalize_story_cloze(row, index=0, seed=19)
         self.assertEqual(canonical["label"], "B")
         self.assertEqual(canonical["answer"], "Ending 2")
+
+    def test_fever_canonicalizer_maps_three_way_labels(self) -> None:
+        row = {
+            "id": 7,
+            "claim": "Example claim",
+            "evidence": "Evidence sentence.",
+            "label": 1,
+        }
+        canonical = _canonicalize_fever(row, index=0, seed=19)
+        self.assertEqual(canonical["label"], "REFUTES")
+        self.assertEqual(canonical["answer"], "Refutes")
+        self.assertEqual(len(canonical["choices"]), 3)
 
     def test_manual_source_materialize_writes_pending_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -452,12 +452,14 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `data/benchmarks/source_summary.json`
 - 已真实 materialize 并跑通 real-source smoke eval 的任务：
   - `gsm8k`
+  - `math`
   - `gpqa`
   - `triviaqa`
   - `kodcode`
   - `story_cloze`
   - `rocstories`
-- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T133708Z/summary.csv`
+  - `fever`
+- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T135108Z/summary.csv`
 - 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果
 
 ### P0 必须

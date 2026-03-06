@@ -3,6 +3,7 @@
   "benchmark_id": "story_cloze",
   "data_files": null,
   "dataset_config": null,
+  "dataset_configs": null,
   "dataset_name": "gimmaru/story_cloze-2016",
   "display_name": "Story Cloze",
   "homepage": null,

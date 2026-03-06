@@ -3,6 +3,7 @@
   "benchmark_id": "gsm8k",
   "data_files": null,
   "dataset_config": "main",
+  "dataset_configs": null,
   "dataset_name": "gsm8k",
   "display_name": "GSM8K",
   "homepage": null,

@@ -13,11 +13,13 @@ cd "$ROOT_DIR"
 
 CONFIGS=(
   "benchmark_gsm8k_qwen25_real_smoke.yaml"
+  "benchmark_math_qwen25_real_smoke.yaml"
   "benchmark_gpqa_qwen25_real_smoke.yaml"
   "benchmark_triviaqa_qwen25_real_smoke.yaml"
   "benchmark_story_cloze_qwen25_real_smoke.yaml"
   "benchmark_kodcode_qwen25_real_smoke.yaml"
   "benchmark_rocstories_qwen25_real_smoke.yaml"
+  "benchmark_fever_qwen25_real_smoke.yaml"
 )
 
 for config_name in "${CONFIGS[@]}"; do

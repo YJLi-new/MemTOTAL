@@ -16,7 +16,7 @@
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
 - `M4` 当前新增的是本地 benchmark smoke contract，而不是正式 benchmark 数据接入；后续仍需要把 `data/benchmarks/smoke/*.jsonl` 替换成与 `EXPERIMENTS_INFO.md` 对齐的真实下载 / 缓存 / 许可路径。
 - `TaskEvaluator` 当前只覆盖 `exact_match / multiple_choice / dataset_label_classification`；如果后续接 `MemoryAgentBench` 分项、代码执行式评测或更复杂 agent reward，需要扩成任务专属 evaluator。
-- `M4` 当前虽然已经 materialize 并验证了 `gsm8k / gpqa / triviaqa / kodcode / story_cloze / rocstories` 的真实来源 smoke 子集，但 `MATH / FEVER / ALFWorld / MemoryAgentBench` 的正式数据入口仍未打通。
+- `M4` 当前虽然已经 materialize 并验证了 `gsm8k / math / gpqa / triviaqa / kodcode / story_cloze / rocstories / fever` 的真实来源 smoke 子集，但 `ALFWorld / MemoryAgentBench` 的正式数据入口仍未打通。
 - 当前若上游 Hugging Face metadata 没有结构化 license 字段，仓库只会写“需核对上游卡片”而不会自行补写；后续若要对外发布数据副本，需要补更严格的 license 审核流程。
 - `rocstories` 当前通过 `hf://` CSV 路径 materialize，而不是老式 dataset script；后续需要确认这种路径在 CI/离线缓存环境中的稳定性。
 

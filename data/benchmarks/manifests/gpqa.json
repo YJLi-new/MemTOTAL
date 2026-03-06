@@ -3,6 +3,7 @@
   "benchmark_id": "gpqa",
   "data_files": null,
   "dataset_config": "gpqa_diamond",
+  "dataset_configs": null,
   "dataset_name": "Idavidrein/gpqa",
   "display_name": "GPQA",
   "homepage": null,

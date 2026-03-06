@@ -1,0 +1,26 @@
+{
+  "access": "public",
+  "benchmark_id": "math",
+  "data_files": null,
+  "dataset_config": null,
+  "dataset_configs": [
+    "algebra",
+    "geometry",
+    "number_theory",
+    "precalculus"
+  ],
+  "dataset_name": "EleutherAI/hendrycks_math",
+  "display_name": "MATH",
+  "homepage": "https://github.com/hendrycks/math",
+  "license_note": "MIT (from dataset card README metadata).",
+  "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/math/eval-real-smoke4.jsonl",
+  "max_examples": 4,
+  "notes": "Current real-smoke aggregate samples one example from each of four configs: algebra, geometry, number_theory, precalculus.",
+  "num_rows": 4,
+  "output_filename": "eval-real-smoke4.jsonl",
+  "seed": 701,
+  "source_kind": "multi_huggingface_configs",
+  "source_url": "https://huggingface.co/datasets/EleutherAI/hendrycks_math",
+  "split": "test",
+  "status": "materialized"
+}

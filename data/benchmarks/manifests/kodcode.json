@@ -3,6 +3,7 @@
   "benchmark_id": "kodcode",
   "data_files": null,
   "dataset_config": null,
+  "dataset_configs": null,
   "dataset_name": "KodCode/KodCode-Light-RL-10K",
   "display_name": "KodCode",
   "homepage": null,

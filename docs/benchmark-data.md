@@ -21,12 +21,13 @@
 | Benchmark | Upstream source | Access | Current materialize status | Local path | License note |
 | --- | --- | --- | --- | --- | --- |
 | `gsm8k` | `gsm8k` / `main` / `test` | public | auto | `data/benchmarks/materialized/gsm8k/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card before redistribution |
+| `math` | `EleutherAI/hendrycks_math` / `{algebra, geometry, number_theory, precalculus}` / `test` | public | auto | `data/benchmarks/materialized/math/eval-real-smoke4.jsonl` | MIT (from dataset card README metadata) |
 | `gpqa` | `Idavidrein/gpqa` / `gpqa_diamond` / `train` | gated | auto | `data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl` | gated dataset; metadata license field is blank |
 | `triviaqa` | `mandarjoshi/trivia_qa` / `rc.wikipedia.nocontext` / `validation` | public | auto | `data/benchmarks/materialized/triviaqa/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
 | `story_cloze` | `gimmaru/story_cloze-2016` / `test` | public | auto | `data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
 | `kodcode` | `KodCode/KodCode-Light-RL-10K` / `train` | public | auto | `data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
 | `rocstories` | `hf://datasets/wza/roc_stories/ROCStories__spring2016.csv` | public | auto | `data/benchmarks/materialized/rocstories/eval-real-smoke4.jsonl` | CSV-backed dataset; verify upstream card manually |
-| `fever` | pending | manual | pending | pending | source registration still missing |
+| `fever` | `Dzeniks/fever_3way` / `validation` | public | auto | `data/benchmarks/materialized/fever/eval-real-smoke4.jsonl` | MIT (from dataset card README metadata) |
 | `alfworld` | environment assets + game files | manual | pending | pending | requires environment/game files, not just flat JSONL |
 
 ## Notes
@@ -34,4 +35,6 @@
 - `gpqa` 当前依赖你已经完成的 `huggingface-cli login`。未登录时 materialize 会失败。
 - `triviaqa` 当前 real smoke 选择 `validation`，不是因为协议锁死，而是因为它适合快速验证统一评测链；正式实验时仍需按协议确认 split。
 - `rocstories` 由于当前 `datasets` 版本不再支持旧脚本式加载，仓库现在跟随 MemGen 直接走 `hf://` CSV 路径。
-- `fever` 和 `alfworld` 目前只完成了 task contract smoke，真实源接入仍是后续 TODO。
+- `math` 当前 real smoke 是跨四个 config 的聚合子集，每个 config 取 1 个样本，用于验证多 config materialize 与统一 exact-match 评测链。
+- `fever` 当前使用公开的 3-way 变体，并在 materialize 时把标签映射为 `SUPPORTS / REFUTES / NOT_ENOUGH_INFO`。
+- `alfworld` 仍然不是平面数据集接入问题，而是环境资产与执行 harness 问题；它仍保持 `manual_pending`。

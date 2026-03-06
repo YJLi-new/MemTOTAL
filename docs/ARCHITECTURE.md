@@ -111,13 +111,14 @@
   - 统一维护真实数据源 registry、访问方式、materialize 路径与许可备注
   - 当前已能真实 materialize：
     - `gsm8k`
+    - `math`
     - `gpqa`
     - `triviaqa`
     - `story_cloze`
     - `kodcode`
     - `rocstories`
-  - 当前仍为 manual pending：
     - `fever`
+  - 当前仍为 manual pending：
     - `alfworld`
 - 新增真实数据入口脚本：
   - `scripts/setup_benchmark_data.sh`
@@ -126,9 +127,9 @@
   - `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke4.jsonl`
   - `data/benchmarks/manifests/<benchmark_id>.json`
   - `data/benchmarks/source_summary.json`
-  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T133708Z/summary.csv`
+  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T135108Z/summary.csv`
 
-当前 `M4` 已不只是本地 contract smoke。现在已有 6 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。
+当前 `M4` 已不只是本地 contract smoke。现在已有 8 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。
 
 ## M3 Failure Checks
 

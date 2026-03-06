@@ -4,6 +4,7 @@ import json
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from datasets import load_dataset
@@ -24,6 +25,7 @@ class BenchmarkSourceSpec:
     homepage: str | None
     license_note: str
     notes: str = ""
+    dataset_configs: list[str] | None = None
 
 
 SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
@@ -34,12 +36,29 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="huggingface",
         dataset_name="gsm8k",
         dataset_config="main",
+        dataset_configs=None,
         split="test",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
         source_url="https://huggingface.co/datasets/gsm8k",
         homepage=None,
         license_note="Hugging Face metadata currently does not expose a structured license field; verify upstream dataset card before redistribution.",
+    ),
+    "math": BenchmarkSourceSpec(
+        benchmark_id="math",
+        display_name="MATH",
+        access="public",
+        source_kind="multi_huggingface_configs",
+        dataset_name="EleutherAI/hendrycks_math",
+        dataset_config=None,
+        dataset_configs=["algebra", "geometry", "number_theory", "precalculus"],
+        split="test",
+        data_files=None,
+        output_filename="eval-real-smoke4.jsonl",
+        source_url="https://huggingface.co/datasets/EleutherAI/hendrycks_math",
+        homepage="https://github.com/hendrycks/math",
+        license_note="MIT (from dataset card README metadata).",
+        notes="Current real-smoke aggregate samples one example from each of four configs: algebra, geometry, number_theory, precalculus.",
     ),
     "gpqa": BenchmarkSourceSpec(
         benchmark_id="gpqa",
@@ -48,6 +67,7 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="huggingface",
         dataset_name="Idavidrein/gpqa",
         dataset_config="gpqa_diamond",
+        dataset_configs=None,
         split="train",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
@@ -63,6 +83,7 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="huggingface",
         dataset_name="mandarjoshi/trivia_qa",
         dataset_config="rc.wikipedia.nocontext",
+        dataset_configs=None,
         split="validation",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
@@ -78,6 +99,7 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="huggingface",
         dataset_name="gimmaru/story_cloze-2016",
         dataset_config=None,
+        dataset_configs=None,
         split="test",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
@@ -92,6 +114,7 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="huggingface",
         dataset_name="KodCode/KodCode-Light-RL-10K",
         dataset_config=None,
+        dataset_configs=None,
         split="train",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
@@ -107,6 +130,7 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="hf_csv",
         dataset_name="csv",
         dataset_config=None,
+        dataset_configs=None,
         split="test",
         data_files={"test": "hf://datasets/wza/roc_stories/ROCStories__spring2016.csv"},
         output_filename="eval-real-smoke4.jsonl",
@@ -118,17 +142,18 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
     "fever": BenchmarkSourceSpec(
         benchmark_id="fever",
         display_name="FEVER",
-        access="manual",
-        source_kind="manual",
-        dataset_name=None,
+        access="public",
+        source_kind="huggingface",
+        dataset_name="Dzeniks/fever_3way",
         dataset_config=None,
-        split=None,
+        dataset_configs=None,
+        split="validation",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
-        source_url=None,
+        source_url="https://huggingface.co/datasets/Dzeniks/fever_3way",
         homepage=None,
-        license_note="Pending manual source registration.",
-        notes="Current repo only has a local contract smoke subset. Real FEVER download/cache path is still pending.",
+        license_note="MIT (from dataset card README metadata).",
+        notes="Uses the public 3-way FEVER variant with labels mapped to SUPPORTS / REFUTES / NOT_ENOUGH_INFO.",
     ),
     "alfworld": BenchmarkSourceSpec(
         benchmark_id="alfworld",
@@ -137,6 +162,7 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         source_kind="manual",
         dataset_name=None,
         dataset_config=None,
+        dataset_configs=None,
         split=None,
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
@@ -181,12 +207,65 @@ def _load_rows(spec: BenchmarkSourceSpec) -> list[dict[str, Any]]:
     raise ValueError(f"Unsupported source kind: {spec.source_kind}")
 
 
+def _load_multi_config_rows(spec: BenchmarkSourceSpec, max_examples: int) -> list[dict[str, Any]]:
+    if not spec.dataset_configs:
+        raise ValueError(f"{spec.benchmark_id} requires dataset_configs for multi-config loading.")
+    per_config = max(1, max_examples // len(spec.dataset_configs))
+    remainder = max_examples % len(spec.dataset_configs)
+    rows: list[dict[str, Any]] = []
+    for config_index, config_name in enumerate(spec.dataset_configs):
+        take = per_config + (1 if config_index < remainder else 0)
+        split_expr = spec.split if take <= 0 else f"{spec.split}[:{take}]"
+        dataset = load_dataset(spec.dataset_name, config_name, split=split_expr)
+        for index in range(len(dataset)):
+            row = _to_serializable(dataset[index])
+            row["_source_config"] = config_name
+            rows.append(row)
+    return rows
+
+
 def _canonicalize_gsm8k(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
     answer = str(row["answer"]).split("\n####")[-1].strip()
     return {
         "id": str(row.get("id", f"gsm8k-{index}")),
         "question": str(row["question"]).strip(),
         "answer": answer,
+    }
+
+
+def _extract_math_final_answer(solution: str) -> str:
+    matches = list(re.finditer(r"\\boxed\{", solution))
+    if matches:
+        start = matches[-1].end()
+        depth = 1
+        collected: list[str] = []
+        for char in solution[start:]:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            collected.append(char)
+        boxed = "".join(collected).strip()
+        if boxed:
+            return boxed
+    tail_match = re.search(r"(?:answer is|therefore[, ]+the answer is)\s*([^\n.]+)", solution, flags=re.IGNORECASE)
+    if tail_match:
+        return tail_match.group(1).strip().rstrip(".")
+    return solution.strip().splitlines()[-1].strip()
+
+
+def _canonicalize_math(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
+    del seed
+    solution = str(row["solution"]).strip()
+    return {
+        "id": f"math-{row.get('_source_config', 'unknown')}-{index}",
+        "question": str(row["problem"]).strip(),
+        "answer": _extract_math_final_answer(solution),
+        "solution": solution,
+        "math_subject": str(row.get("_source_config", row.get("type", "unknown"))),
+        "math_level": str(row.get("level", "")),
     }
 
 
@@ -269,13 +348,39 @@ def _canonicalize_rocstories(row: dict[str, Any], index: int, seed: int) -> dict
     }
 
 
+def _canonicalize_fever(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
+    del seed
+    label_map = {
+        0: "SUPPORTS",
+        1: "REFUTES",
+        2: "NOT_ENOUGH_INFO",
+    }
+    label = label_map[int(row["label"])]
+    choices = [
+        {"label": "SUPPORTS", "text": "Supports"},
+        {"label": "REFUTES", "text": "Refutes"},
+        {"label": "NOT_ENOUGH_INFO", "text": "Not enough info"},
+    ]
+    evidence = str(row.get("evidence", "")).strip() or "No gold evidence provided in this split."
+    return {
+        "id": str(row.get("id", f"fever-{index}")),
+        "claim": str(row["claim"]).strip(),
+        "evidence": evidence,
+        "choices": choices,
+        "label": label,
+        "answer": label.replace("_", " ").title(),
+    }
+
+
 CANONICALIZERS = {
     "gsm8k": _canonicalize_gsm8k,
+    "math": _canonicalize_math,
     "gpqa": _canonicalize_gpqa,
     "triviaqa": _canonicalize_triviaqa,
     "story_cloze": _canonicalize_story_cloze,
     "kodcode": _canonicalize_kodcode,
     "rocstories": _canonicalize_rocstories,
+    "fever": _canonicalize_fever,
 }
 
 
@@ -304,8 +409,11 @@ def materialize_benchmark_source(
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
         return manifest
 
-    rows = _load_rows(spec)
-    if max_examples > 0:
+    if spec.source_kind == "multi_huggingface_configs":
+        rows = _load_multi_config_rows(spec, max_examples)
+    else:
+        rows = _load_rows(spec)
+    if max_examples > 0 and spec.source_kind != "multi_huggingface_configs":
         rows = rows[:max_examples]
     canonicalizer = CANONICALIZERS.get(benchmark_id)
     if canonicalizer is None:
