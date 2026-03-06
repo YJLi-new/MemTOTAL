@@ -7,9 +7,9 @@
 - 增加更严格的结构 lint，覆盖 run 命名、结果目录和 generated-only 报表规则。
 - 让 MemGen adapter 在真实运行后补齐 profiling / wall time / token / 显存字段，并与我们自己的 `metrics.json` 结构进一步对齐。
 - 评估是否需要兼容官方 `load_model_path=<file>.safetensors` 的旧路径语义；当前 smoke 路径通过 `load_model_path=null` 绕过了这条版本漂移问题。
-- 将 MemGen 主套件剩余任务 `kodcode` 继续接入统一模板与 smoke 流程。
 - 验证 MemGen `trigger.active=True` 路径，并决定哪些坑需要升级为强制脚本规则。
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
+- 评估是否在 MemGen 入口层统一设置 `TOKENIZERS_PARALLELISM=false`，减少 `kodcode` 这类 code-eval 任务的 fork 警告噪声。
 
 ## Resolved In This Bootstrap
 

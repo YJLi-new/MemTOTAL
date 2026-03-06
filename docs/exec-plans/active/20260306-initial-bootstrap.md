@@ -81,6 +81,8 @@
 - 2026-03-06 18:34 UTC: 已为 MemGen adapter 补齐动态环境翻译逻辑；`triviaqa` 这类只写 `evaluate/conversations.txt` 的任务，现在也会落统一 `predictions.jsonl` 与 `metrics.json`，当前 `compute_reward=0.0`、`num_predictions=4`、`wall_time_sec=80.757644`。
 - 2026-03-06 18:36 UTC: 已为 `gpqa` 增加 Hugging Face gated dataset preflight；`./scripts/run_memgen.sh --config configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml --seed 52 --output_dir runs/verify/memgen-gpqa-smoke-preflight-v2` 现会在 adapter 层直接返回 `returncode=2`，并把 `huggingface-cli login` / `HF_TOKEN` 提示写入 `metrics.json` 与 `memgen_process.json`。
 - 2026-03-06 18:53 UTC: 在完成 Hugging Face 登录后，`./scripts/run_memgen.sh --config configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml --seed 53 --output_dir runs/verify/memgen-gpqa-smoke-v2` 已真实成功，当前 `compute_reward=0.0`、`num_predictions=4`、`wall_time_sec=35.295111`；说明 `gpqa` 的剩余阻塞已被环境认证解除，adapter / builder / translation 契约成立。
+- 2026-03-06 18:59 UTC: 已新增 `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` 并补齐 `MemGen-master/data/kodcode/builder.py` 的子集裁剪/并行控制；`./scripts/run_memgen.sh --config configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml --seed 71 --output_dir runs/verify/memgen-kodcode-smoke` 已真实成功，当前 `compute_reward=0.25`、`num_predictions=4`、`wall_time_sec=41.675389`。
+- 2026-03-06 18:59 UTC: 截至当前，MemGen 已在 `gsm8k`、`gpqa`、`triviaqa`、`kodcode`、`rocstories`、`story_cloze` 六个任务上完成统一 smoke 接入；M1 现阶段的主要剩余工作已从“任务接入”转为“trigger / insertion 配置对齐与验证”。
 
 ## Decision Log
 

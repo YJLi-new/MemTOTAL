@@ -22,7 +22,7 @@
 | `story_cloze` | Narrative / CDMI | `MemGen-master/configs/latent_memory/story_cloze.yaml` | `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
 | `gpqa` | Knowledge QA / main suite | `MemGen-master/configs/latent_memory/gpqa.yaml` | `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
 | `triviaqa` | Knowledge QA / main suite | `MemGen-master/configs/latent_memory/triviaqa.yaml` | `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` | real smoke passed, dynamic translation passed |
-| `kodcode` | Code / main suite | `MemGen-master/configs/latent_memory/kodcode.yaml` | pending | official config exists, repo template pending |
+| `kodcode` | Code / main suite | `MemGen-master/configs/latent_memory/kodcode.yaml` | `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
 | `cosmosqa` | Extra narrative QA | `MemGen-master/configs/latent_memory/cosmosqa.yaml` | pending | optional, not on paper-critical path yet |
 
 ## Fixed Templates And Seeds
@@ -34,11 +34,16 @@
 - `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml` with `--seed 41`
 - `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` with `--seed 62`
 - `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` with `--seed 53`
+- `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` with `--seed 71`
 - `configs/exp/memgen_gsm8k_qwen25_eval.yaml` with `--seed 11` for dry-run launch-plan validation
 - `configs/exp/memgen_gsm8k_qwen3_eval.yaml` with `--seed 17` for dry-run launch-plan validation
 - `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` with `--seed 52` verifies gated-dataset preflight when HF auth is absent
 
 统一分析入口已能直接读取这些 translated run 的 `metrics.json` / `predictions.jsonl`，并在 `summary.csv` 里汇总 `compute_reward`。其中动态环境任务会从 `conversations.txt` 翻译到统一 `predictions.jsonl`。
+
+当前里程碑的可视化快照已保存为：
+
+- `docs/assets/milestones/20260306-m1-memgen-summary.svg`
 
 ## Harness Rules
 
@@ -59,3 +64,4 @@
 - `gpqa` 使用的 `Idavidrein/gpqa` 当前是 gated dataset；没有 Hugging Face 认证时只能验证到 launch / config 层，不能完成真实 smoke
 - 现在这类 `gpqa` 认证缺失会由 adapter preflight 直接报错，不再先启动官方进程再失败
 - `triviaqa` 属于动态环境任务，官方输出不是 `answer.json` 而是 `conversations.txt`；统一 adapter 已补动态翻译分支
+- `kodcode` 评测会在 reward 计算里 fork 子进程执行测试代码；当前 smoke 可跑，但会出现 Hugging Face tokenizers 的 `forked after parallelism` 警告，后续可考虑在入口层显式设置 `TOKENIZERS_PARALLELISM=false`

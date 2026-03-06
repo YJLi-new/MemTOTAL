@@ -26,11 +26,15 @@ class KodCodeBuilder(BaseBuilder):
         valid_size = int(len(train_valid_dataset) * valid_ratio / (train_ratio + valid_ratio))
         split = train_valid_dataset.train_test_split(test_size=valid_size, shuffle=True)
         train_dataset, valid_dataset = split["train"], split["test"]
+        train_dataset = self.limit_split(train_dataset, "train")
+        valid_dataset = self.limit_split(valid_dataset, "valid")
+        test_dataset = self.limit_split(test_dataset, "test")
         
         # preprocess
-        train_dataset = train_dataset.map(self._sft_preprocess).select_columns(self._sft_keep_keys())
-        valid_dataset = valid_dataset.map(self._sft_preprocess).select_columns(self._sft_keep_keys())
-        test_dataset = test_dataset.map(self._sft_preprocess).select_columns(self._sft_keep_keys())
+        num_proc = int(self.config.get("num_proc", self.get_num_workers(default=8)))
+        train_dataset = train_dataset.map(self._sft_preprocess, num_proc=num_proc).select_columns(self._sft_keep_keys())
+        valid_dataset = valid_dataset.map(self._sft_preprocess, num_proc=num_proc).select_columns(self._sft_keep_keys())
+        test_dataset = test_dataset.map(self._sft_preprocess, num_proc=num_proc).select_columns(self._sft_keep_keys())
         
         # build dataset dict
         dataset_dict = DatasetDict()
@@ -72,5 +76,4 @@ class KodCodeBuilder(BaseBuilder):
     @classmethod
     def _sft_keep_keys(cls):
         return ["prompt", "completion", "solution", "test", "test_info"]
-
 

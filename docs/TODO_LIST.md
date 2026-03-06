@@ -256,12 +256,12 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - **DoD**：同一台机器、同一数据子集上，MemGen 能稳定产出可评测结果
 
 ### P1 重要
-- [ ] 对齐 MemGen 主实验任务清单
+- [x] 对齐 MemGen 主实验任务清单
 - [ ] 对齐它的插入/触发相关配置
 - [x] 为 MemGen baseline 保存固定的 config/seed 模板
 - **DoD**：你们的 `TaskEvaluator` 能直接读取并汇总 MemGen 输出
 
-当前已对齐并真实 smoke 的 MemGen 任务：`gsm8k`、`gpqa`、`rocstories`、`story_cloze`、`triviaqa`。统一模板与已验证种子见 `docs/baselines/memgen.md`；主套件里的 `kodcode` 仍待继续接入。
+当前已对齐并真实 smoke 的 MemGen 任务：`gsm8k`、`gpqa`、`triviaqa`、`kodcode`、`rocstories`、`story_cloze`。统一模板与已验证种子见 `docs/baselines/memgen.md`；当前 M1 主要剩余项是 trigger / insertion 相关配置对齐。
 
 ### P2 加分
 - [ ] 跑通 trigger on / off 两种版本
