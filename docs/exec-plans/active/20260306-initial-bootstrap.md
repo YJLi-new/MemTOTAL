@@ -140,6 +140,8 @@
 - 2026-03-06 16:46 UTC: 已进入 `M5` 并接入最小 `prompting` baseline family。新增 `src/memtotal/baselines/prompting.py`，让 `python -m eval` 在 `baseline.family=prompting` 时绕过 `MemoryRuntime`，支持 `mode in {vanilla, cot}`，并将 `baseline_family / baseline_mode / baseline_prompt / candidate_scores` 写入统一产物。
 - 2026-03-06 16:46 UTC: 已新增并真实跑通 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml` 四组 smoke。统一汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`；当前 qwen25 stub smoke 结果为 `gsm8k: vanilla=0.0, cot=0.0`，`story_cloze: vanilla=1.0, cot=1.0`。
 - 2026-03-06 16:47 UTC: 已把同一组 `Vanilla / CoT` smoke 配置补到 `Qwen3-8B`。新增 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 四组配置，并真实跑通。统一汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`；当前 qwen3 stub smoke 与 qwen25 一致：`gsm8k=0.0`，`story_cloze=1.0`。
+- 2026-03-06 16:50 UTC: 已把 `Vanilla / CoT` 从本地 contract smoke 推进到 real-source smoke。新增 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_real_smoke.yaml` 与 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_real_smoke.yaml` 八组配置，并全部真实跑通。
+- 2026-03-06 16:50 UTC: 当前 real-source prompt baseline 汇总分别位于 `results/generated/m5-prompt-baseline-real-smoke/summary.csv` 与 `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`。qwen25 当前结果为 `gsm8k: vanilla=0.0, cot=0.0`，`story_cloze: vanilla=1.0, cot=1.0`；qwen3 当前结果为 `gsm8k: vanilla=0.0, cot=0.0`，`story_cloze: vanilla=1.0, cot=0.75`。
 
 ## Decision Log
 

@@ -201,3 +201,6 @@
   - `predictions.jsonl[].candidate_scores`
 - 当前已真实 smoke 验证 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
 - 同一套 qwen3 配置 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 也已真实跑通，汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
+- 同一套 `Vanilla / CoT` 现已推进到 `gsm8k / story_cloze` 的 real-source smoke：
+  - qwen25: `results/generated/m5-prompt-baseline-real-smoke/summary.csv`
+  - qwen3: `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`

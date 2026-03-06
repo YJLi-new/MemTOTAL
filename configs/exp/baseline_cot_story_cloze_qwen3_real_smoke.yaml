@@ -1,0 +1,11 @@
+includes:
+  - ./baseline_vanilla_story_cloze_qwen3_real_smoke.yaml
+
+experiment:
+  name: baseline_cot_story_cloze_qwen3_real_smoke
+  method_variant: baseline-cot
+
+baseline:
+  family: prompting
+  mode: cot
+  cot_suffix: Think step by step, then give the final answer.

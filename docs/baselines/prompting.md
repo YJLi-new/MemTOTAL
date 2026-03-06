@@ -40,6 +40,14 @@ baseline:
 - `configs/exp/baseline_cot_gsm8k_qwen3_smoke.yaml`
 - `configs/exp/baseline_vanilla_story_cloze_qwen3_smoke.yaml`
 - `configs/exp/baseline_cot_story_cloze_qwen3_smoke.yaml`
+- `configs/exp/baseline_vanilla_gsm8k_qwen25_real_smoke.yaml`
+- `configs/exp/baseline_cot_gsm8k_qwen25_real_smoke.yaml`
+- `configs/exp/baseline_vanilla_story_cloze_qwen25_real_smoke.yaml`
+- `configs/exp/baseline_cot_story_cloze_qwen25_real_smoke.yaml`
+- `configs/exp/baseline_vanilla_gsm8k_qwen3_real_smoke.yaml`
+- `configs/exp/baseline_cot_gsm8k_qwen3_real_smoke.yaml`
+- `configs/exp/baseline_vanilla_story_cloze_qwen3_real_smoke.yaml`
+- `configs/exp/baseline_cot_story_cloze_qwen3_real_smoke.yaml`
 
 ## Verified Commands
 
@@ -54,6 +62,16 @@ python -m eval --config configs/exp/baseline_cot_gsm8k_qwen3_smoke.yaml --seed 8
 python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen3_smoke.yaml --seed 821 --output_dir runs/verify/m5-prompt-baseline-smoke-qwen3/vanilla-story-cloze
 python -m eval --config configs/exp/baseline_cot_story_cloze_qwen3_smoke.yaml --seed 821 --output_dir runs/verify/m5-prompt-baseline-smoke-qwen3/cot-story-cloze
 python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_smoke.yaml --seed 821 --output_dir results/generated/m5-prompt-baseline-smoke-qwen3 --input_root runs/verify/m5-prompt-baseline-smoke-qwen3
+python -m eval --config configs/exp/baseline_vanilla_gsm8k_qwen25_real_smoke.yaml --seed 831 --output_dir runs/verify/m5-prompt-baseline-real-smoke/vanilla-gsm8k
+python -m eval --config configs/exp/baseline_cot_gsm8k_qwen25_real_smoke.yaml --seed 831 --output_dir runs/verify/m5-prompt-baseline-real-smoke/cot-gsm8k
+python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen25_real_smoke.yaml --seed 831 --output_dir runs/verify/m5-prompt-baseline-real-smoke/vanilla-story-cloze
+python -m eval --config configs/exp/baseline_cot_story_cloze_qwen25_real_smoke.yaml --seed 831 --output_dir runs/verify/m5-prompt-baseline-real-smoke/cot-story-cloze
+python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen25_real_smoke.yaml --seed 831 --output_dir results/generated/m5-prompt-baseline-real-smoke --input_root runs/verify/m5-prompt-baseline-real-smoke
+python -m eval --config configs/exp/baseline_vanilla_gsm8k_qwen3_real_smoke.yaml --seed 841 --output_dir runs/verify/m5-prompt-baseline-real-smoke-qwen3/vanilla-gsm8k
+python -m eval --config configs/exp/baseline_cot_gsm8k_qwen3_real_smoke.yaml --seed 841 --output_dir runs/verify/m5-prompt-baseline-real-smoke-qwen3/cot-gsm8k
+python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen3_real_smoke.yaml --seed 841 --output_dir runs/verify/m5-prompt-baseline-real-smoke-qwen3/vanilla-story-cloze
+python -m eval --config configs/exp/baseline_cot_story_cloze_qwen3_real_smoke.yaml --seed 841 --output_dir runs/verify/m5-prompt-baseline-real-smoke-qwen3/cot-story-cloze
+python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_real_smoke.yaml --seed 841 --output_dir results/generated/m5-prompt-baseline-real-smoke-qwen3 --input_root runs/verify/m5-prompt-baseline-real-smoke-qwen3
 ```
 
 ## Current Smoke Results
@@ -61,6 +79,8 @@ python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_smoke.yaml 
 汇总路径：
 - `results/generated/m5-prompt-baseline-smoke/summary.csv`
 - `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
+- `results/generated/m5-prompt-baseline-real-smoke/summary.csv`
+- `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
 
 当前 qwen25 stub smoke：
 - `vanilla-gsm8k`: `accuracy=0.0`
@@ -73,5 +93,17 @@ python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_smoke.yaml 
 - `cot-gsm8k`: `accuracy=0.0`
 - `vanilla-story-cloze`: `accuracy=1.0`
 - `cot-story-cloze`: `accuracy=1.0`
+
+当前 qwen25 real-source smoke：
+- `vanilla-gsm8k`: `accuracy=0.0`
+- `cot-gsm8k`: `accuracy=0.0`
+- `vanilla-story-cloze`: `accuracy=1.0`
+- `cot-story-cloze`: `accuracy=1.0`
+
+当前 qwen3 real-source smoke：
+- `vanilla-gsm8k`: `accuracy=0.0`
+- `cot-gsm8k`: `accuracy=0.0`
+- `vanilla-story-cloze`: `accuracy=1.0`
+- `cot-story-cloze`: `accuracy=0.75`
 
 这些数字只说明 baseline harness 已接入统一评测链，不是论文结果。
