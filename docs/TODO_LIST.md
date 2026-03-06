@@ -440,6 +440,14 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 > 阅读指引：  
 > `EXPERIMENTS_INFO.md` 的“任务与数据 / 统一评测与结果汇总规范”是本里程碑的唯一口径来源。
 
+当前已完成的 M4 foundation：
+- 已新增统一 benchmark registry / prompt template / `TaskEvaluator` 层，代码位于 `src/memtotal/tasks/`
+- 已为 `gsm8k`、`math`、`gpqa`、`triviaqa`、`kodcode`、`story_cloze`、`rocstories`、`fever`、`alfworld` 建立本地 smoke subset 配置与样例数据
+- `python -m eval` 现可对 benchmark smoke 统一输出 `benchmark_id / task_domain / smoke_subset / evaluator_type`
+- `scripts/run_benchmark_smoke_suite.sh` 已真实跑通 6 个代表任务：`gsm8k / gpqa / kodcode / story_cloze / fever / alfworld`
+- 最新汇总位于 `results/generated/m4-benchmark-smoke/20260306T132413Z/summary.csv`
+- 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果
+
 ### P0 必须
 - [ ] 接入主套件 benchmark
   - [ ] GSM8K
@@ -465,9 +473,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 
 ### P1 重要
 - [ ] 固化 meta-split 到配置文件
-- [ ] 固化 task prompt / CoT / 工具模板
+- [x] 固化 task prompt / CoT / 工具模板
 - [ ] 写清数据许可与下载路径
-- [ ] 每个 benchmark 至少提供一个 smoke subset
+- [x] 每个 benchmark 至少提供一个 smoke subset
 
 ### P2 加分
 - [ ] LoCoMo / LongMemEval

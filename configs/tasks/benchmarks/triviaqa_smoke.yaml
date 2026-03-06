@@ -1,0 +1,10 @@
+task:
+  name: triviaqa_smoke
+  benchmark_id: triviaqa
+  domain: qa
+  split: smoke
+  smoke_subset: local_contract_v1
+  dataset_path: data/benchmarks/smoke/triviaqa_smoke.jsonl
+  metric_name: exact_match
+  evaluator:
+    type: exact_match

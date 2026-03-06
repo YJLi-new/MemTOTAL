@@ -1,0 +1,2 @@
+{"id": "gpqa-smoke-1", "question": "Which planet is known as the Red Planet?", "choices": [{"label": "A", "text": "Venus"}, {"label": "B", "text": "Mars"}, {"label": "C", "text": "Jupiter"}, {"label": "D", "text": "Mercury"}], "label": "B", "answer": "Mars"}
+{"id": "gpqa-smoke-2", "question": "What gas do plants absorb from the atmosphere during photosynthesis?", "choices": [{"label": "A", "text": "Carbon dioxide"}, {"label": "B", "text": "Oxygen"}, {"label": "C", "text": "Nitrogen"}, {"label": "D", "text": "Helium"}], "label": "A", "answer": "Carbon dioxide"}

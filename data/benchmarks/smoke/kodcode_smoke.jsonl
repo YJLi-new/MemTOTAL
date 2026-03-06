@@ -1,0 +1,2 @@
+{"id": "kodcode-smoke-1", "prompt": "Write a Python function add_one(n) that returns n + 1.", "answer": "def add_one(n):\n    return n + 1"}
+{"id": "kodcode-smoke-2", "prompt": "Write a Python function square(n) that returns n * n.", "answer": "def square(n):\n    return n * n"}

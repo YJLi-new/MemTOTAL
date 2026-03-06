@@ -5,9 +5,10 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
-from memtotal.data import load_toy_dataset
 from memtotal.pipeline import MemoryRuntime
+from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json, write_jsonl
 from memtotal.utils.profiling import ProfileTracker
@@ -35,14 +36,13 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
         argv=sys.argv if argv is None else ["eval", *argv],
     )
-    dataset = load_toy_dataset(config["task"]["dataset_path"])
+    dataset = load_task_dataset(config)
+    evaluator = build_task_evaluator(config)
     runtime = MemoryRuntime(config=config, seed=args.seed)
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint, map_location="cpu")
         runtime.load_state_dict(checkpoint["model_state"])
 
-    candidate_labels = [row["label"] for row in dataset]
-    candidate_states = runtime.backbone.summarize_texts(row["continuation"] for row in dataset)
     max_examples = min(len(dataset), 2 if args.dry_run else int(config["runtime"]["eval_examples"]))
     predictions = []
     correct = 0
@@ -59,20 +59,51 @@ def main(argv: list[str] | None = None) -> int:
 
     for example in dataset[:max_examples]:
         profiler.add_example()
-        predicted_label, similarity, forward = runtime.predict_label(
-            example,
-            candidate_states=candidate_states,
-            candidate_labels=candidate_labels,
-        )
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+        if evaluator.evaluator_type in {"dataset_label_classification", "multiple_choice"}:
+            if evaluator.evaluator_type == "multiple_choice":
+                choices = example.get("choices", [])
+                if not choices:
+                    raise ValueError("multiple_choice evaluation requires per-example `choices`.")
+                candidate_labels = [str(choice["label"]) for choice in choices]
+                candidate_texts = [str(choice["text"]) for choice in choices]
+            else:
+                candidate_labels = [str(row["label"]) for row in dataset]
+                candidate_texts = [str(row["continuation"]) for row in dataset]
+            candidate_states = runtime.backbone.summarize_texts(candidate_texts)
+            predicted_label, similarity, forward = runtime.predict_label(
+                example,
+                candidate_states=candidate_states,
+                candidate_labels=candidate_labels,
+            )
+            predicted_text = ""
+            if evaluator.evaluator_type == "multiple_choice":
+                predicted_text = next(
+                    choice["text"] for choice in example["choices"] if choice["label"] == predicted_label
+                )
+            score_payload = evaluator.evaluate_prediction(
+                {"label": predicted_label, "text": predicted_text},
+                example,
+            )
+        else:
+            forward = runtime.forward_example(example)
+            similarity = float(
+                F.cosine_similarity(forward.predicted_state, forward.target_state, dim=-1).mean().item()
+            )
+            predicted_label = ""
+            predicted_text = ""
+            score_payload = evaluator.evaluate_prediction({"text": predicted_text}, example)
         profiler.add_tokens(runtime.backbone.count_tokens(forward.next_prompt))
         generated_text = runtime.backbone.generate(
             [forward.next_prompt],
             memory_tokens=forward.generation_memory,
         )[0]
         profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
-        is_correct = predicted_label == example["label"]
+        if evaluator.evaluator_type == "exact_match":
+            score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
+            predicted_text = generated_text
+        is_correct = bool(score_payload["correct"])
         correct += int(is_correct)
         similarities.append(similarity)
         gate_mean = float(forward.gating.mean().item())
@@ -85,9 +116,16 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "id": example["id"],
                 "domain": example["domain"],
+                "benchmark_id": example.get("benchmark_id"),
                 "gold_label": example["label"],
+                "gold_answer": example.get("gold_answer"),
                 "predicted_label": predicted_label,
+                "predicted_text": predicted_text,
                 "correct": is_correct,
+                "score": float(score_payload["score"]),
+                "normalized_prediction": score_payload["normalized_prediction"],
+                "normalized_reference": score_payload["normalized_reference"],
+                "evaluator_type": evaluator.evaluator_type,
                 "similarity": similarity,
                 "gating_mode": runtime.reader.gating_mode,
                 "gates": [float(value) for value in forward.gating.squeeze(0).tolist()],
@@ -106,6 +144,11 @@ def main(argv: list[str] | None = None) -> int:
         "mode": "eval",
         "examples_evaluated": max_examples,
         "accuracy": correct / max_examples,
+        evaluator.metric_name: correct / max_examples,
+        "benchmark_id": config["task"].get("benchmark_id"),
+        "task_domain": config["task"].get("domain"),
+        "smoke_subset": config["task"].get("smoke_subset"),
+        "evaluator_type": evaluator.evaluator_type,
         "mean_similarity": sum(similarities) / len(similarities),
         "gating_mode": runtime.reader.gating_mode,
         "mean_gate": sum(gate_means) / len(gate_means),

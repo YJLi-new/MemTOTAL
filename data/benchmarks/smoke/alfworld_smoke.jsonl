@@ -1,0 +1,2 @@
+{"id": "alfworld-smoke-1", "observation": "You are in the kitchen. The fridge is closed. A bottle of milk is inside the fridge.", "goal": "Pick up the bottle of milk.", "answer": "open fridge"}
+{"id": "alfworld-smoke-2", "observation": "You are in the bedroom. A lamp is on the nightstand and it is switched off.", "goal": "Turn on the lamp.", "answer": "switch on lamp"}

@@ -59,6 +59,9 @@ def collect_metrics(input_root: str | Path) -> list[dict[str, object]]:
             "run_dir": str(run_dir),
             "backbone": run_info.get("backbone", metrics.get("backbone", "unknown")),
             "task_name": run_info.get("task_name", "unknown"),
+            "benchmark_id": run_info.get("benchmark_id", metrics.get("benchmark_id")),
+            "task_domain": run_info.get("task_domain", metrics.get("task_domain")),
+            "smoke_subset": run_info.get("smoke_subset", metrics.get("smoke_subset")),
             "mode": metrics.get("mode", "unknown"),
         }
         for key, value in metrics.items():

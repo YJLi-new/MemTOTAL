@@ -84,6 +84,30 @@
 
 当前 M3 smoke 已经把工件、resume 链路、Stage C 适配对象配置契约、Reader 学习方式消融、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
 
+## M4 Benchmark Scaffold
+
+- 新增 `src/memtotal/tasks/registry.py`
+  - 统一维护 benchmark `domain / evaluator_type / metric_name / prompt_template`
+  - 当前已登记：`gsm8k`、`math`、`gpqa`、`triviaqa`、`kodcode`、`story_cloze`、`rocstories`、`fever`、`alfworld`
+- 新增 `src/memtotal/tasks/evaluator.py`
+  - 当前统一支持：
+    - `exact_match`
+    - `multiple_choice`
+    - `dataset_label_classification`（向后兼容 toy smoke）
+- `python -m eval` 现通过 `TaskEvaluator` 统一输出：
+  - `benchmark_id`
+  - `task_domain`
+  - `smoke_subset`
+  - `evaluator_type`
+  - `normalized_prediction`
+  - `normalized_reference`
+- 当前本地 contract smoke 数据位于 `data/benchmarks/smoke/*.jsonl`
+  - 这些是仓库内 smoke subset，用于验证 prompt/evaluator/run contract
+  - 不是正式 benchmark 下载替身，也不代表论文主结果
+- 一键回归入口：
+  - `scripts/run_benchmark_smoke_suite.sh`
+  - 当前会顺序跑 `gsm8k / gpqa / kodcode / story_cloze / fever / alfworld` 六个 smoke eval，并汇总到 `summary.csv/.svg`
+
 ## M3 Failure Checks
 
 - `analysis_mode=m3_failure_checks` 会加载 `writer.ckpt + queries_meta_init.pt`

@@ -1,0 +1,10 @@
+task:
+  name: gsm8k_smoke
+  benchmark_id: gsm8k
+  domain: math
+  split: smoke
+  smoke_subset: local_contract_v1
+  dataset_path: data/benchmarks/smoke/gsm8k_smoke.jsonl
+  metric_name: exact_match
+  evaluator:
+    type: exact_match

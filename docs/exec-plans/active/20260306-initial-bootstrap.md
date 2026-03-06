@@ -111,6 +111,8 @@
 - 2026-03-06 12:37 UTC: 当前 canonical meta run 的 failure checks 中，`reader_uses_memory` 与 `writer_beats_noise` 已通过，但 `fuser_avoids_collapse` 未通过，当前观测是 `base_short_slot_diversity≈0` 且 `collapsed_fuser` 与 base loss 持平。这说明退化检查 harness 已经成立，而且它确实发现了当前 toy 路线里的一个结构问题。
 - 2026-03-06 13:13 UTC: 已对 `Fuser collapse` blocker 做 follow-up 修复：`MemoryFuser(resampler)` 现在保留 short-query residual；M3 的分类路径与 failure checks 不再对 `M_short` 做简单均值，而改用 position-sensitive `summary_proj` 摘要。fresh canonical run 位于 `runs/verify/m3-fuser-fix-canonical/stage-b-meta/`，当前 `mean_adaptation_gain=0.08508576452732086`。
 - 2026-03-06 13:13 UTC: 已把 `writer_noise` failure check 升级为可配置的多次噪声抽样均值，避免 tiny smoke 上单次抽样方差误判；当前 canonical 配置使用 `writer_noise_trials=8`，`results/generated/m3-fuser-fix-failure-checks-v2/metrics.json` 现记录 `checks_pass_rate=1.0`，三项检查全部通过。
+- 2026-03-06 13:24 UTC: 已启动 `M4` foundation：新增 `src/memtotal/tasks/{registry,evaluator}.py`，统一登记 benchmark 的 `domain / evaluator_type / metric_name / prompt_template`，并把 `eval` 输出扩展为 `benchmark_id / task_domain / smoke_subset / evaluator_type`。
+- 2026-03-06 13:24 UTC: 已建立本地 benchmark smoke subset 与配置：`gsm8k`、`math`、`gpqa`、`triviaqa`、`kodcode`、`story_cloze`、`rocstories`、`fever`、`alfworld`；`scripts/run_benchmark_smoke_suite.sh` 已真实跑通 6 个代表任务，汇总位于 `results/generated/m4-benchmark-smoke/20260306T132413Z/summary.csv`。
 
 ## Decision Log
 
@@ -135,6 +137,7 @@
 - 2026-03-06: Reader 学习方式消融优先通过显式 `query_learning_mode` 工件契约完成，而不是靠临时脚本保存不同 queries 快照；后续真实 benchmark 也应沿用同一 resume 契约。
 - 2026-03-06: 训练失败模式检查的目标不是“让所有 smoke 都通过”，而是把退化显式暴露出来；若 canonical smoke 被新检查抓出问题，应优先记录并修结构，而不是降低阈值掩盖。
 - 2026-03-06: 对 `writer_noise` 这类带随机性的退化检查，优先通过多次抽样估计期望而不是下调阈值；这样既保留“writer 必须优于噪声”的检查意图，也避免 tiny smoke 的偶然抽样把 harness 打成不稳定平局。
+- 2026-03-06: 进入 `M4` 时，优先补“统一 benchmark 契约层”和本地 smoke subset，而不是直接宣称真实 benchmark 已接入；只有当真实数据路径、许可、缓存和统一评测都打通后，才能把条目算作正式完成。
 
 ## Surprises & Discoveries
 

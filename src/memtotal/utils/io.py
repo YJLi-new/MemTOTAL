@@ -41,17 +41,21 @@ def initialize_run_artifacts(
 ) -> dict[str, Any]:
     run_dir = ensure_dir(output_dir)
     env_info = collect_env_info()
+    task_cfg = config["task"]
     run_info = {
         "seed": seed,
         "argv": argv,
         "experiment_name": config["experiment"]["name"],
         "stage": config["experiment"]["stage"],
         "method_variant": config["experiment"]["method_variant"],
-        "task_name": config["task"]["name"],
+        "task_name": task_cfg["name"],
+        "benchmark_id": task_cfg.get("benchmark_id"),
+        "task_domain": task_cfg.get("domain"),
+        "task_split": task_cfg.get("split"),
+        "smoke_subset": task_cfg.get("smoke_subset"),
         "backbone": config["backbone"]["name"],
         **env_info,
     }
     snapshot_config(run_dir / "config.snapshot.yaml", config)
     write_json(run_dir / "run_info.json", run_info)
     return run_info
-
