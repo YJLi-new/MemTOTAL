@@ -191,6 +191,11 @@
   - `family=prompting`
   - `mode in {vanilla, cot}`
   - 统一走 `python -m eval`，但绕过 `MemoryRuntime`
+- `src/memtotal/baselines/adapters.py` 现提供最小 adapter baseline family：
+  - `family=adapter`
+  - `mode in {prompt_tuning, lora}`
+  - 统一走 `python -m train` 产出 checkpoint，再由 `python -m eval --checkpoint ...` 评测
+  - 当前仅支持 candidate-selection 任务的 smoke 训练
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
 - `analysis` 会把 MemGen 的 `compute_reward` 视为主分数字段之一，与自有 eval 的 `accuracy` 一起进入 `summary.csv` / `summary.svg`。
@@ -204,3 +209,4 @@
 - 同一套 `Vanilla / CoT` 现已推进到 `gsm8k / story_cloze` 的 real-source smoke：
   - qwen25: `results/generated/m5-prompt-baseline-real-smoke/summary.csv`
   - qwen3: `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
+- 当前 `Prompt Tuning / LoRA` 的最小 smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`

@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from memtotal.baselines import PromptBaselineRuntime
+from memtotal.baselines import AdapterBaselineRuntime, PromptBaselineRuntime
 from memtotal.pipeline import MemoryRuntime
 from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.utils.config import load_config
@@ -40,9 +40,15 @@ def main(argv: list[str] | None = None) -> int:
     dataset = load_task_dataset(config)
     evaluator = build_task_evaluator(config)
     baseline_cfg = config.get("baseline", {})
-    use_prompt_baseline = str(baseline_cfg.get("family", "")) == "prompting"
-    if use_prompt_baseline:
+    baseline_family = str(baseline_cfg.get("family", ""))
+    use_baseline = baseline_family in {"prompting", "adapter"}
+    if baseline_family == "prompting":
         runtime = PromptBaselineRuntime(config=config, seed=args.seed)
+    elif baseline_family == "adapter":
+        runtime = AdapterBaselineRuntime(config=config, seed=args.seed)
+        if args.checkpoint:
+            checkpoint = torch.load(args.checkpoint, map_location="cpu")
+            runtime.load_state_dict(checkpoint["model_state"])
     else:
         runtime = MemoryRuntime(config=config, seed=args.seed)
         if args.checkpoint:
@@ -71,12 +77,14 @@ def main(argv: list[str] | None = None) -> int:
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
         uses_candidate_selection = evaluator.evaluator_type in {"dataset_label_classification", "multiple_choice"}
-        if use_prompt_baseline:
+        if use_baseline:
             baseline_output = None
             similarity = 0.0
             generated_text = ""
             predicted_label = ""
             predicted_text = ""
+            if baseline_family == "adapter" and not uses_candidate_selection:
+                raise ValueError("Adapter baselines currently support only candidate-selection tasks.")
             if uses_candidate_selection:
                 if evaluator.evaluator_type == "multiple_choice":
                     choices = example.get("choices", [])
@@ -226,18 +234,18 @@ def main(argv: list[str] | None = None) -> int:
                     example.get("capability_metric_name"),
                 ),
                 "similarity": similarity,
-                "baseline_family": baseline_cfg.get("family") if use_prompt_baseline else None,
-                "baseline_mode": baseline_cfg.get("mode") if use_prompt_baseline else None,
-                "baseline_prompt": prompt_text if use_prompt_baseline else None,
+                "baseline_family": baseline_cfg.get("family") if use_baseline else None,
+                "baseline_mode": baseline_cfg.get("mode") if use_baseline else None,
+                "baseline_prompt": prompt_text if use_baseline else None,
                 "candidate_scores": candidate_scores,
-                "gating_mode": None if use_prompt_baseline else runtime.reader.gating_mode,
-                "gates": None if use_prompt_baseline else [float(value) for value in forward.gating.squeeze(0).tolist()],
+                "gating_mode": None if use_baseline else runtime.reader.gating_mode,
+                "gates": None if use_baseline else [float(value) for value in forward.gating.squeeze(0).tolist()],
                 "mean_gate": gate_mean,
                 "active_queries": active_queries,
-                "conditioning": None if use_prompt_baseline else forward.conditioning,
-                "injection_position": None if use_prompt_baseline else runtime.injector.position,
-                "injection_anchors": [] if use_prompt_baseline else forward.injection_anchors,
-                "segment_stats": [] if use_prompt_baseline else forward.segment_stats,
+                "conditioning": None if use_baseline else forward.conditioning,
+                "injection_position": None if use_baseline else runtime.injector.position,
+                "injection_anchors": [] if use_baseline else forward.injection_anchors,
+                "segment_stats": [] if use_baseline else forward.segment_stats,
                 "generated_text": generated_text,
                 "benchmark_metadata": benchmark_metadata or None,
             }
@@ -247,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     mean_accuracy = correct / max_examples
     mean_score = score_total / max_examples
     metrics = {
-        "mode": "eval_baseline" if use_prompt_baseline else "eval",
+        "mode": "eval_baseline" if use_baseline else "eval",
         "examples_evaluated": max_examples,
         "accuracy": mean_accuracy,
         "mean_score": mean_score,
@@ -257,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         "smoke_subset": config["task"].get("smoke_subset"),
         "evaluator_type": evaluator.evaluator_type,
         "mean_similarity": sum(similarities) / len(similarities),
-        "gating_mode": "disabled" if use_prompt_baseline else runtime.reader.gating_mode,
+        "gating_mode": "disabled" if use_baseline else runtime.reader.gating_mode,
         "mean_gate": sum(gate_means) / len(gate_means),
         "mean_active_queries": sum(active_query_counts) / len(active_query_counts),
         "mean_segment_gate": (
@@ -268,12 +276,12 @@ def main(argv: list[str] | None = None) -> int:
             if segment_active_query_counts
             else 0.0
         ),
-        "injection_position": None if use_prompt_baseline else runtime.injector.position,
+        "injection_position": None if use_baseline else runtime.injector.position,
         "conditioning_schema": {
-            "domain_name": "disabled" if use_prompt_baseline else runtime.conditioning_cfg["domain_key"],
+            "domain_name": "disabled" if use_baseline else runtime.conditioning_cfg["domain_key"],
             "task_name": (
                 "disabled"
-                if use_prompt_baseline
+                if use_baseline
                 else ("config.task.name" if runtime.conditioning_cfg["include_task_name"] else "disabled")
             ),
         },
@@ -281,8 +289,8 @@ def main(argv: list[str] | None = None) -> int:
         "metric_name": config["task"]["metric_name"],
         **profile_metrics,
     }
-    if use_prompt_baseline:
-        metrics["baseline_family"] = str(baseline_cfg.get("family", "prompting"))
+    if use_baseline:
+        metrics["baseline_family"] = baseline_family
         metrics["baseline_mode"] = str(baseline_cfg.get("mode", "vanilla"))
     narrativeqa_runtime_cfg = config["task"].get("narrativeqa_runtime")
     if isinstance(narrativeqa_runtime_cfg, dict):

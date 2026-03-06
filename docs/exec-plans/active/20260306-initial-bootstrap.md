@@ -142,6 +142,8 @@
 - 2026-03-06 16:47 UTC: 已把同一组 `Vanilla / CoT` smoke 配置补到 `Qwen3-8B`。新增 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 四组配置，并真实跑通。统一汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`；当前 qwen3 stub smoke 与 qwen25 一致：`gsm8k=0.0`，`story_cloze=1.0`。
 - 2026-03-06 16:50 UTC: 已把 `Vanilla / CoT` 从本地 contract smoke 推进到 real-source smoke。新增 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_real_smoke.yaml` 与 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_real_smoke.yaml` 八组配置，并全部真实跑通。
 - 2026-03-06 16:50 UTC: 当前 real-source prompt baseline 汇总分别位于 `results/generated/m5-prompt-baseline-real-smoke/summary.csv` 与 `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`。qwen25 当前结果为 `gsm8k: vanilla=0.0, cot=0.0`，`story_cloze: vanilla=1.0, cot=1.0`；qwen3 当前结果为 `gsm8k: vanilla=0.0, cot=0.0`，`story_cloze: vanilla=1.0, cot=0.75`。
+- 2026-03-06 17:25 UTC: 已为 `M5` 新增最小 `adapter` baseline family。`src/memtotal/baselines/adapters.py` 现支持 `family=adapter`、`mode in {prompt_tuning, lora}`，并接入 `python -m train` / `python -m eval` 主入口；当前 smoke 版本只支持 candidate-selection 任务。
+- 2026-03-06 17:25 UTC: 已真实跑通 `configs/exp/baseline_prompt_tuning_story_cloze_qwen25_smoke.yaml` 与 `configs/exp/baseline_lora_story_cloze_qwen25_smoke.yaml` 的 `train -> eval -> analysis` 闭环。统一汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`；当前结果为 `prompt_tuning/train final_loss=0.31129494309425354`、`prompt_tuning/eval accuracy=1.0`、`lora/train final_loss=0.2841453552246094`、`lora/eval accuracy=1.0`。
 
 ## Decision Log
 

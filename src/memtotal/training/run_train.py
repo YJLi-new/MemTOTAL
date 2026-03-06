@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from memtotal.baselines import run_adapter_baseline_train
 from memtotal.data import load_toy_dataset
 from memtotal.pipeline import MemoryRuntime
 from memtotal.training.m3 import run_stage_a, run_stage_b, run_stage_c
@@ -128,6 +129,15 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
         argv=sys.argv if argv is None else ["train", *argv],
     )
+    baseline_family = str(config.get("baseline", {}).get("family", ""))
+    if baseline_family == "adapter":
+        run_adapter_baseline_train(
+            config=config,
+            seed=args.seed,
+            output_dir=Path(args.output_dir),
+            dry_run=args.dry_run,
+        )
+        return 0
     training_stage = str(config["runtime"].get("training_stage", "bootstrap"))
     output_dir = Path(args.output_dir)
     if training_stage == "stage_a":
