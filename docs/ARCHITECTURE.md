@@ -197,6 +197,10 @@
   - `mode in {prompt_tuning, lora}`
   - 统一走 `python -m train` 产出 checkpoint，再由 `python -m eval --checkpoint ...` 评测
   - 当前仅支持 candidate-selection 任务的 smoke 训练
+- `src/memtotal/baselines/grid_runner.py` 现提供最小 baseline grid runner：
+  - 当前针对 `story_cloze` real-source smoke
+  - 会在单个 suite 内循环 `shots / steps`
+  - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
 - `analysis` 会把 MemGen 的 `compute_reward` 视为主分数字段之一，与自有 eval 的 `accuracy` 一起进入 `summary.csv` / `summary.svg`。
@@ -222,3 +226,4 @@
 - 同一套 `Prompt Tuning / LoRA` 现已推进到 `story_cloze` real-source smoke，汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
 - baseline run 当前会统一写出 `support_examples / train_steps / trainable_parameter_count / budget_signature`
 - `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter` 三个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
+- 当前最小 baseline grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`，并已真实产出 `adapt_curve.csv`

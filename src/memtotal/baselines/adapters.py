@@ -154,13 +154,13 @@ def run_adapter_baseline_train(
         )
     runtime = AdapterBaselineRuntime(config=config, seed=seed)
     baseline_cfg = config.get("baseline", {})
-    support_examples = min(len(dataset), int(baseline_cfg.get("support_examples", 1)))
-    if support_examples <= 0:
-        raise ValueError("baseline.support_examples must be >= 1 for adapter baseline training.")
+    support_examples = min(len(dataset), max(0, int(baseline_cfg.get("support_examples", 1))))
     train_steps = min(
         int(config["runtime"].get("train_steps", 1)),
         2 if dry_run else int(config["runtime"].get("train_steps", 1)),
     )
+    if support_examples <= 0 and train_steps > 0:
+        raise ValueError("Adapter baseline training with train_steps > 0 requires baseline.support_examples >= 1.")
     optimizer = torch.optim.Adam(runtime.parameters(), lr=float(config["runtime"].get("learning_rate", 0.01)))
     events = []
     profiler = ProfileTracker(
@@ -217,8 +217,8 @@ def run_adapter_baseline_train(
         {
             "mode": "train_baseline",
             "examples_seen": train_steps,
-            "final_loss": events[-1]["loss"],
-            "mean_loss": sum(item["loss"] for item in events) / len(events),
+            "final_loss": events[-1]["loss"] if events else None,
+            "mean_loss": (sum(item["loss"] for item in events) / len(events)) if events else None,
             "task_name": config["task"]["name"],
             "benchmark_id": config["task"].get("benchmark_id"),
             "task_domain": config["task"].get("domain"),

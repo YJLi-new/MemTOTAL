@@ -539,6 +539,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 同一套 `MetaPrompting` 现已进一步补到 `story_cloze` real-source smoke，统一汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`
 - `prompting / meta_prompting` 当前已支持 `support_examples > 0` 的 in-context few-shot demos，并已在 `story_cloze` real-source 上真实跑通两档 backbone 的 `2-shot` smoke，汇总位于 `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
 - 已新增 `baseline_budget_audit`，当前会自动检查 `prompting / meta_prompting / adapter` 的预算字段完整性与双 backbone 覆盖，已验证汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
+- 已新增最小 `story_cloze` baseline grid smoke suite：单个命令会在同一套 suite 内循环 `shots={0,2}`、`steps={0,4}`，并产出 `adapt_curve.csv / adapt_cost.json / summary.csv`，结果位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`
 - 说明：这一步完成的是“baseline harness 接入统一评测链”，还不是 `shot/step` 网格、也不是主表级 baseline DoD
 
 ### P1 重要
