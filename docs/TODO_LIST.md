@@ -457,6 +457,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `triviaqa`
   - `kodcode`
   - `story_cloze`
+  - `narrativeqa`
   - `rocstories`
   - `fever`
   - `alfworld`
@@ -466,7 +467,8 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `TTL`: `icl_trec_coarse_6600shot_balance`
   - `LRU`: `infbench_sum_eng_shots2`
   - `CR`: `factconsolidation_mh_6k`
-- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T144612Z/summary.csv`
+- `NarrativeQA` 当前通过官方 `deepmind/narrativeqa` 的 `validation` split 接入 real-source smoke，并使用数据集文档明确支持的 `summary_only` 视图；当前统一评测以 `qa_f1` 代理指标先打通 harness。
+- 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T151341Z/summary.csv`
 - 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果；`MemoryAgentBench` 当前为了本地 stub-harness 可运行，会把 context 截断到 `512` tokens，因此它是 real-source smoke，不是正式长上下文协议结果
 
 ### P0 必须
@@ -486,7 +488,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 
 - [ ] 接入 Narrative 域（CDMI 必需）
   - [ ] 优先 Story Cloze / ROCStories
-  - [ ] 尽量再接 NarrativeQA
+  - [x] 尽量再接 NarrativeQA
   - **DoD**：可以构造 `Math+Code` vs `Math+Narrative`
 
 - [x] 接入 MemoryAgentBench（强烈建议）

@@ -1,0 +1,10 @@
+task:
+  name: narrativeqa_real_smoke
+  benchmark_id: narrativeqa
+  domain: narrative
+  split: eval
+  smoke_subset: hf_real_smoke4_summary_only
+  dataset_path: data/benchmarks/materialized/narrativeqa/eval-real-smoke4.jsonl
+  metric_name: f1
+  evaluator:
+    type: qa_f1

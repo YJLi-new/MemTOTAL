@@ -6,10 +6,15 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_ROOT="${1:-$ROOT_DIR/runs/verify/m4-real-benchmark-smoke/$STAMP}"
 RESULT_ROOT="${2:-$ROOT_DIR/results/generated/m4-real-benchmark-smoke/$STAMP}"
 SEED="${SEED:-707}"
+SKIP_SETUP_BENCHMARK_DATA="${SKIP_SETUP_BENCHMARK_DATA:-0}"
 
 cd "$ROOT_DIR"
 
-./scripts/setup_benchmark_data.sh
+if [[ "$SKIP_SETUP_BENCHMARK_DATA" != "1" ]]; then
+  ./scripts/setup_benchmark_data.sh
+else
+  echo "skip-benchmark-data-setup 1"
+fi
 
 CONFIGS=(
   "benchmark_gsm8k_qwen25_real_smoke.yaml"
@@ -17,6 +22,7 @@ CONFIGS=(
   "benchmark_gpqa_qwen25_real_smoke.yaml"
   "benchmark_triviaqa_qwen25_real_smoke.yaml"
   "benchmark_story_cloze_qwen25_real_smoke.yaml"
+  "benchmark_narrativeqa_qwen25_real_smoke.yaml"
   "benchmark_kodcode_qwen25_real_smoke.yaml"
   "benchmark_rocstories_qwen25_real_smoke.yaml"
   "benchmark_fever_qwen25_real_smoke.yaml"

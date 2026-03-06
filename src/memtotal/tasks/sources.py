@@ -110,6 +110,26 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         homepage=None,
         license_note="Hugging Face metadata currently does not expose a structured license field; verify upstream dataset card before redistribution.",
     ),
+    "narrativeqa": BenchmarkSourceSpec(
+        benchmark_id="narrativeqa",
+        display_name="NarrativeQA",
+        access="public",
+        source_kind="huggingface_streaming",
+        dataset_name="deepmind/narrativeqa",
+        dataset_config=None,
+        dataset_configs=None,
+        split="validation",
+        data_files=None,
+        output_filename="eval-real-smoke4.jsonl",
+        source_url="https://huggingface.co/datasets/deepmind/narrativeqa",
+        homepage="https://github.com/deepmind/narrativeqa",
+        license_note="Apache-2.0 (from the official Hugging Face dataset card metadata).",
+        notes=(
+            "Current smoke materializes the official summary-only view from the validation split. "
+            "This keeps the real-source narrative path lightweight while staying aligned with the "
+            "dataset's documented summary-vs-story task variants."
+        ),
+    ),
     "kodcode": BenchmarkSourceSpec(
         benchmark_id="kodcode",
         display_name="KodCode",
@@ -228,6 +248,16 @@ def _load_rows(spec: BenchmarkSourceSpec) -> list[dict[str, Any]]:
         dataset = load_dataset("csv", data_files=spec.data_files, split=spec.split)
         return [_to_serializable(dataset[index]) for index in range(len(dataset))]
     raise ValueError(f"Unsupported source kind: {spec.source_kind}")
+
+
+def _load_rows_streaming(spec: BenchmarkSourceSpec, max_examples: int) -> list[dict[str, Any]]:
+    dataset = load_dataset(spec.dataset_name, spec.dataset_config, split=spec.split, streaming=True)
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(dataset):
+        if max_examples > 0 and index >= max_examples:
+            break
+        rows.append(_to_serializable(row))
+    return rows
 
 
 def _load_multi_config_rows(spec: BenchmarkSourceSpec, max_examples: int) -> list[dict[str, Any]]:
@@ -352,6 +382,34 @@ def _canonicalize_story_cloze(row: dict[str, Any], index: int, seed: int) -> dic
     }
 
 
+def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
+    del seed
+    document = row.get("document", {})
+    summary = document.get("summary", {})
+    answers = [
+        str(answer.get("text", "")).strip()
+        for answer in row.get("answers", [])
+        if str(answer.get("text", "")).strip()
+    ]
+    if not answers:
+        raise ValueError("NarrativeQA row is missing answer texts.")
+    story = str(summary.get("text", "")).strip()
+    if not story:
+        raise ValueError("NarrativeQA row is missing summary text for summary-only smoke.")
+    return {
+        "id": f"{document.get('id', 'narrativeqa')}-q{index}",
+        "story": story,
+        "question": str(row.get("question", {}).get("text", "")).strip(),
+        "answer": answers[0],
+        "aliases": answers,
+        "document_kind": str(document.get("kind", "")),
+        "summary_title": str(summary.get("title", "")).strip(),
+        "story_chars": len(story),
+        "story_word_count": int(document.get("word_count", 0) or 0),
+        "narrativeqa_view": "summary_only",
+    }
+
+
 def _canonicalize_kodcode(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
     del seed
     return {
@@ -401,6 +459,7 @@ CANONICALIZERS = {
     "gpqa": _canonicalize_gpqa,
     "triviaqa": _canonicalize_triviaqa,
     "story_cloze": _canonicalize_story_cloze,
+    "narrativeqa": _canonicalize_narrativeqa,
     "kodcode": _canonicalize_kodcode,
     "rocstories": _canonicalize_rocstories,
     "fever": _canonicalize_fever,
@@ -434,6 +493,8 @@ def materialize_benchmark_source(
 
     if spec.source_kind == "multi_huggingface_configs":
         rows = _load_multi_config_rows(spec, max_examples)
+    elif spec.source_kind == "huggingface_streaming":
+        rows = _load_rows_streaming(spec, max_examples)
     elif spec.source_kind == "alfworld_textworld":
         asset_root = Path(output_root).resolve().parent / "external" / "alfworld"
         canonical_rows, extra_manifest = materialize_alfworld_textworld_smoke(

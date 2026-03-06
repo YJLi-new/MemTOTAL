@@ -15,8 +15,9 @@
 - Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
 - `M4` 当前新增的是本地 benchmark smoke contract，而不是正式 benchmark 数据接入；后续仍需要把 `data/benchmarks/smoke/*.jsonl` 替换成与 `EXPERIMENTS_INFO.md` 对齐的真实下载 / 缓存 / 许可路径。
-- `TaskEvaluator` 现已扩到 `memoryagentbench` 专属 evaluator，但当前只覆盖官方非 API 指标的本地代理版本：`exact_match / f1 / substring / rougeL / rougeLsum / keypoint_recall`。若后续要严格复现实验论文中的 `Long-Range Understanding` 评测，还需要补官方 LLM judge 路线与对外部评测依赖的治理。
+- `TaskEvaluator` 现已扩到 `memoryagentbench / qa_f1`，但当前仍是本地代理评测版本：`MemoryAgentBench` 只覆盖官方非 API 指标的本地代理，`NarrativeQA` 当前也只是 `qa_f1` smoke 指标。若后续要严格复现实验论文中的 `Long-Range Understanding` 或 NarrativeQA 正式评测，还需要补更接近官方协议的指标与外部评测依赖治理。
 - `MemoryAgentBench` 的真实来源 smoke 已打通，但当前为了本地 stub-harness 可运行，materialize 时会把 context 截断到 `512` tokens；正式长上下文实验仍需要补无截断路径、预算说明和更强的 runtime。
+- `NarrativeQA` 当前打通的是官方 `summary_only` real-source smoke，而不是 full-story 版本；如果后续要把它升级成更强的 CDMI 证据，需要补 full-story / segment-aware runtime，并确认正式指标口径。
 - `ALFWorld` 当前打通的是 TextWorld transition-style smoke，而不是完整 THOR / visual stack；如果后续论文需要 embodied 视觉结果，需要补 `ai2thor/cv2` 环境、预算说明和更重的运行治理。
 - 当前若上游 Hugging Face metadata 没有结构化 license 字段，仓库只会写“需核对上游卡片”而不会自行补写；后续若要对外发布数据副本，需要补更严格的 license 审核流程。
 - `rocstories` 当前通过 `hf://` CSV 路径 materialize，而不是老式 dataset script；后续需要确认这种路径在 CI/离线缓存环境中的稳定性。
@@ -38,3 +39,4 @@
 - `M4` benchmark foundation 已补齐统一 registry / prompt template / evaluator scaffold，本地 smoke 子集与 `scripts/run_benchmark_smoke_suite.sh` 已能真实跑通 6 个代表任务并进入统一汇总。
 - `M4` 已进一步补齐 benchmark source registry、数据来源文档、materialize 脚本与 manifest；真实来源 smoke 子集现已覆盖 `gsm8k / gpqa / triviaqa / kodcode / story_cloze / rocstories` 并通过统一 eval 汇总。
 - `MemoryAgentBench` 的真实来源 smoke、四类能力分项与统一汇总入口现已接入：`AR / TTL / LRU / CR` 当前都会进入 `metrics.json` 的 `capability_scores`，并在 `summary.csv` 里展开成独立列。
+- `NarrativeQA` 的真实来源 smoke 与 `summary_only` 视图已接入统一 registry / eval / summary；当前会进入 `results/generated/m4-real-benchmark-smoke/*/summary.csv`，并与 `Story Cloze / ROCStories` 一起构成 Narrative 域 smoke 入口。

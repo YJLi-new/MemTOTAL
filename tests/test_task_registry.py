@@ -25,6 +25,7 @@ class TaskRegistryTest(unittest.TestCase):
                 "triviaqa",
                 "kodcode",
                 "story_cloze",
+                "narrativeqa",
                 "rocstories",
                 "fever",
                 "alfworld",

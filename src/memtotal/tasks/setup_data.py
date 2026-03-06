@@ -11,7 +11,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Materialize benchmark data sources into repo-managed JSONL files.")
     parser.add_argument(
         "--benchmarks",
-        default="gsm8k,math,gpqa,triviaqa,story_cloze,kodcode,rocstories,fever,alfworld,memoryagentbench",
+        default="gsm8k,math,gpqa,triviaqa,story_cloze,narrativeqa,kodcode,rocstories,fever,alfworld,memoryagentbench",
         help="Comma-separated benchmark ids to materialize or document.",
     )
     parser.add_argument("--output_root", default="data/benchmarks/materialized")

@@ -137,6 +137,24 @@ class TaskEvaluator:
     benchmark_id: str | None = None
 
     def evaluate_prediction(self, prediction: dict[str, Any], example: dict[str, Any]) -> dict[str, Any]:
+        if self.evaluator_type == "qa_f1":
+            predicted_text = str(prediction.get("text", ""))
+            references = _flatten_references(example.get("aliases", example.get("gold_answer", example["continuation"])))
+            exact_match = _metric_max_over_references(predicted_text, references, "exact_match")
+            f1_score = _metric_max_over_references(predicted_text, references, "f1")
+            substring_match = _metric_max_over_references(predicted_text, references, "substring_exact_match")
+            return {
+                "correct": bool(exact_match),
+                "score": f1_score,
+                "normalized_prediction": _normalize_qa_text(predicted_text),
+                "normalized_reference": _normalize_qa_text(references[0] if references else ""),
+                "extra_metrics": {
+                    "exact_match": exact_match,
+                    "f1": f1_score,
+                    "substring_exact_match": substring_match,
+                },
+            }
+
         if self.evaluator_type == "memoryagentbench":
             predicted_text = str(prediction.get("text", ""))
             references = _flatten_references(example.get("aliases", example.get("gold_answer", example["continuation"])))

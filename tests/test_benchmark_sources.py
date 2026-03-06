@@ -19,6 +19,7 @@ from memtotal.tasks.sources import (
     _canonicalize_gpqa,
     _canonicalize_gsm8k,
     _canonicalize_math,
+    _canonicalize_narrativeqa,
     _canonicalize_story_cloze,
     _canonicalize_triviaqa,
     get_benchmark_source,
@@ -81,6 +82,23 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(canonical["label"], "B")
         self.assertEqual(canonical["answer"], "Ending 2")
 
+    def test_narrativeqa_canonicalizer_keeps_multiple_answers(self) -> None:
+        row = {
+            "document": {
+                "id": "story-1",
+                "kind": "movie",
+                "word_count": 1234,
+                "summary": {"text": "Alice travels to Paris and solves a mystery.", "title": "Alice Story"},
+            },
+            "question": {"text": "Where does Alice travel?"},
+            "answers": [{"text": "Paris"}, {"text": "She travels to Paris"}],
+        }
+        canonical = _canonicalize_narrativeqa(row, index=0, seed=19)
+        self.assertEqual(canonical["id"], "story-1-q0")
+        self.assertEqual(canonical["answer"], "Paris")
+        self.assertEqual(len(canonical["aliases"]), 2)
+        self.assertEqual(canonical["narrativeqa_view"], "summary_only")
+
     def test_fever_canonicalizer_maps_three_way_labels(self) -> None:
         row = {
             "id": 7,
@@ -136,6 +154,11 @@ class BenchmarkSourcesTest(unittest.TestCase):
         source = get_benchmark_source("memoryagentbench")
         self.assertEqual(source.access, "public")
         self.assertEqual(source.source_kind, "memoryagentbench_huggingface")
+
+    def test_source_registry_marks_narrativeqa_streaming_source(self) -> None:
+        source = get_benchmark_source("narrativeqa")
+        self.assertEqual(source.access, "public")
+        self.assertEqual(source.source_kind, "huggingface_streaming")
 
 
 if __name__ == "__main__":

@@ -78,6 +78,21 @@ TASK_SPECS: dict[str, TaskSpec] = {
         choices_field="choices",
         label_field="label",
     ),
+    "narrativeqa": TaskSpec(
+        benchmark_id="narrativeqa",
+        display_name="NarrativeQA",
+        domain="narrative",
+        evaluator_type="qa_f1",
+        metric_name="f1",
+        prompt_template="Narrative summary: {story} || Question: {question} || Answer briefly.",
+        passthrough_fields=(
+            "summary_title",
+            "document_kind",
+            "story_chars",
+            "story_word_count",
+            "narrativeqa_view",
+        ),
+    ),
     "rocstories": TaskSpec(
         benchmark_id="rocstories",
         display_name="ROCStories",
