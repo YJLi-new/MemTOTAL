@@ -1,0 +1,10 @@
+includes:
+  - smoke_qwen25_transformer_writer.yaml
+
+experiment:
+  name: smoke_qwen25_transformer_writer_random_injection
+  method_variant: ours-transformer-writer-random-injection
+
+method:
+  injector:
+    position: random

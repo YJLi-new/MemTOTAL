@@ -298,35 +298,42 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - **DoD**：开关注入会引起可测的生成变化
 
 ### P1 重要
-- [ ] 实现 Query-Gating
+- [x] 实现 Query-Gating
   - [x] off / random / learned
   - **DoD**：能记录每段 gating 统计
 
-- [ ] 实现多种注入位置
-  - [ ] segment / delimiter / random / none
+- [x] 实现多种注入位置
+  - [x] segment / delimiter / random / none
   - **DoD**：只改 config 即可切换
 
-- [ ] 给方法模块补最小结构约束
+- [x] 给方法模块补最小结构约束
   - [x] 输入输出 shape 校验
-  - [ ] domain / task conditioning 的命名和保存约定
+  - [x] domain / task conditioning 的命名和保存约定
   - **DoD**：常见 shape 错误与错误配置能在早期报错，而不是训练半天后崩
 
 当前 M2 已完成并验证的最小方法骨架：
 - `MemoryWriter`: `mlp` / `transformer` 两档实现，已补 `freeze()/unfreeze()/save_to()/load_from()`
 - `MemoryReader`: `H` 个 learned queries + cross-attention，支持 `memory_mask`
 - `MemoryFuser`: `linear` / `resampler`
-- `MemoryInjector`: `enabled` 开关已进入 config 契约，且 on/off 已有测试验证会改变生成路径
-- `Query-Gating`: `off / random / learned` 三档已进入 `gating_mode` 配置契约；`train/eval metrics.json` 会记录 `gating_mode / mean_gate / mean_active_queries`，`predictions.jsonl` 会记录每个样本的 `gates`
+- `MemoryInjector`: `enabled` 开关与 `position in {segment, delimiter, random, none}` 已进入 config 契约，且各配置都已真实 smoke
+- `Query-Gating`: `off / random / learned` 三档已进入 `gating_mode` 配置契约；`train/eval metrics.json` 会记录 `gating_mode / mean_gate / mean_active_queries / mean_segment_gate / mean_segment_active_queries`，`predictions.jsonl` 会记录每个样本的 `gates` 与 `segment_stats`
+- `Conditioning schema`: 固定保存为 `domain_name` 与可选 `task_name`；若数据缺失 `method.reader.conditioning.domain_key`，会在 forward 早期直接报错
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
   - `python -m train --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir runs/verify/m2-transformer-writer-v2/train`
   - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir runs/verify/m2-transformer-writer-v2/eval --checkpoint runs/verify/m2-transformer-writer-v2/train/checkpoint.pt`
   - `python -m analysis --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir results/generated/m2-transformer-writer-summary-v2 --input_root runs/verify/m2-transformer-writer-v2`
-  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 131 --output_dir runs/verify/m2-learned-gating/train`
-  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 131 --output_dir runs/verify/m2-learned-gating/eval --checkpoint runs/verify/m2-learned-gating/train/checkpoint.pt`
-  - `python -m analysis --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 131 --output_dir results/generated/m2-learned-gating-summary --input_root runs/verify/m2-learned-gating`
+  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 231 --output_dir runs/verify/m2-learned-gating-v2/train`
+  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml --seed 231 --output_dir runs/verify/m2-learned-gating-v2/eval --checkpoint runs/verify/m2-learned-gating-v2/train/checkpoint.pt`
+  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer_delimiter_injection.yaml --seed 211 --output_dir runs/verify/m2-delimiter-injection/train`
+  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer_delimiter_injection.yaml --seed 211 --output_dir runs/verify/m2-delimiter-injection/eval --checkpoint runs/verify/m2-delimiter-injection/train/checkpoint.pt`
+  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer_random_injection.yaml --seed 223 --output_dir runs/verify/m2-random-injection/train`
+  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer_random_injection.yaml --seed 223 --output_dir runs/verify/m2-random-injection/eval --checkpoint runs/verify/m2-random-injection/train/checkpoint.pt`
+  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer_no_injection.yaml --seed 227 --output_dir runs/verify/m2-no-injection/train`
+  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer_no_injection.yaml --seed 227 --output_dir runs/verify/m2-no-injection/eval --checkpoint runs/verify/m2-no-injection/train/checkpoint.pt`
+  - `python -m analysis --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 241 --output_dir results/generated/m2-p1-summary --input_root runs/verify`
 
-当前仍未勾掉 `Query-Gating` 的父条目，是因为当前 runtime 还不是“每个 segment 边界都单独执行一次 Reader”的正式 Stage B/C 形态；现阶段已经有 gating 模式与样本级统计，但真正的“按 segment 记录 gating 频率图”仍要等 M3/M4 的多段训练/评测 runtime。
+说明：当前 M2 P1 已满足模块契约与配置切换层面的 DoD；真正服务于论文图表的系统性 gating 频率图、跨段机制图和 Stage B/C 适配比较，仍属于后续 M3/M4 的训练与分析任务。
 
 ### P2 加分
 - [ ] 更高级的注入方式（如 KV 初始化）

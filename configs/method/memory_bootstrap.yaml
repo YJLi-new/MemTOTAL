@@ -14,6 +14,9 @@ method:
     num_heads: 4
     condition_on_context: true
     dropout: 0.0
+    conditioning:
+      domain_key: domain
+      include_task_name: true
   fuser:
     arch: resampler
     short_slots: 2
@@ -23,6 +26,7 @@ method:
   injector:
     mode: prefix
     enabled: true
+    position: segment
   segmenter:
     mode: delimiter
     delimiter: "||"

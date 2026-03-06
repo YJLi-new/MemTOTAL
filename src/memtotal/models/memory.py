@@ -275,15 +275,27 @@ class MemoryFuser(ManagedMemoryModule):
 
 
 class MemoryInjector(ManagedMemoryModule):
-    def __init__(self, mode: str = "prefix", *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        mode: str = "prefix",
+        *,
+        enabled: bool = True,
+        position: str = "segment",
+    ) -> None:
         super().__init__()
         if mode != "prefix":
             raise NotImplementedError("M0 bootstrap currently supports only prefix injection.")
+        if position not in {"segment", "delimiter", "random", "none"}:
+            raise ValueError(
+                f"Unsupported injection position: {position}. "
+                "Expected one of segment/delimiter/random/none."
+            )
         self.mode = mode
         self.enabled = enabled
+        self.position = position
 
     def memory_for_generation(self, memory_short: torch.Tensor) -> torch.Tensor | None:
-        return memory_short if self.enabled else None
+        return memory_short if self.enabled and self.position != "none" else None
 
     def inject(self, memory_short: torch.Tensor, next_inputs: torch.Tensor) -> torch.Tensor:
         _ensure_rank("memory_short", memory_short, 3)
@@ -292,6 +304,126 @@ class MemoryInjector(ManagedMemoryModule):
             raise ValueError("memory_short and next_inputs must have the same batch size.")
         if memory_short.shape[2] != next_inputs.shape[2]:
             raise ValueError("memory_short and next_inputs must share the same hidden size.")
-        if not self.enabled:
+        if not self.enabled or self.position == "none":
             return next_inputs
         return torch.cat([memory_short, next_inputs], dim=1)
+
+    def compose(
+        self,
+        *,
+        segment_memories: list[torch.Tensor],
+        segment_inputs: list[torch.Tensor],
+        delimiter_inputs: torch.Tensor | None,
+        suffix_inputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, list[str]]:
+        if len(segment_memories) != len(segment_inputs):
+            raise ValueError("segment_memories and segment_inputs must have the same length.")
+        if not segment_memories:
+            raise ValueError("compose() requires at least one segment memory/input pair.")
+        for index, (memory_short, segment_input) in enumerate(zip(segment_memories, segment_inputs)):
+            _ensure_rank(f"segment_memories[{index}]", memory_short, 3)
+            _ensure_rank(f"segment_inputs[{index}]", segment_input, 3)
+            if memory_short.shape[0] != segment_input.shape[0]:
+                raise ValueError("All segment memories and inputs must share the same batch size.")
+            if memory_short.shape[2] != segment_input.shape[2]:
+                raise ValueError("All segment memories and inputs must share the same hidden size.")
+        _ensure_rank("suffix_inputs", suffix_inputs, 3)
+        if delimiter_inputs is not None:
+            _ensure_rank("delimiter_inputs", delimiter_inputs, 3)
+        if not self.enabled or self.position == "none":
+            return self._concat_base_sequence(segment_inputs, delimiter_inputs, suffix_inputs), None, []
+        if self.position == "segment":
+            return self._compose_segment(segment_memories, segment_inputs, delimiter_inputs, suffix_inputs)
+        if self.position == "delimiter":
+            return self._compose_delimiter(segment_memories, segment_inputs, delimiter_inputs, suffix_inputs)
+        return self._compose_random(segment_memories, segment_inputs, delimiter_inputs, suffix_inputs)
+
+    def _concat_base_sequence(
+        self,
+        segment_inputs: list[torch.Tensor],
+        delimiter_inputs: torch.Tensor | None,
+        suffix_inputs: torch.Tensor,
+    ) -> torch.Tensor:
+        chunks: list[torch.Tensor] = []
+        for index, segment_input in enumerate(segment_inputs):
+            chunks.append(segment_input)
+            if delimiter_inputs is not None and index < len(segment_inputs) - 1:
+                chunks.append(delimiter_inputs)
+        chunks.append(suffix_inputs)
+        return torch.cat(chunks, dim=1)
+
+    def _compose_segment(
+        self,
+        segment_memories: list[torch.Tensor],
+        segment_inputs: list[torch.Tensor],
+        delimiter_inputs: torch.Tensor | None,
+        suffix_inputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, list[str]]:
+        chunks: list[torch.Tensor] = []
+        generation_chunks: list[torch.Tensor] = []
+        anchors: list[str] = []
+        for index, (segment_input, segment_memory) in enumerate(zip(segment_inputs, segment_memories)):
+            chunks.append(segment_input)
+            chunks.append(segment_memory)
+            generation_chunks.append(segment_memory)
+            anchors.append(f"segment:{index}")
+            if delimiter_inputs is not None and index < len(segment_inputs) - 1:
+                chunks.append(delimiter_inputs)
+        chunks.append(suffix_inputs)
+        return torch.cat(chunks, dim=1), torch.cat(generation_chunks, dim=1), anchors
+
+    def _compose_delimiter(
+        self,
+        segment_memories: list[torch.Tensor],
+        segment_inputs: list[torch.Tensor],
+        delimiter_inputs: torch.Tensor | None,
+        suffix_inputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, list[str]]:
+        chunks: list[torch.Tensor] = []
+        generation_chunks: list[torch.Tensor] = []
+        anchors: list[str] = []
+        for index, (segment_input, segment_memory) in enumerate(zip(segment_inputs, segment_memories)):
+            chunks.append(segment_input)
+            has_delimiter = delimiter_inputs is not None and index < len(segment_inputs) - 1
+            if has_delimiter:
+                chunks.append(delimiter_inputs)
+                chunks.append(segment_memory)
+                generation_chunks.append(segment_memory)
+                anchors.append(f"delimiter:{index}")
+        if not generation_chunks:
+            chunks.append(segment_memories[-1])
+            generation_chunks.append(segment_memories[-1])
+            anchors.append("delimiter-fallback:last")
+        chunks.append(suffix_inputs)
+        return torch.cat(chunks, dim=1), torch.cat(generation_chunks, dim=1), anchors
+
+    def _compose_random(
+        self,
+        segment_memories: list[torch.Tensor],
+        segment_inputs: list[torch.Tensor],
+        delimiter_inputs: torch.Tensor | None,
+        suffix_inputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, list[str]]:
+        base_chunks: list[torch.Tensor] = []
+        for index, segment_input in enumerate(segment_inputs):
+            base_chunks.append(segment_input)
+            if delimiter_inputs is not None and index < len(segment_inputs) - 1:
+                base_chunks.append(delimiter_inputs)
+        base_chunks.append(suffix_inputs)
+
+        insertions: dict[int, list[torch.Tensor]] = {index: [] for index in range(len(base_chunks) + 1)}
+        anchors: list[str] = []
+        for segment_index, segment_memory in enumerate(segment_memories):
+            boundary = int(torch.randint(0, len(base_chunks) + 1, (1,)).item())
+            insertions[boundary].append(segment_memory)
+            anchors.append(f"random:{segment_index}@{boundary}")
+
+        chunks: list[torch.Tensor] = []
+        generation_chunks: list[torch.Tensor] = []
+        for boundary in range(len(base_chunks) + 1):
+            for segment_memory in insertions[boundary]:
+                chunks.append(segment_memory)
+                generation_chunks.append(segment_memory)
+            if boundary < len(base_chunks):
+                chunks.append(base_chunks[boundary])
+        return torch.cat(chunks, dim=1), torch.cat(generation_chunks, dim=1), anchors

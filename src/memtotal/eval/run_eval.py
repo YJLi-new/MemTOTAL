@@ -49,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     similarities = []
     gate_means = []
     active_query_counts = []
+    segment_gate_means: list[float] = []
+    segment_active_query_counts: list[int] = []
     profiler = ProfileTracker(
         output_dir=Path(args.output_dir),
         device=str(config["runtime"].get("device", "cpu")),
@@ -77,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         active_queries = int((forward.gating > 0.5).sum().item())
         gate_means.append(gate_mean)
         active_query_counts.append(active_queries)
+        segment_gate_means.extend(float(item["mean_gate"]) for item in forward.segment_stats)
+        segment_active_query_counts.extend(int(item["active_queries"]) for item in forward.segment_stats)
         predictions.append(
             {
                 "id": example["id"],
@@ -89,6 +93,10 @@ def main(argv: list[str] | None = None) -> int:
                 "gates": [float(value) for value in forward.gating.squeeze(0).tolist()],
                 "mean_gate": gate_mean,
                 "active_queries": active_queries,
+                "conditioning": forward.conditioning,
+                "injection_position": runtime.injector.position,
+                "injection_anchors": forward.injection_anchors,
+                "segment_stats": forward.segment_stats,
                 "generated_text": generated_text,
             }
         )
@@ -102,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
         "gating_mode": runtime.reader.gating_mode,
         "mean_gate": sum(gate_means) / len(gate_means),
         "mean_active_queries": sum(active_query_counts) / len(active_query_counts),
+        "mean_segment_gate": sum(segment_gate_means) / len(segment_gate_means),
+        "mean_segment_active_queries": sum(segment_active_query_counts) / len(segment_active_query_counts),
+        "injection_position": runtime.injector.position,
+        "conditioning_schema": {
+            "domain_name": runtime.conditioning_cfg["domain_key"],
+            "task_name": "config.task.name" if runtime.conditioning_cfg["include_task_name"] else "disabled",
+        },
         "backbone": config["backbone"]["name"],
         "metric_name": config["task"]["metric_name"],
         **profile_metrics,

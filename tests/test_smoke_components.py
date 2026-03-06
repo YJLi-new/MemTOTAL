@@ -18,6 +18,7 @@ if str(SRC) not in sys.path:
 from memtotal.data import load_toy_dataset
 from memtotal.models import MemoryReader, MemoryWriter
 from memtotal.pipeline import MemoryRuntime
+from memtotal.training.run_train import main as train_main
 from memtotal.utils.config import load_config
 from memtotal.utils.repro import set_seed
 
@@ -38,6 +39,9 @@ class SmokeComponentTest(unittest.TestCase):
         self.assertIsNotNone(runtime.reader.queries.grad)
         self.assertGreater(float(runtime.reader.queries.grad.norm().item()), 0.0)
         self.assertEqual(forward.segments, ["Question: 2 plus 3?", "Plan: add the two integers"])
+        self.assertEqual(len(forward.segment_stats), 2)
+        self.assertEqual(forward.conditioning, {"domain_name": "math", "task_name": "toy_reasoning_smoke"})
+        self.assertEqual(forward.injection_anchors, ["segment:0", "segment:1"])
 
     def test_segmenter_is_deterministic(self) -> None:
         config = load_config(ROOT / "configs/exp/smoke_qwen25.yaml")
@@ -63,6 +67,7 @@ class SmokeComponentTest(unittest.TestCase):
         self.assertEqual(list(forward.memory_short.shape), [1, 2, 64])
         self.assertEqual(list(forward.gating.shape), [1, 4])
         self.assertIsNotNone(runtime.writer.slot_embeddings.grad)
+        self.assertEqual(runtime.injector.position, "segment")
 
     def test_query_gating_changes_readouts(self) -> None:
         config = load_config(ROOT / "configs/exp/smoke_qwen25.yaml")
@@ -86,7 +91,9 @@ class SmokeComponentTest(unittest.TestCase):
         runtime = MemoryRuntime(config=gated_config, seed=17)
         forward = runtime.forward_example(dataset[0])
 
-        self.assertTrue(torch.all((forward.gating == 0) | (forward.gating == 1)))
+        for segment_stat in forward.segment_stats:
+            gates = torch.tensor(segment_stat["gates"])
+            self.assertTrue(torch.all((gates == 0) | (gates == 1)))
         self.assertFalse(torch.allclose(forward.gating, torch.ones_like(forward.gating)))
 
     def test_reader_supports_memory_mask(self) -> None:
@@ -157,6 +164,61 @@ class SmokeComponentTest(unittest.TestCase):
         self.assertNotEqual(text_on, text_off)
         self.assertIsNone(forward_off.generation_memory)
         self.assertGreater(forward_on.injected_inputs.shape[1], forward_off.injected_inputs.shape[1])
+
+    def test_injection_positions_switch_via_config(self) -> None:
+        dataset = load_toy_dataset(ROOT / "data/toy/smoke_samples.jsonl")
+        example = dataset[0]
+
+        segment_config = load_config(ROOT / "configs/exp/smoke_qwen25_transformer_writer.yaml")
+        delimiter_config = load_config(ROOT / "configs/exp/smoke_qwen25_transformer_writer_delimiter_injection.yaml")
+        random_config = load_config(ROOT / "configs/exp/smoke_qwen25_transformer_writer_random_injection.yaml")
+        none_config = load_config(ROOT / "configs/exp/smoke_qwen25_transformer_writer_no_injection.yaml")
+
+        set_seed(23)
+        segment_forward = MemoryRuntime(config=segment_config, seed=23).forward_example(example)
+        set_seed(23)
+        delimiter_forward = MemoryRuntime(config=delimiter_config, seed=23).forward_example(example)
+        set_seed(23)
+        random_forward_first = MemoryRuntime(config=random_config, seed=23).forward_example(example)
+        set_seed(23)
+        random_forward_second = MemoryRuntime(config=random_config, seed=23).forward_example(example)
+        set_seed(23)
+        none_forward = MemoryRuntime(config=none_config, seed=23).forward_example(example)
+
+        self.assertEqual(segment_forward.injection_anchors, ["segment:0", "segment:1"])
+        self.assertEqual(delimiter_forward.injection_anchors, ["delimiter:0"])
+        self.assertEqual(random_forward_first.injection_anchors, random_forward_second.injection_anchors)
+        self.assertEqual(none_forward.injection_anchors, [])
+        self.assertIsNone(none_forward.generation_memory)
+        self.assertGreater(segment_forward.injected_inputs.shape[1], delimiter_forward.injected_inputs.shape[1])
+        self.assertGreater(delimiter_forward.injected_inputs.shape[1], none_forward.injected_inputs.shape[1])
+
+    def test_missing_conditioning_key_fails_early(self) -> None:
+        config = load_config(ROOT / "configs/exp/smoke_qwen25.yaml")
+        broken_config = copy.deepcopy(config)
+        broken_config["method"]["reader"]["conditioning"]["domain_key"] = "missing_domain"
+        dataset = load_toy_dataset(ROOT / broken_config["task"]["dataset_path"])
+
+        runtime = MemoryRuntime(config=broken_config, seed=29)
+        with self.assertRaisesRegex(ValueError, "missing conditioning domain key"):
+            runtime.forward_example(dataset[0])
+
+    def test_train_entrypoint_handles_no_injection_without_grad(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "train"
+            exit_code = train_main(
+                [
+                    "--config",
+                    str(ROOT / "configs/exp/smoke_qwen25_transformer_writer_no_injection.yaml"),
+                    "--seed",
+                    "37",
+                    "--output_dir",
+                    str(output_dir),
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            metrics = output_dir.joinpath("metrics.json").read_text()
+            self.assertIn('"loss_has_grad": false', metrics)
 
 
 if __name__ == "__main__":

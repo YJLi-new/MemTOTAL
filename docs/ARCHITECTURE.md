@@ -41,13 +41,20 @@
 - `MemoryInjector`
   - 当前支持 `prefix` 注入
   - `enabled` 开关已进入 config 契约；关闭时会同时关闭生成侧 memory token 注入
+  - `position in {segment, delimiter, random, none}` 已进入 config 契约
 
 当前 train/eval 产物里，方法层额外会写出：
 
 - `gating_mode`
 - `mean_gate`
 - `mean_active_queries`
+- `mean_segment_gate`
+- `mean_segment_active_queries`
+- `injection_position`
+- `conditioning_schema`
 - `predictions.jsonl` 中每个样本的 `gates`
+- `predictions.jsonl` 中每个样本的 `segment_stats`
+- `predictions.jsonl` 中每个样本的 `conditioning`
 
 这些实现当前仍运行在 deterministic stub backbone 与 toy pipeline 上，用于先验证接口、梯度、注入路径与结果治理；真实 Qwen 权重加载保留在 `BackboneWrapper` 扩展点中。
 

@@ -92,6 +92,10 @@
 - 2026-03-06 11:17 UTC: 最新验证包括 `python -m unittest discover -s tests -v`（23 项通过）、transformer-writer toy train（`final_loss=0.04995205998420715`）、eval（`accuracy=0.5`）、analysis（`rows_collected=2`）。
 - 2026-03-06 11:21 UTC: 已将 Query-Gating 从布尔值升级为显式 `gating_mode` 契约，支持 `off / random / learned`；并在 `train/eval` 的 `metrics.json` 记录 `gating_mode / mean_gate / mean_active_queries`，在 `predictions.jsonl` 记录每样本 `gates`。
 - 2026-03-06 11:21 UTC: 新增 `configs/exp/smoke_qwen25_transformer_writer_learned_gating.yaml`；已真实跑通 learned-gating toy 闭环，产物位于 `runs/verify/m2-learned-gating/` 与 `results/generated/m2-learned-gating-summary/`，当前 eval `accuracy=0.25`、`mean_gate=0.5174825489521027`、`mean_active_queries=3.0`。
+- 2026-03-06 11:33 UTC: 已将 runtime 升级为真正按 segment 执行 `write -> read -> fuse -> inject` 的 toy 形态；`predictions.jsonl` 现会写出每个 segment 的 `segment_stats`，包括 `mean_gate / active_queries / gates / injection_anchor`。
+- 2026-03-06 11:33 UTC: 已补齐 `method.injector.position` 配置契约，支持 `segment / delimiter / random / none` 四档，并新增对应 smoke 配置；已真实验证 `delimiter`、`random`、`none` 以及默认 `segment` 的 train/eval 路径。
+- 2026-03-06 11:33 UTC: 已固定 `method.reader.conditioning` 契约：统一保存 `domain_name` 与可选 `task_name`，若缺少 `domain_key` 会在 forward 早期报错；`train/eval metrics.json` 会额外写出 `conditioning_schema`。
+- 2026-03-06 11:33 UTC: `position=none` 暴露出 toy train 在“无注入即无梯度”配置下的 harness 缺口，现已修复为显式记录 `loss_has_grad=false` 并安全结束 run，而不是在 `backward()` 阶段崩溃。
 
 ## Decision Log
 
@@ -109,6 +113,7 @@
 - 2026-03-06: 对 gated 数据任务，优先把阻塞点显式写回仓库，并继续推进其他可公开访问的主套件任务，而不是在未认证环境里反复手工重试。
 - 2026-03-06: M2 当前只收口“可验证的模块骨架与配置契约”，不提前宣称 Stage A/B/C 已完成；训练流水线仍留在 M3。
 - 2026-03-06: Query-Gating 先按配置契约 + 样本级统计落地，不把当前单步 toy runtime 误写成“已经具备正式按-segment 统计”；真正多段统计留给后续 Stage runtime。
+- 2026-03-06: 对 `injection_position=none` 这类合法 ablation，不把“无梯度”视为配置错误；训练 harness 应显式记录而不是直接失败。
 
 ## Surprises & Discoveries
 
@@ -123,3 +128,4 @@
 - `gpqa` 的首要阻塞是 Hub 认证，不是数据预处理或 reward 逻辑；这类问题应该前置为环境规则。
 - `triviaqa` 的官方动态评测会反复提示模型输出 `<search>` / `<answer>` 标签；即便 reward 很低，只要统一翻译层能读到 `conversations.txt`，就仍然满足“可评测可汇总”的 M1 目标。
 - `torch.nn.TransformerEncoderLayer(norm_first=True)` 会在当前 PyTorch 版本下持续触发 nested tensor warning；把 skeleton writer 改为默认 post-norm 后，warning 已在测试与 smoke 中消失，减少了后续 agent 调试噪声。
+- 在 toy runtime 里把 `next_prompt` 作为单块文本编码会掩盖注入位置差异；升级为按 `segment_inputs + delimiter + suffix` 组装后，`segment / delimiter / random / none` 的差异已经真实进入 `injected_inputs` 与生成侧 memory token 宽度。
