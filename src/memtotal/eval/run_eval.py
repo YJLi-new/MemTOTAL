@@ -7,7 +7,12 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from memtotal.baselines import AdapterBaselineRuntime, PromptBaselineRuntime, RetrievalBaselineRuntime
+from memtotal.baselines import (
+    AdapterBaselineRuntime,
+    LightThinkerBaselineRuntime,
+    PromptBaselineRuntime,
+    RetrievalBaselineRuntime,
+)
 from memtotal.baselines.budgeting import build_baseline_budget_fields
 from memtotal.pipeline import MemoryRuntime
 from memtotal.tasks import build_task_evaluator, load_task_dataset
@@ -53,11 +58,13 @@ def main(argv: list[str] | None = None) -> int:
     evaluator = build_task_evaluator(config)
     baseline_cfg = config.get("baseline", {})
     baseline_family = str(baseline_cfg.get("family", ""))
-    use_baseline = baseline_family in {"prompting", "adapter", "meta_prompting", "rag"}
+    use_baseline = baseline_family in {"prompting", "adapter", "meta_prompting", "rag", "lightthinker"}
     if baseline_family in {"prompting", "meta_prompting"}:
         runtime = PromptBaselineRuntime(config=config, seed=args.seed)
     elif baseline_family == "rag":
         runtime = RetrievalBaselineRuntime(config=config, seed=args.seed)
+    elif baseline_family == "lightthinker":
+        runtime = LightThinkerBaselineRuntime(config=config, seed=args.seed)
     elif baseline_family == "adapter":
         runtime = AdapterBaselineRuntime(config=config, seed=args.seed)
         if args.checkpoint:
@@ -88,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     gate_means = []
     active_query_counts = []
     retrieval_support_score_means: list[float] = []
+    thought_sketch_token_counts: list[int] = []
     segment_gate_means: list[float] = []
     segment_active_query_counts: list[int] = []
     capability_scores: dict[str, list[float]] = {}
@@ -128,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
             predicted_text = ""
             if baseline_family == "adapter" and not uses_candidate_selection:
                 raise ValueError("Adapter baselines currently support only candidate-selection tasks.")
+            if baseline_family == "lightthinker" and baseline_support_examples:
+                raise ValueError("LightThinker baseline does not currently support external support_examples.")
             if uses_candidate_selection:
                 if evaluator.evaluator_type == "multiple_choice":
                     choices = example.get("choices", [])
@@ -142,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
                     example,
                     candidate_labels=candidate_labels,
                     candidate_texts=candidate_texts,
-                    support_examples=baseline_support_examples,
+                    **(
+                        {"support_examples": baseline_support_examples}
+                        if baseline_family in {"prompting", "meta_prompting", "rag"}
+                        else {}
+                    ),
                 )
                 predicted_label = baseline_output.predicted_label
                 predicted_text = baseline_output.predicted_text
@@ -154,7 +168,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 baseline_output = runtime.generate_text(
                     example,
-                    support_examples=baseline_support_examples,
+                    **(
+                        {"support_examples": baseline_support_examples}
+                        if baseline_family in {"prompting", "meta_prompting", "rag"}
+                        else {}
+                    ),
                 )
                 generated_text = baseline_output.predicted_text
                 predicted_text = generated_text
@@ -184,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
             prompt_text = baseline_output.prompt
             if baseline_support_scores:
                 retrieval_support_score_means.append(sum(baseline_support_scores) / len(baseline_support_scores))
+            thought_sketch = getattr(baseline_output, "thought_sketch", "")
+            if thought_sketch:
+                thought_sketch_token_counts.append(runtime.backbone.count_tokens(thought_sketch))
         else:
             if uses_candidate_selection:
                 if evaluator.evaluator_type == "multiple_choice":
@@ -289,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
                 "baseline_support_ids": [row["id"] for row in baseline_support_examples] if use_baseline else [],
                 "baseline_support_scores": baseline_support_scores if use_baseline else [],
                 "baseline_retriever": baseline_retriever if use_baseline else None,
+                "lightthinker_compression_prompt": (
+                    getattr(baseline_output, "compression_prompt", None) if use_baseline else None
+                ),
+                "lightthinker_thought_sketch": getattr(baseline_output, "thought_sketch", None) if use_baseline else None,
                 "candidate_scores": candidate_scores,
                 "gating_mode": None if use_baseline else runtime.reader.gating_mode,
                 "gates": None if use_baseline else [float(value) for value in forward.gating.squeeze(0).tolist()],
@@ -348,6 +373,10 @@ def main(argv: list[str] | None = None) -> int:
     if retrieval_support_score_means:
         metrics["mean_support_retrieval_score"] = (
             sum(retrieval_support_score_means) / len(retrieval_support_score_means)
+        )
+    if thought_sketch_token_counts:
+        metrics["mean_thought_sketch_tokens"] = (
+            sum(thought_sketch_token_counts) / len(thought_sketch_token_counts)
         )
     narrativeqa_runtime_cfg = config["task"].get("narrativeqa_runtime")
     if isinstance(narrativeqa_runtime_cfg, dict):

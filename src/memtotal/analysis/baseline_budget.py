@@ -54,7 +54,7 @@ def collect_baseline_budget_rows(
 ) -> list[dict[str, object]]:
     root = Path(input_root).resolve()
     rows: list[dict[str, object]] = []
-    requested_families = baseline_families or {"prompting", "meta_prompting", "adapter", "rag"}
+    requested_families = baseline_families or {"prompting", "meta_prompting", "adapter", "rag", "lightthinker"}
     for metrics_path in sorted(root.rglob("metrics.json")):
         run_dir = metrics_path.parent
         metrics = _load_json(metrics_path)
@@ -115,7 +115,7 @@ def _row_issues(row: dict[str, object]) -> list[str]:
             issues.append("adapter_requires_train_steps")
         if int(trainable_parameter_count or 0) <= 0:
             issues.append("adapter_requires_trainable_parameters")
-    if family in {"prompting", "meta_prompting", "rag"}:
+    if family in {"prompting", "meta_prompting", "rag", "lightthinker"}:
         if int(train_steps or 0) != 0:
             issues.append("prompt_baselines_must_have_zero_train_steps")
         if int(trainable_parameter_count or 0) != 0:
@@ -180,7 +180,9 @@ def run_baseline_budget_audit(
     dry_run: bool,
 ) -> None:
     analysis_cfg = config.get("analysis", {})
-    baseline_families = set(analysis_cfg.get("baseline_families", ["prompting", "meta_prompting", "adapter", "rag"]))
+    baseline_families = set(
+        analysis_cfg.get("baseline_families", ["prompting", "meta_prompting", "adapter", "rag", "lightthinker"])
+    )
     rows = collect_baseline_budget_rows(input_root, baseline_families=baseline_families)
     if dry_run:
         rows = rows[: max(1, min(2, len(rows)))]

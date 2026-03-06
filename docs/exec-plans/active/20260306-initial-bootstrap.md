@@ -165,6 +165,8 @@
 - 2026-03-07 03:06 UTC: 已新增 `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh`。`ONCE=1` 已验证其在目标文件未就绪时会把状态写为 `waiting`；实际 watcher 现已启动，并会在 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后自动刷新 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`。
 - 2026-03-07 04:18 UTC: 已新增最小 `rag` baseline family，并真实跑通 `story_cloze` real-source smoke 的双 backbone 配置：qwen25 `accuracy=1.0`、qwen3 `accuracy=0.5`。当前会额外写出 `baseline_retriever / mean_support_retrieval_score / baseline_support_scores`。
 - 2026-03-07 04:20 UTC: 已把 `rag` 接入 protocol-smoke grid 与 budget audit。`results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_cost.json` 当前更新为 `cell_count=84`、`variant_count=12`、`eval_run_count=8`、`reused_eval_run_count=76`；`results/generated/m5-baseline-budget-audit/metrics.json` 当前更新为 `rows_collected=48`、`checks_pass_rate=1.0`。当前 dual-import suite 也已重跑到同一组 `12` 个 variant，并继续等待 qwen3 的 `MemGen` 外部点落地。
+- 2026-03-07 04:31 UTC: 已新增最小 `lightthinker` baseline family，并真实跑通 `story_cloze` real-source smoke 的双 backbone 配置：qwen25 `accuracy=0.75`、qwen3 `accuracy=0.5`。当前会额外写出 `mean_thought_sketch_tokens / lightthinker_compression_prompt / lightthinker_thought_sketch`。
+- 2026-03-07 04:32 UTC: 已把 `lightthinker` 接入 `baseline_budget_audit`。`results/generated/m5-baseline-budget-audit/metrics.json` 当前更新为 `rows_collected=50`、`checks_pass_rate=1.0`、`issues_found=0`。当前 `MemGen` 仍留在 audit 外，因为它还不是本仓库内统一训练成本口径。
 
 ## Decision Log
 

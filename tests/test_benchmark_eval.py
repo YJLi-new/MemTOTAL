@@ -581,6 +581,82 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertEqual(len(predictions[0]["baseline_support_ids"]), 1)
             self.assertEqual(len(predictions[0]["baseline_support_scores"]), 1)
 
+    def test_lightthinker_eval_records_thought_sketch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze_lightthinker.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "story-cloze-lightthinker-000",
+                        "story": "Ava packed extra markers before the workshop.",
+                        "choices": [
+                            {"label": "A", "text": "She had enough supplies for the students."},
+                            {"label": "B", "text": "The classroom floated into the sky."},
+                        ],
+                        "label": "A",
+                        "answer": "She had enough supplies for the students.",
+                    }
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_lightthinker_story_cloze_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-lightthinker",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "lightthinker",
+                    "mode": "compress_then_answer",
+                    "lightthinker": {"max_sketch_tokens": 8},
+                },
+                "runtime": {
+                    "eval_examples": 1,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "lightthinker_story_cloze.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "lightthinker_story_cloze_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "549",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["baseline_family"], "lightthinker")
+            self.assertEqual(metrics["baseline_mode"], "compress_then_answer")
+            self.assertEqual(metrics["budget_scope"], "compressed_reasoning_prompt")
+            self.assertGreater(metrics["mean_thought_sketch_tokens"], 0.0)
+            self.assertIn("Think through the task", predictions[0]["lightthinker_compression_prompt"])
+            self.assertTrue(predictions[0]["lightthinker_thought_sketch"])
+
     def test_narrativeqa_eval_writes_f1_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

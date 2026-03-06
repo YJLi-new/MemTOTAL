@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-ZERO_SHOT_BASELINE_FAMILIES = {"prompting", "meta_prompting", "rag", "memgen"}
+ZERO_SHOT_BASELINE_FAMILIES = {"prompting", "meta_prompting", "rag", "lightthinker", "memgen"}
 
 
 def _infer_adapter_trainable_parameter_count(config: dict[str, Any]) -> int:
@@ -52,6 +52,8 @@ def build_baseline_budget_fields(
     )
     if baseline_family == "adapter":
         budget_scope = "few_shot_adapter"
+    elif baseline_family == "lightthinker":
+        budget_scope = "compressed_reasoning_prompt"
     elif baseline_family == "rag":
         budget_scope = "external_memory_prompt"
     elif baseline_family == "memgen":

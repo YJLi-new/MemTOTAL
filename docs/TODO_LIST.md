@@ -539,17 +539,23 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 同一套 `MetaPrompting` 现已进一步补到 `story_cloze` real-source smoke，统一汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`
 - `prompting / meta_prompting` 当前已支持 `support_examples > 0` 的 in-context few-shot demos，并已在 `story_cloze` real-source 上真实跑通两档 backbone 的 `2-shot` smoke，汇总位于 `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
 - 已新增 `baseline_budget_audit`，当前会自动检查 `prompting / meta_prompting / adapter` 的预算字段完整性与双 backbone 覆盖，已验证汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
+- `baseline_budget_audit` 当前已进一步扩到 `prompting / meta_prompting / adapter / rag / lightthinker` 五个 family，最新汇总仍位于 `results/generated/m5-baseline-budget-audit/summary.csv`
 - 已新增最小 `story_cloze` baseline grid smoke suite：单个命令会在同一套 suite 内循环 `shots={0,2}`、`steps={0,4}`，并产出 `adapt_curve.csv / adapt_cost.json / summary.csv`，结果位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`
 - 同一套 grid 现已支持导入外部 baseline 点；当前已把 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 评测结果导入到 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
 - 已新增更接近协议的 `story_cloze` protocol-smoke grid：在 `smoke8` real-source 子集上跑 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并保留同一条曲线里的 `MemGen` 外部零样本点；结果位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
 - 说明：这一步完成的是“baseline harness 接入统一评测链”，还不是 `shot/step` 网格、也不是主表级 baseline DoD
 
 ### P1 重要
-- [ ] LightThinker
+- [x] LightThinker
 - [x] 外部记忆 / RAG 强 baseline（如果主表需要）
 - **DoD**：至少有一条非 internal memory 路线可与我们对照
 
 当前进展：
+- 已新增最小 `lightthinker` baseline family，支持 `family=lightthinker`、`mode=compress_then_answer`
+- 当前已真实跑通 `story_cloze` real-source smoke：
+  - qwen25: `runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke/metrics.json`
+- 当前会额外写出 `mean_thought_sketch_tokens / lightthinker_compression_prompt / lightthinker_thought_sketch`
 - 已新增最小 `rag` baseline family，支持 `family=rag`、`mode=retrieval_augmented`，当前提供 `lexical_overlap / dense_stub` 两档 retriever
 - 当前已真实跑通 `story_cloze` real-source smoke：
   - qwen25: `runs/verify/baseline_rag_story_cloze_qwen25_real_smoke/metrics.json`
@@ -558,6 +564,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - protocol-smoke grid: `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
   - budget audit: `results/generated/m5-baseline-budget-audit/summary.csv`
 - 说明：这一步完成的是“至少一条外部记忆路线可进入统一评测与 grid 对照”，还不是更强的 `MemoryBank / ExpeL / AWM` 全家桶复现
+- 说明：`LightThinker` 当前也只是“最小统一 scaffold”，不是正式论文级复现
 
 ### P2 加分
 - [ ] 更完整的 memory agent baseline 家族
