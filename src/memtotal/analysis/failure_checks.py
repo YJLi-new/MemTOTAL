@@ -106,6 +106,7 @@ def _evaluate_variant(
     variant: str,
     generator: torch.Generator,
     profiler: ProfileTracker,
+    writer_noise_trials: int = 1,
 ) -> dict[str, float | int | str]:
     losses = []
     accuracies = []
@@ -114,19 +115,27 @@ def _evaluate_variant(
         profiler.add_example()
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
-        memory_short, diversity = _variant_memory_short(
-            runtime,
-            example,
-            variant=variant,
-            generator=generator,
-        )
         candidate_states, candidate_labels = candidate_bank[str(example["domain"])]
-        scores = runtime.score_candidates(memory_short.mean(dim=1), candidate_states)
         gold_index = candidate_labels.index(str(example["label"]))
-        loss = F.cross_entropy(scores.unsqueeze(0), torch.tensor([gold_index], dtype=torch.long))
-        losses.append(float(loss.item()))
-        accuracies.append(float(int(torch.argmax(scores).item() == gold_index)))
-        diversities.append(diversity)
+        variant_trials = writer_noise_trials if variant == "writer_noise" else 1
+        trial_losses = []
+        trial_accuracies = []
+        trial_diversities = []
+        for _ in range(variant_trials):
+            memory_short, diversity = _variant_memory_short(
+                runtime,
+                example,
+                variant=variant,
+                generator=generator,
+            )
+            scores = runtime.score_candidates(runtime.summarize_memory_short(memory_short), candidate_states)
+            loss = F.cross_entropy(scores.unsqueeze(0), torch.tensor([gold_index], dtype=torch.long))
+            trial_losses.append(float(loss.item()))
+            trial_accuracies.append(float(int(torch.argmax(scores).item() == gold_index)))
+            trial_diversities.append(diversity)
+        losses.append(sum(trial_losses) / len(trial_losses))
+        accuracies.append(sum(trial_accuracies) / len(trial_accuracies))
+        diversities.append(sum(trial_diversities) / len(trial_diversities))
     return {
         "variant": variant,
         "num_examples": len(examples),
@@ -236,6 +245,7 @@ def run_m3_failure_checks(
     candidate_bank = _build_candidate_bank(runtime, grouped_examples)
     profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="analysis")
     noise_generator = torch.Generator(device="cpu").manual_seed(seed)
+    writer_noise_trials = max(1, int(config["runtime"]["failure_checks"].get("writer_noise_trials", 1)))
     variant_rows = []
     with torch.no_grad():
         for variant in ["base", "zero_memory", "writer_noise", "collapsed_fuser"]:
@@ -247,6 +257,7 @@ def run_m3_failure_checks(
                     variant=variant,
                     generator=noise_generator,
                     profiler=profiler,
+                    writer_noise_trials=writer_noise_trials,
                 )
             )
 
@@ -311,6 +322,7 @@ def run_m3_failure_checks(
         "base_short_slot_diversity": float(by_variant["base"]["mean_short_slot_diversity"]),
         "zero_memory_query_loss": float(by_variant["zero_memory"]["query_loss"]),
         "writer_noise_query_loss": float(by_variant["writer_noise"]["query_loss"]),
+        "writer_noise_trials": writer_noise_trials,
         "collapsed_fuser_query_loss": float(by_variant["collapsed_fuser"]["query_loss"]),
         "failure_ablation_summary_csv": str(variant_csv.resolve()),
         "failure_ablation_summary_svg": str(variant_svg.resolve()),

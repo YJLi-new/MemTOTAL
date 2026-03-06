@@ -229,6 +229,12 @@ class MemoryFuser(ManagedMemoryModule):
         self.short_slots = short_slots
         self.arch = arch
         hidden_dim = hidden_dim or (2 * embed_dim)
+        self.summary_proj = nn.Sequential(
+            nn.LayerNorm(short_slots * embed_dim),
+            nn.Linear(short_slots * embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim),
+        )
         if arch == "linear":
             self.proj = nn.Sequential(
                 nn.LayerNorm(num_queries * embed_dim),
@@ -271,7 +277,22 @@ class MemoryFuser(ManagedMemoryModule):
             value=readouts,
             need_weights=False,
         )
-        return self.output_norm(fused)
+        # Preserve slot identity from the learned short queries so resampled slots
+        # do not collapse to an order-insensitive average when attention is similar.
+        return self.output_norm(fused + queries)
+
+    def summarize(self, memory_short: torch.Tensor) -> torch.Tensor:
+        _ensure_rank("memory_short", memory_short, 3)
+        if memory_short.shape[1] != self.short_slots:
+            raise ValueError(
+                f"Fuser expected {self.short_slots} short slots, got {memory_short.shape[1]}."
+            )
+        if memory_short.shape[2] != self.embed_dim:
+            raise ValueError(
+                f"Fuser expected short-slot hidden size {self.embed_dim}, got {memory_short.shape[2]}."
+            )
+        flattened = memory_short.reshape(memory_short.shape[0], self.short_slots * self.embed_dim)
+        return self.summary_proj(flattened)
 
 
 class MemoryInjector(ManagedMemoryModule):

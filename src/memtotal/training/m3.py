@@ -152,7 +152,7 @@ def _classification_loss(
     candidate_labels: list[str],
 ) -> torch.Tensor:
     forward = runtime.forward_example(example)
-    memory_summary = forward.memory_short.mean(dim=1)
+    memory_summary = runtime.summarize_memory_short(forward.memory_short)
     scores = runtime.score_candidates(memory_summary, candidate_states)
     gold_index = candidate_labels.index(example["label"])
     return F.cross_entropy(scores.unsqueeze(0), torch.tensor([gold_index], dtype=torch.long))
@@ -202,7 +202,7 @@ def _compute_accuracy(
     correct = 0
     for example in examples:
         forward = runtime.forward_example(example)
-        memory_summary = forward.memory_short.mean(dim=1)
+        memory_summary = runtime.summarize_memory_short(forward.memory_short)
         scores = runtime.score_candidates(memory_summary, candidate_states)
         predicted_label = candidate_labels[int(torch.argmax(scores).item())]
         correct += int(predicted_label == example["label"])
@@ -218,7 +218,7 @@ def _compute_accuracy_by_domain(
     for example in examples:
         candidate_states, candidate_labels = candidate_bank[str(example["domain"])]
         forward = runtime.forward_example(example)
-        memory_summary = forward.memory_short.mean(dim=1)
+        memory_summary = runtime.summarize_memory_short(forward.memory_short)
         scores = runtime.score_candidates(memory_summary, candidate_states)
         predicted_label = candidate_labels[int(torch.argmax(scores).item())]
         correct += int(predicted_label == example["label"])

@@ -24,6 +24,7 @@ runtime:
       - qa
       - narrative
     max_examples_per_domain: 2
+    writer_noise_trials: 8
     thresholds:
       reader_memory_loss_gap_min: 0.001
       writer_noise_loss_gap_min: 0.001

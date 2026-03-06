@@ -190,9 +190,12 @@ class MemoryRuntime(nn.Module):
         candidate_labels: list[str],
     ) -> tuple[str, float, ExampleForward]:
         forward = self.forward_example(example)
-        scores = self.score_candidates(forward.predicted_state, candidate_states)
+        scores = self.score_candidates(self.summarize_memory_short(forward.memory_short), candidate_states)
         best_index = int(torch.argmax(scores).item())
         return candidate_labels[best_index], float(scores[best_index].item()), forward
+
+    def summarize_memory_short(self, memory_short: torch.Tensor) -> torch.Tensor:
+        return self.fuser.summarize(memory_short)
 
     def score_candidates(
         self,

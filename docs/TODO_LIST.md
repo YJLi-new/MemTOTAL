@@ -396,10 +396,16 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `reader_uses_memory`：通过，`0.6890493258833885 -> 0.7001845389604568`
   - `writer_beats_noise`：通过，`0.6890493258833885 -> 0.6904618516564369`
   - `fuser_avoids_collapse`：未通过，当前 `base_short_slot_diversity≈0`，`collapsed_fuser` 与 base loss 持平
+- `Fuser collapse` follow-up：`results/generated/m3-fuser-fix-failure-checks-v2/`
+  - fresh Stage B canonical run：`runs/verify/m3-fuser-fix-canonical/stage-b-meta/metrics.json` 当前记录 `mean_zero_shot_query_loss=0.5933724492788315`、`mean_adapted_query_loss=0.5082866847515106`、`mean_adaptation_gain=0.08508576452732086`
+  - failure checks 三项现已全部通过：`checks_pass_rate=1.0`
+  - `reader_uses_memory`：`0.6569329723715782 -> 0.6758842468261719`
+  - `writer_beats_noise`：`0.6569329723715782 -> 0.6875795591622591`，当前 harness 使用 `writer_noise_trials=8` 以降低单次噪声抽样方差
+  - `fuser_avoids_collapse`：`base_short_slot_diversity=0.004472408443689346`，`collapsed_fuser_query_loss=0.6617699563503265`
 
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
-说明：退化模式检查条目当前已完成的是“显式检查 + smoke ablation harness”。它现在已经能自动抓出一个真实问题：canonical meta run 在 toy smoke 上触发了 `fuser` 折叠告警，因此这项工作完成后，最自然的下一步就是修 `fuser collapse`，而不是假装没有问题。
+说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

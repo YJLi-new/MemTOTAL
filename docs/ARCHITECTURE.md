@@ -99,8 +99,14 @@
   - `reader_uses_memory`: `zero_memory` loss 必须显著劣于 base
   - `writer_beats_noise`: `writer_noise` loss 必须显著劣于 base
   - `fuser_avoids_collapse`: base slot diversity 与 `collapsed_fuser` loss gap 不能同时退化
+- `writer_noise` 当前支持通过 `runtime.failure_checks.writer_noise_trials` 配置多次噪声抽样取期望，避免 tiny smoke 上单次抽样的高方差把检查打成偶然平局。
 
-当前 canonical meta run 已通过前两项，但 `fuser_avoids_collapse` 失败，说明这套 harness 已经具备“把真实退化显式暴露出来”的能力。
+当前最新 canonical follow-up run `results/generated/m3-fuser-fix-failure-checks-v2/` 已通过三项检查：
+- `reader_uses_memory`: `0.6569329723715782 -> 0.6758842468261719`
+- `writer_beats_noise`: `0.6569329723715782 -> 0.6875795591622591`，`writer_noise_trials=8`
+- `fuser_avoids_collapse`: `base_short_slot_diversity=0.004472408443689346`，`collapsed_fuser_query_loss=0.6617699563503265`
+
+当前这组结果依赖两条工程修正：一是 `M_short` 的下游摘要不再用简单均值，而是通过 position-sensitive `summary_proj` 保留 slot identity；二是 `writer_noise` 检查改为多次噪声抽样平均，减少 tiny smoke 方差。
 
 ## Backbone Policy
 
