@@ -62,6 +62,52 @@ class BaselineBudgetAuditTest(unittest.TestCase):
             self.assertEqual(rows[0]["trainable_parameter_count"], 0)
             self.assertEqual(rows[0]["budget_scope"], "zero_shot_prompt")
 
+    def test_collect_baseline_budget_rows_backfills_rag_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_dir = temp_root / "rag-qwen25-story"
+            run_dir.mkdir()
+            (run_dir / "run_info.json").write_text(
+                json.dumps(
+                    {
+                        "backbone": "Qwen2.5-1.5B-Instruct",
+                        "task_name": "story_cloze_real_smoke",
+                        "smoke_subset": "hf_real_smoke4",
+                    }
+                )
+            )
+            (run_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "eval_baseline",
+                        "baseline_family": "rag",
+                        "baseline_mode": "retrieval_augmented",
+                        "accuracy": 0.5,
+                        "support_examples": 2,
+                    }
+                )
+            )
+            (run_dir / "config.snapshot.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "baseline": {
+                            "family": "rag",
+                            "mode": "retrieval_augmented",
+                            "support_examples": 2,
+                            "rag": {"retriever": "lexical_overlap"},
+                        },
+                        "runtime": {},
+                    },
+                    sort_keys=False,
+                )
+            )
+            rows = collect_baseline_budget_rows(temp_root)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["support_examples"], 2)
+            self.assertEqual(rows[0]["train_steps"], 0)
+            self.assertEqual(rows[0]["trainable_parameter_count"], 0)
+            self.assertEqual(rows[0]["budget_scope"], "external_memory_prompt")
+
     def test_audit_baseline_budget_rows_flags_missing_backbone_pair(self) -> None:
         rows = [
             {

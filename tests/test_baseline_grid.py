@@ -38,11 +38,18 @@ class BaselineGridTest(unittest.TestCase):
                         "backbone": "Qwen2.5-1.5B-Instruct",
                         "template_config": "baseline_prompt_tuning_story_cloze_qwen25_real_smoke.yaml",
                     },
+                    {
+                        "family": "rag",
+                        "mode": "retrieval_augmented",
+                        "backbone": "Qwen2.5-1.5B-Instruct",
+                        "template_config": "baseline_rag_story_cloze_qwen25_real_smoke.yaml",
+                    },
                 ],
             }
         }
         cells = build_grid_plan(config)
         self.assertEqual(len([cell for cell in cells if cell.family == "prompting"]), 2)
+        self.assertEqual(len([cell for cell in cells if cell.family == "rag"]), 2)
         self.assertEqual(len([cell for cell in cells if cell.family == "adapter"]), 3)
         self.assertFalse(any(cell.family == "adapter" and cell.shot == 0 and cell.step > 0 for cell in cells))
 

@@ -484,6 +484,103 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertIn("Demo 1 Input:", predictions[0]["baseline_prompt"])
             self.assertEqual(len(predictions[0]["baseline_support_ids"]), 1)
 
+    def test_rag_baseline_eval_records_retrieval_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze_rag.jsonl"
+            dataset_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "story-cloze-rag-000",
+                                "story": "Mila practiced her free throws every night before the tournament.",
+                                "choices": [
+                                    {"label": "A", "text": "She sank key shots during the final game."},
+                                    {"label": "B", "text": "She avoided touching a basketball forever."},
+                                ],
+                                "label": "A",
+                                "answer": "She sank key shots during the final game.",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "story-cloze-rag-001",
+                                "story": "Jordan packed extra batteries before the concert recording.",
+                                "choices": [
+                                    {"label": "A", "text": "The camera kept working for the whole show."},
+                                    {"label": "B", "text": "The equipment disappeared into the ocean."},
+                                ],
+                                "label": "A",
+                                "answer": "The camera kept working for the whole show.",
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_rag_story_cloze_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-rag",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "rag",
+                    "mode": "retrieval_augmented",
+                    "support_examples": 1,
+                    "rag": {"retriever": "lexical_overlap"},
+                },
+                "runtime": {
+                    "eval_examples": 2,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "rag_story_cloze.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "rag_story_cloze_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "547",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["baseline_family"], "rag")
+            self.assertEqual(metrics["baseline_mode"], "retrieval_augmented")
+            self.assertEqual(metrics["baseline_retriever"], "lexical_overlap")
+            self.assertEqual(metrics["support_examples"], 1)
+            self.assertEqual(metrics["train_steps"], 0)
+            self.assertEqual(metrics["trainable_parameter_count"], 0)
+            self.assertIn("Retrieved memory 1 Input:", predictions[0]["baseline_prompt"])
+            self.assertEqual(predictions[0]["baseline_retriever"], "lexical_overlap")
+            self.assertEqual(len(predictions[0]["baseline_support_ids"]), 1)
+            self.assertEqual(len(predictions[0]["baseline_support_scores"]), 1)
+
     def test_narrativeqa_eval_writes_f1_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

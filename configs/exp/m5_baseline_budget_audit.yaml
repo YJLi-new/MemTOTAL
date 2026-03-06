@@ -21,3 +21,4 @@ analysis:
     - prompting
     - meta_prompting
     - adapter
+    - rag

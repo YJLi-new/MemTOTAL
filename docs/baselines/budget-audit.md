@@ -10,6 +10,7 @@
   - `prompting`
   - `meta_prompting`
   - `adapter`
+  - `rag`
 - 当前先不把 `MemGen` 纳入 `M5` audit 通过条件，因为它仍走外部 repo / 外部 checkpoint 成本，不适合和当前仓库内的 few-shot adapter 预算直接混算。
 
 ## Budget Fields
@@ -28,6 +29,10 @@
 
 - `prompting / meta_prompting`
   - `support_examples = 0`
+  - `train_steps = 0`
+  - `trainable_parameter_count = 0`
+- `rag`
+  - `support_examples` 取配置中的真实检索 memory 条数
   - `train_steps = 0`
   - `trainable_parameter_count = 0`
 - `adapter`
@@ -49,8 +54,8 @@
 
 最新已验证结果：
 
-- `rows_collected = 46`
+- `rows_collected = 48`
 - `checks_pass_rate = 1.0`
 - `issues_found = 0`
 
-这说明当前仓库内已接入 `M5` audit 的 `prompting / meta_prompting / adapter` baseline runs，预算字段和双 backbone 覆盖都能通过自动检查。
+这说明当前仓库内已接入 `M5` audit 的 `prompting / meta_prompting / adapter / rag` baseline runs，预算字段和双 backbone 覆盖都能通过自动检查。

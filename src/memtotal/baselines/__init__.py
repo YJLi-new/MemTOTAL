@@ -2,11 +2,13 @@
 
 from memtotal.baselines.adapters import AdapterBaselineOutput, AdapterBaselineRuntime, run_adapter_baseline_train
 from memtotal.baselines.prompting import PromptBaselineOutput, PromptBaselineRuntime
+from memtotal.baselines.retrieval import RetrievalBaselineRuntime
 
 __all__ = [
     "AdapterBaselineOutput",
     "AdapterBaselineRuntime",
     "PromptBaselineOutput",
     "PromptBaselineRuntime",
+    "RetrievalBaselineRuntime",
     "run_adapter_baseline_train",
 ]

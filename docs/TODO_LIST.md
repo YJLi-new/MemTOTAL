@@ -546,8 +546,18 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 
 ### P1 重要
 - [ ] LightThinker
-- [ ] 外部记忆 / RAG 强 baseline（如果主表需要）
+- [x] 外部记忆 / RAG 强 baseline（如果主表需要）
 - **DoD**：至少有一条非 internal memory 路线可与我们对照
+
+当前进展：
+- 已新增最小 `rag` baseline family，支持 `family=rag`、`mode=retrieval_augmented`，当前提供 `lexical_overlap / dense_stub` 两档 retriever
+- 当前已真实跑通 `story_cloze` real-source smoke：
+  - qwen25: `runs/verify/baseline_rag_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_rag_story_cloze_qwen3_real_smoke/metrics.json`
+- `rag` 现已接入统一 baseline grid 与 budget audit：
+  - protocol-smoke grid: `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
+  - budget audit: `results/generated/m5-baseline-budget-audit/summary.csv`
+- 说明：这一步完成的是“至少一条外部记忆路线可进入统一评测与 grid 对照”，还不是更强的 `MemoryBank / ExpeL / AWM` 全家桶复现
 
 ### P2 加分
 - [ ] 更完整的 memory agent baseline 家族

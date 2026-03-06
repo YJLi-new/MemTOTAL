@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-WATCH_FILE="${WATCH_FILE:-runs/verify/memgen-story-cloze-qwen3-smoke/metrics.json}"
+WATCH_FILE="${WATCH_FILE:-runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json}"
 OUTPUT_DIR="${OUTPUT_DIR:-results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke}"
 SEED="${SEED:-1001}"
 POLL_SECONDS="${POLL_SECONDS:-30}"

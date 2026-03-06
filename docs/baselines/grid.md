@@ -11,6 +11,7 @@
 - families:
   - `prompting`
   - `meta_prompting`
+  - `rag`
   - `adapter`
 - 当前 smoke 网格：
   - `shots = {0, 2}`
@@ -18,7 +19,7 @@
 
 说明：
 
-- `prompting / meta_prompting` 当前只有 `step=0`
+- `prompting / meta_prompting / rag` 当前只有 `step=0`
 - `adapter` 当前支持 `shot=0, step=0` 的 zero-adaptation init 点
 - `adapter` 的 `shot=0, step>0` 会被自动剪掉，因为没有 support 数据可更新
 - grid runner 现已支持 `grid.imports`，用于把外部 baseline 的既有评测点导入同一条 `adapt_curve.csv`
@@ -77,25 +78,30 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 
 当前已验证：
 
-- `cell_count = 24`
-- `variant_count = 10`
+- `cell_count = 28`
+- `variant_count = 12`
 - `train_run_count = 12`
-- `eval_run_count = 24`
-- `imported_eval_count = 1`
+- `eval_run_count = 28`
+- `imported_eval_count = 0`
+- import variant:
+  - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json` 当前仍是 `imported_eval_count = 1`
 - protocol-smoke:
   - `shots = {0, 1, 2, 4}`
   - `steps = {0, 1, 3, 5}`
-  - `cell_count = 76`
-  - `train_run_count = 52`
-  - `eval_run_count = 76`
+  - `cell_count = 84`
+  - `variant_count = 12`
+  - `train_run_count = 0`
+  - `eval_run_count = 8`
+  - `reused_train_run_count = 52`
+  - `reused_eval_run_count = 76`
   - `imported_eval_count = 1`
-  - 重跑复用验证：`train_run_count = 0`、`eval_run_count = 0`、`reused_train_run_count = 52`、`reused_eval_run_count = 76`
+  - 当前新增的是 `rag` 的 `8` 个 eval cell，其余 cell 已直接复用
 - dual-import protocol:
   - `imported_eval_count = 1`
   - `skipped_import_count = 1`
   - 当前已导入 `MemGen / Qwen2.5-1.5B-Instruct`
   - 当前将 `MemGen / Qwen3-8B` 记录为 skipped import，等待真实 run 完成后同目录重跑
-  - watcher 当前已进入 `waiting` 状态，等待 `runs/verify/memgen-story-cloze-qwen3-smoke/metrics.json`
+  - watcher 当前已进入 `waiting` 状态，等待 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json`
 
 ## Current Smoke Signals
 
@@ -111,8 +117,10 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 - protocol-smoke:
   - `qwen25 / vanilla`: `0-shot=0.625`，`1-shot=0.75`
   - `qwen25 / meta_prompting`: `0-shot=0.5`，`4-shot=0.625`
+  - `qwen25 / rag`: `0~4-shot` 当前都在 `0.625` 量级
   - `qwen3 / prompt_tuning`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / lora`: `0-shot=0.5`，`4-shot 5-step=0.75`
+  - `qwen3 / rag`: 当前 best cell 是 `1-shot / 0-step = 0.75`
 
 这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：
 

@@ -25,5 +25,5 @@ grid:
       trainable_parameter_count: 0
       task_name: story_cloze
       smoke_subset: hf_real_smoke4
-      run_dir: runs/verify/memgen-story-cloze-qwen3-smoke
+      run_dir: runs/verify/memgen-story-cloze-qwen3-smoke-v2
       allow_missing: true

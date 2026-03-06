@@ -25,6 +25,10 @@ grid:
       mode: planner_critic
       backbone: Qwen2.5-1.5B-Instruct
       template_config: baseline_metaprompting_story_cloze_qwen25_real_smoke.yaml
+    - family: rag
+      mode: retrieval_augmented
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_rag_story_cloze_qwen25_real_smoke.yaml
     - family: adapter
       mode: prompt_tuning
       backbone: Qwen2.5-1.5B-Instruct
@@ -45,6 +49,10 @@ grid:
       mode: planner_critic
       backbone: Qwen3-8B
       template_config: baseline_metaprompting_story_cloze_qwen3_real_smoke.yaml
+    - family: rag
+      mode: retrieval_augmented
+      backbone: Qwen3-8B
+      template_config: baseline_rag_story_cloze_qwen3_real_smoke.yaml
     - family: adapter
       mode: prompt_tuning
       backbone: Qwen3-8B
