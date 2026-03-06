@@ -1,0 +1,111 @@
+## Purpose
+
+建立本仓库的 M0 初始 bootstrap：先把目录骨架、统一入口、配置层、最小 smoke harness、结果治理与两档 backbone 占位配置搭起来，使后续 agent 可以按 `docs/TODO_LIST.md` 继续推进，而不是手工拼装环境。
+
+## Context
+
+- 执行顺序与 DoD 以 `docs/TODO_LIST.md` 为准。
+- 方法定义与训练阶段以 `docs/MAIN_IDEA.md` 为准。
+- 评测与汇总规范以 `docs/EXPERIMENTS_INFO.md` 为准。
+- 当前仓库几乎只有治理文档和 `MemGen-master/` 参考实现，缺少项目级骨架与统一入口。
+- 固定支持的 backbone 仅有：
+  - `Qwen2.5-1.5B-Instruct`
+  - `Qwen3-8B`
+
+## Plan of Work
+
+1. 建立 M0/P0 需要的目录骨架和文档骨架。
+2. 实现统一的 Python CLI 入口，覆盖 train / eval / analysis，并统一接受 `--config --seed --output_dir`。
+3. 建立最小方法 API 与可运行 toy/smoke 路径，保证写->读->融合->注入链路可跑通。
+4. 建立 run/output 契约、config snapshot、环境信息与结果汇总脚手架。
+5. 提供 `setup_env.sh`、`setup_data.sh`、`dev_boot_smoke.sh`、`collect_artifacts.sh` 等 agent-friendly 入口。
+6. 用轻量 smoke 验证当前 bootstrap 成果，不启动真实大训练。
+
+## Concrete Steps
+
+1. 创建 `src/`、`configs/`、`scripts/`、`results/`、`runs/`、`tests/`、`docs/` 相关骨架。
+2. 编写 `pyproject.toml` 与包入口，使 `python -m train` / `python -m eval` / `python -m analysis` 可运行。
+3. 定义基础配置格式与两档 backbone 的 method/exp/task 示例配置。
+4. 实现：
+   - `BackboneWrapper`
+   - `MemoryWriter`
+   - `MemoryReader`
+   - `MemoryFuser`
+   - `MemoryInjector`
+   - `Segmenter`
+5. 实现结构化输出：
+   - `metrics.json`
+   - `predictions.jsonl`
+   - `config.snapshot.yaml`
+   - `run_info.json`
+6. 实现最小报告器，从 `runs/**/metrics.json` 生成 CSV。
+7. 补充 smoke test 与结构测试，验证 run 目录契约与文档存在性。
+
+## Validation & Acceptance
+
+- `python -m train --config ... --seed 123 --output_dir ... --dry-run` 可成功完成一次 smoke train。
+- `python -m eval --config ... --seed 123 --output_dir ... --dry-run` 可生成 `predictions.jsonl` 与 `metrics.json`。
+- `python -m analysis --config ... --seed 123 --output_dir ... --input_root ...` 可生成汇总 CSV。
+- `scripts/dev_boot_smoke.sh` 能从当前 worktree 触发 train + eval + analysis 最小闭环。
+- 测试覆盖：
+  - 文档链接存在
+  - run 目录包含 config/seed/git hash(or fallback)
+  - 最小方法 API smoke
+
+## Progress
+
+- 2026-03-06 17:22 UTC: 已读取 `docs/AGENTS.md`、`docs/TODO_LIST.md`，并按 M0 指引补读 `docs/MAIN_IDEA.md` 的方法总览/实现契约/Stage A-B-C，以及 `docs/EXPERIMENTS_INFO.md` 的统一评测与结果汇总规范。
+- 2026-03-06 17:22 UTC: 确认当前仓库缺少项目级代码骨架；`MemGen-master/` 仅作为后续 M1 基线参考，不作为本次 bootstrap 的主执行层。
+- 2026-03-06 17:47 UTC: 已建立 `src/`、`configs/`、`scripts/`、`tests/`、`data/toy/`、`results/`、`runs/` 骨架，并补齐 `docs/ARCHITECTURE.md`、`docs/golden-principles.md`、`docs/tech-debt-tracker.md`。
+- 2026-03-06 17:47 UTC: 已实现 `python -m train` / `python -m eval` / `python -m analysis` 入口、最小四模块 API、stub `BackboneWrapper`、统一 run snapshot、汇总器和 smoke tests。
+- 2026-03-06 17:47 UTC: `./scripts/dev_boot_smoke.sh` 已跑通，产物位于 `runs/smoke/20260306T094253Z/` 与 `results/generated/20260306T094253Z/`。
+- 2026-03-06 17:55 UTC: 已补齐 profiling 管线；train/eval/analysis 会统一写出 `profiling.json` 与 `profiling.csv`，并将 `wall_time_sec`、`token_count`、`peak_device_memory_bytes` 合并进 `metrics.json`。
+- 2026-03-06 17:55 UTC: 已补齐 `scripts/run_train.sh`、`scripts/run_eval.sh`、`scripts/run_analysis.sh`、`scripts/profile_run.sh`；`dev_boot_smoke.sh` 现通过这些 wrapper 跑通。
+- 2026-03-06 17:55 UTC: 已补齐 repo lint：文档交叉引用检查、结果治理检查、artifact 收集脚本测试；analysis 额外生成 `summary.svg` sanity plot。
+- 2026-03-06 17:55 UTC: 最新 smoke run 位于 `runs/smoke/20260306T095453Z/`，对应汇总输出位于 `results/generated/20260306T095453Z/`；`python -m unittest discover -s tests -v` 当前为 9 项通过。
+- 2026-03-06 18:04 UTC: 已建立 MemGen baseline adapter：`scripts/run_memgen.sh` + `src/memtotal/baselines/run_memgen.py`，支持统一 `--config --seed --output_dir --dry-run` 契约，并为 `Qwen2.5-1.5B-Instruct` / `Qwen3-8B` 生成可执行 launch 计划。
+- 2026-03-06 18:04 UTC: `./scripts/run_memgen.sh --config configs/exp/memgen_gsm8k_qwen25_eval.yaml --seed 11 --output_dir runs/verify/memgen-dry-run --dry-run` 与对应 Qwen3 dry-run 均已通过；当前单测总数为 10。
+- 2026-03-06 18:10 UTC: 已安装 MemGen 运行所需关键依赖（`omegaconf`、`accelerate`、`datasets`、`trl`、`safetensors`、`peft`、`transformers` 等），并验证 `python MemGen-master/main.py --help` 可正常启动。
+- 2026-03-06 18:11 UTC: 已为 MemGen GSM8K builder 补充 `num_workers` 与 `max_{train,valid,test}_samples` 子集开关，并为 smoke 配置锁定本地 Qwen2.5 权重、小子集和 `sdpa` attention backend。
+- 2026-03-06 18:12 UTC: 已修正 MemGen `build_working_dir()` 对本地模型路径的命名问题；真实 run 现落在 `MemGen-master/results/evaluate/gsm8k/Qwen2.5-1.5B-Instruct/...`，不再错误落到 `root/`。
+- 2026-03-06 18:12 UTC: `./scripts/run_memgen.sh --config configs/exp/memgen_gsm8k_qwen25_smoke_eval.yaml --seed 22 --output_dir runs/verify/memgen-smoke-translated` 已真实成功，adapter 已翻译出统一 `predictions.jsonl` 与 `metrics.json`，当前 `compute_reward=0.25`（4 个 test 样本 smoke 子集）。
+- 2026-03-06 18:13 UTC: adapter 指标桥已补充 `num_predictions` 与 `wall_time_sec`；`runs/verify/memgen-smoke-translated-v2/metrics.json` 当前记录 `compute_reward=0.25`、`num_predictions=4`、`wall_time_sec=31.361597`。
+- 2026-03-06 18:17 UTC: 已验证 `python -m analysis ... --input_root runs/verify` 能把 MemGen adapter run 汇总进 `results/generated/verify-summary/summary.csv`；`gsm8k` 与 `rocstories` translated run 已进入统一结果层。
+- 2026-03-06 18:17 UTC: 已补充 `docs/baselines/memgen.md`，把 MemGen 任务矩阵、固定模板/种子、统一输出桥与常见坑显式写回仓库。
+- 2026-03-06 18:17 UTC: 统一 analysis 已将 `compute_reward` 纳入主分数字段选择逻辑，避免 MemGen run 在 `summary.svg` 中被错误显示为 0。
+- 2026-03-06 18:17 UTC: 已新增 `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml`，用于补齐 Narrative/CDMI 第二个轻量基线模板。
+- 2026-03-06 18:21 UTC: `./scripts/run_memgen.sh --config configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml --seed 41 --output_dir runs/verify/memgen-story-cloze-smoke` 已真实成功，当前 `compute_reward=0.75`、`num_predictions=4`、`wall_time_sec=28.020674`。
+- 2026-03-06 18:21 UTC: 重新汇总后，`results/generated/verify-summary-v2/summary.csv` 已包含 `story_cloze` translated run；sanity plot 现直接展示 MemGen `compute_reward`，并对训练损失使用正值映射，避免负宽度图元。
+- 2026-03-06 18:27 UTC: 已新增 `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` 并补齐 `MemGen-master/data/gpqa/builder.py` 的子集裁剪/并行控制；首次真实 smoke 失败原因已定位为 `Idavidrein/gpqa` gated dataset 认证缺失，而非 harness 或模型启动错误。
+- 2026-03-06 18:34 UTC: 已新增 `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` 并补齐 `MemGen-master/data/triviaqa/builder.py` 的子集裁剪/并行控制；`./scripts/run_memgen.sh --config configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml --seed 62 --output_dir runs/verify/memgen-triviaqa-smoke-v2` 已真实成功。
+- 2026-03-06 18:34 UTC: 已为 MemGen adapter 补齐动态环境翻译逻辑；`triviaqa` 这类只写 `evaluate/conversations.txt` 的任务，现在也会落统一 `predictions.jsonl` 与 `metrics.json`，当前 `compute_reward=0.0`、`num_predictions=4`、`wall_time_sec=80.757644`。
+- 2026-03-06 18:36 UTC: 已为 `gpqa` 增加 Hugging Face gated dataset preflight；`./scripts/run_memgen.sh --config configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml --seed 52 --output_dir runs/verify/memgen-gpqa-smoke-preflight-v2` 现会在 adapter 层直接返回 `returncode=2`，并把 `huggingface-cli login` / `HF_TOKEN` 提示写入 `metrics.json` 与 `memgen_process.json`。
+- 2026-03-06 18:53 UTC: 在完成 Hugging Face 登录后，`./scripts/run_memgen.sh --config configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml --seed 53 --output_dir runs/verify/memgen-gpqa-smoke-v2` 已真实成功，当前 `compute_reward=0.0`、`num_predictions=4`、`wall_time_sec=35.295111`；说明 `gpqa` 的剩余阻塞已被环境认证解除，adapter / builder / translation 契约成立。
+
+## Decision Log
+
+- 2026-03-06: 本轮只做 M0/P0 foundation work，不启动重训练或全 benchmark sweep。
+- 2026-03-06: backbone 支持范围锁定为 `Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B`；任何新建配置只允许这两档。
+- 2026-03-06: 当前目录不是 git worktree；运行记录将保存 git hash，若不可用则显式写入 `nogit`，避免静默缺失。
+- 2026-03-06: 先实现 deterministic toy backbone 与 smoke harness，再接真实模型加载，避免一开始把 bootstrap 绑定到高成本权重下载。
+- 2026-03-06: `run_info.json` 额外记录 GPU/驱动/显存信息；当前本机为 `NVIDIA RTX PRO 6000 Blackwell`，驱动 `590.44.01`，CUDA `13.1` 环境。
+- 2026-03-06: profiling 默认随每次 train/eval/analysis 自动落盘，而不是单独依赖人工执行，减少后续实验漏记 wall time / token / memory 的风险。
+- 2026-03-06: `results/` 只允许 `generated/` 与 `reports/` 承载受治理产物，并通过测试机械检查，避免手工主表文件漂移。
+- 2026-03-06: MemGen 接入先走 adapter-first 路线，先统一 launch/config/output bridge，再决定是否在当前环境安装其完整依赖并执行真实 benchmark。
+- 2026-03-06: 不在 M1 早期直接跑重 benchmark；先确保官方入口、依赖、launch plan、输出桥接都可用，再选择最小可控子集进行首次真实运行。
+- 2026-03-06: 对 MemGen 首次真实运行，优先通过代码层可配置项移除 `flash_attention_2` 和全量数据依赖，而不是额外安装 `flash_attn` / `deepspeed` 这类更重的系统依赖。
+- 2026-03-06: MemGen 的任务清单对齐先按“真实 smoke + 固定模板 + 统一分析可读”推进，不把 `TODO_LIST.md` 的“主套件全覆盖”偷换成只做单一 benchmark。
+- 2026-03-06: 对 gated 数据任务，优先把阻塞点显式写回仓库，并继续推进其他可公开访问的主套件任务，而不是在未认证环境里反复手工重试。
+
+## Surprises & Discoveries
+
+- 当前顶层没有 `.git/`，不能假定能直接读取 commit hash。
+- 顶层仅有治理文档和 `MemGen-master/` 子目录，说明 agent legibility 和统一实验入口仍需从零搭建。
+- `pip install -e .` 与 smoke/测试链路均能在当前环境直接通过，说明最小 bootstrap 依赖闭环已经成立。
+- 将 shell wrapper 纳入 `dev_boot_smoke.sh` 后，脚本层入口也被真实回归覆盖，不再只是“存在但未验证”的壳。
+- MemGen 官方实现当前输出的是其自身 `results/.../answer.json` / `launcher.json` 结构；要完全纳入本仓库统一汇总器，还需要后续做真实输出翻译层。
+- MemGen 依赖安装后，官方入口只暴露了一个来自其 `math_utils.py` 的 `SyntaxWarning`，但 `--help` 能正常返回，说明当前问题不在 import/环境层。
+- MemGen adapter 现已能把 `answer.json` 翻译为统一 `predictions.jsonl` 和摘要指标，但尚未统一生成与我们主方法完全同构的详细 profiling 字段。
+- Narrative 侧除了 `rocstories`，`story_cloze` 也能走同一套 builder / adapter / translation 契约，适合继续作为 CDMI smoke 支点。
+- `gpqa` 的首要阻塞是 Hub 认证，不是数据预处理或 reward 逻辑；这类问题应该前置为环境规则。
+- `triviaqa` 的官方动态评测会反复提示模型输出 `<search>` / `<answer>` 标签；即便 reward 很低，只要统一翻译层能读到 `conversations.txt`，就仍然满足“可评测可汇总”的 M1 目标。

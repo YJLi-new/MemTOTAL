@@ -1,0 +1,16 @@
+runs/
+results/generated/
+results/reports/
+MemGen-master/data_chache/
+MemGen-master/results/
+MemGen-master/**/__pycache__/
+*.log
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.pyo
+src/*.egg-info/
+src/**/*.egg-info/
+tests/__pycache__/
+src/**/__pycache__/

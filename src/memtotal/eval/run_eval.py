@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import torch
+
+from memtotal.data import load_toy_dataset
+from memtotal.pipeline import MemoryRuntime
+from memtotal.utils.config import load_config
+from memtotal.utils.io import initialize_run_artifacts, write_json, write_jsonl
+from memtotal.utils.profiling import ProfileTracker
+from memtotal.utils.repro import set_seed
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="MemTOTAL bootstrap eval entrypoint.")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--resume", default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    config = load_config(args.config)
+    set_seed(args.seed)
+    initialize_run_artifacts(
+        output_dir=args.output_dir,
+        config=config,
+        seed=args.seed,
+        argv=sys.argv if argv is None else ["eval", *argv],
+    )
+    dataset = load_toy_dataset(config["task"]["dataset_path"])
+    runtime = MemoryRuntime(config=config, seed=args.seed)
+    if args.checkpoint:
+        checkpoint = torch.load(args.checkpoint, map_location="cpu")
+        runtime.load_state_dict(checkpoint["model_state"])
+
+    candidate_labels = [row["label"] for row in dataset]
+    candidate_states = runtime.backbone.summarize_texts(row["continuation"] for row in dataset)
+    max_examples = min(len(dataset), 2 if args.dry_run else int(config["runtime"]["eval_examples"]))
+    predictions = []
+    correct = 0
+    similarities = []
+    profiler = ProfileTracker(
+        output_dir=Path(args.output_dir),
+        device=str(config["runtime"].get("device", "cpu")),
+        event_name="eval",
+    )
+
+    for example in dataset[:max_examples]:
+        profiler.add_example()
+        predicted_label, similarity, forward = runtime.predict_label(
+            example,
+            candidate_states=candidate_states,
+            candidate_labels=candidate_labels,
+        )
+        profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+        profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+        profiler.add_tokens(runtime.backbone.count_tokens(forward.next_prompt))
+        generated_text = runtime.backbone.generate([forward.next_prompt], memory_tokens=forward.memory_short)[0]
+        profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
+        is_correct = predicted_label == example["label"]
+        correct += int(is_correct)
+        similarities.append(similarity)
+        predictions.append(
+            {
+                "id": example["id"],
+                "domain": example["domain"],
+                "gold_label": example["label"],
+                "predicted_label": predicted_label,
+                "correct": is_correct,
+                "similarity": similarity,
+                "generated_text": generated_text,
+            }
+        )
+
+    profile_metrics = profiler.finalize()
+    metrics = {
+        "mode": "eval",
+        "examples_evaluated": max_examples,
+        "accuracy": correct / max_examples,
+        "mean_similarity": sum(similarities) / len(similarities),
+        "backbone": config["backbone"]["name"],
+        "metric_name": config["task"]["metric_name"],
+        **profile_metrics,
+    }
+    write_json(Path(args.output_dir) / "metrics.json", metrics)
+    write_jsonl(Path(args.output_dir) / "predictions.jsonl", predictions)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,16 @@
+method:
+  name: general-writer-adaptable-reader-bootstrap
+  embed_dim: 64
+  writer:
+    memory_slots: 8
+  reader:
+    num_queries: 4
+    use_query_gating: false
+  fuser:
+    short_slots: 2
+  injector:
+    mode: prefix
+  segmenter:
+    mode: delimiter
+    delimiter: "||"
+

@@ -1,0 +1,8 @@
+task:
+  name: toy_reasoning_smoke
+  dataset_path: data/toy/smoke_samples.jsonl
+  metric_name: toy_accuracy
+  segmenter:
+    mode: delimiter
+    delimiter: "||"
+
