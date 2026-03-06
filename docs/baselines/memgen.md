@@ -19,7 +19,7 @@
 | --- | --- | --- | --- | --- |
 | `gsm8k` | Math / main suite | `MemGen-master/configs/latent_memory/gsm8k.yaml` | `configs/exp/memgen_gsm8k_qwen25_smoke_eval.yaml`, `configs/exp/memgen_gsm8k_qwen25_eval.yaml`, `configs/exp/memgen_gsm8k_qwen3_eval.yaml` | real smoke passed, unified translation passed |
 | `rocstories` | Narrative / CDMI | `MemGen-master/configs/latent_memory/rocstories.yaml` | `configs/exp/memgen_rocstories_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
-| `story_cloze` | Narrative / CDMI | `MemGen-master/configs/latent_memory/story_cloze.yaml` | `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
+| `story_cloze` | Narrative / CDMI | `MemGen-master/configs/latent_memory/story_cloze.yaml` | `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml`, `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` | qwen25 real smoke passed; qwen3 smoke launched, pending completion |
 | `gpqa` | Knowledge QA / main suite | `MemGen-master/configs/latent_memory/gpqa.yaml` | `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
 | `triviaqa` | Knowledge QA / main suite | `MemGen-master/configs/latent_memory/triviaqa.yaml` | `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` | real smoke passed, dynamic translation passed |
 | `kodcode` | Code / main suite | `MemGen-master/configs/latent_memory/kodcode.yaml` | `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
@@ -32,6 +32,7 @@
 - `configs/exp/memgen_gsm8k_qwen25_smoke_eval.yaml` with `--seed 23`
 - `configs/exp/memgen_rocstories_qwen25_smoke_eval.yaml` with `--seed 31`
 - `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml` with `--seed 41`
+- `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` with `--seed 101` has been launched locally; completion is still pending because the first `Qwen3-8B` weights download is in progress
 - `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` with `--seed 62`
 - `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` with `--seed 53`
 - `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` with `--seed 71`

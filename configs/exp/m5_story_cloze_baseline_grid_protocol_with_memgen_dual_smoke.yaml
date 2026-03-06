@@ -1,0 +1,29 @@
+includes:
+  - m5_story_cloze_baseline_grid_protocol_smoke.yaml
+
+experiment:
+  name: m5_story_cloze_baseline_grid_protocol_with_memgen_dual_smoke
+  stage: M5
+  method_variant: baseline-grid-protocol-memgen-dual-smoke
+
+grid:
+  imports:
+    - family: memgen
+      mode: external_eval
+      backbone: Qwen2.5-1.5B-Instruct
+      shot: 0
+      step: 0
+      trainable_parameter_count: 0
+      task_name: story_cloze
+      smoke_subset: hf_real_smoke4
+      run_dir: runs/verify/memgen-story-cloze-smoke
+    - family: memgen
+      mode: external_eval
+      backbone: Qwen3-8B
+      shot: 0
+      step: 0
+      trainable_parameter_count: 0
+      task_name: story_cloze
+      smoke_subset: hf_real_smoke4
+      run_dir: runs/verify/memgen-story-cloze-qwen3-smoke
+      allow_missing: true

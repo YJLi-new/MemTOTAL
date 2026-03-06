@@ -227,6 +227,7 @@ class BaselineGridTest(unittest.TestCase):
             self.assertEqual(rows[0]["primary_metric"], "compute_reward")
             cost = json.loads((output_dir / "adapt_cost.json").read_text())
             self.assertEqual(cost["imported_eval_count"], 1)
+            self.assertEqual(cost["skipped_import_count"], 0)
 
     def test_grid_runner_applies_config_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -413,6 +414,49 @@ class BaselineGridTest(unittest.TestCase):
             second_cost = json.loads((output_dir / "adapt_cost.json").read_text())
             self.assertEqual(second_cost["eval_run_count"], 1)
             self.assertEqual(second_cost["reused_eval_run_count"], 0)
+
+    def test_grid_runner_skips_optional_missing_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            config = {
+                "grid": {
+                    "shots": [0],
+                    "steps": [0],
+                    "variants": [],
+                    "imports": [
+                        {
+                            "family": "memgen",
+                            "mode": "external_eval",
+                            "backbone": "Qwen3-8B",
+                            "shot": 0,
+                            "step": 0,
+                            "run_dir": str(tmp / "missing-run"),
+                            "allow_missing": True,
+                        }
+                    ],
+                }
+            }
+            config_path = tmp / "grid.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "grid-output"
+            self.assertEqual(
+                grid_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "999",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            cost = json.loads((output_dir / "adapt_cost.json").read_text())
+            self.assertEqual(cost["imported_eval_count"], 0)
+            self.assertEqual(cost["skipped_import_count"], 1)
+            grid_plan = json.loads((output_dir / "grid_plan.json").read_text())
+            self.assertEqual(len(grid_plan["skipped_imports"]), 1)
 
 
 if __name__ == "__main__":

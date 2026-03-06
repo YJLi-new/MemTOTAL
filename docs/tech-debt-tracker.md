@@ -47,6 +47,7 @@
 - `prompting / meta_prompting` 当前已支持最小 in-context few-shot demo 注入，并在 `story_cloze` real-source 上真实跑通了 `2-shot` smoke；但这还不是正式 shot-curve，后续仍需要把更多 shots、更多任务和 seeds 纳入统一网格。
 - 当前 `story_cloze` baseline grid suite 只覆盖最小 smoke 网格 `shots={0,2}`、`steps={0,4}`；它证明了 suite contract 已经存在，但离 `EXPERIMENTS_INFO.md` 里锁定的正式网格还差很远。
 - baseline grid 现已能导入外部 baseline 点，且 `MemGen` 的 `story_cloze / qwen25 / 0-shot / 0-step` 已接进同一条 `adapt_curve.csv`；但这仍只是单点导入，不是正式的 `MemGen` shot/step 网格，更没有覆盖 `Qwen3-8B`。
+- baseline grid 现已支持 `allow_missing` 的外部点占位；当前 qwen3 的 `MemGen / story_cloze` 点已经占位进 dual-import protocol suite，但真实 run 仍未完成，因此还只是 `skipped_import`，不是可比较结果。
 - `story_cloze` grid 现已进一步扩到 protocol-smoke 版本：`smoke8` 子集上的 `shots={0,1,2,4}`、`steps={0,1,3,5}` 已真实跑通；但这仍只是锁定网格的一个小前缀，距离正式 `{0,1,2,4,8,16,32,64,128} x {0,1,3,5,10,20,50}` 还差得很远。
 - `grid.reuse_existing_runs` 现已落地并在 protocol-smoke suite 上验证，可避免仅因导入点/汇总变化而重复执行整套 grid；当前已收紧到 `required artifacts + config.snapshot + seed` 匹配，但仍没有更稳定的显式 config hash / schema version。
 - `M5` 的 `adapter` baseline family 现已接入最小 `Prompt Tuning / LoRA` 闭环，并补到了两档固定 backbone和 `story_cloze` real-source smoke；但当前仍只支持 candidate-selection 任务，后续还需要补到更多任务和更正式的 few-shot/step 网格。

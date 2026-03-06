@@ -134,14 +134,30 @@ def _write_adapt_curve(output_path: Path, rows: list[dict[str, object]]) -> None
             writer.writerow({key: row.get(key) for key in fieldnames})
 
 
-def _load_import_rows(config: dict[str, Any], *, dry_run: bool) -> list[dict[str, object]]:
+def _load_import_rows(config: dict[str, Any], *, dry_run: bool) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     imports = list(config["grid"].get("imports", []))
     if dry_run:
         imports = imports[: max(1, min(1, len(imports)))]
     rows: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
     for item in imports:
         run_dir = Path(item["run_dir"]).resolve()
-        metrics = json.loads((run_dir / "metrics.json").read_text())
+        metrics_path = run_dir / "metrics.json"
+        allow_missing = bool(item.get("allow_missing", False))
+        if not run_dir.exists() or not metrics_path.exists():
+            if allow_missing:
+                skipped.append(
+                    {
+                        "run_dir": str(run_dir),
+                        "baseline_family": item["family"],
+                        "baseline_mode": item["mode"],
+                        "backbone": item.get("backbone", "unknown"),
+                        "reason": "missing_metrics",
+                    }
+                )
+                continue
+            raise FileNotFoundError(f"Imported baseline run is missing metrics.json: {metrics_path}")
+        metrics = json.loads(metrics_path.read_text())
         run_info_path = run_dir / "run_info.json"
         run_info = json.loads(run_info_path.read_text()) if run_info_path.exists() else {}
         row: dict[str, object] = {
@@ -168,7 +184,7 @@ def _load_import_rows(config: dict[str, Any], *, dry_run: bool) -> list[dict[str
         row["primary_metric"] = primary_metric
         row["primary_score"] = primary_score
         rows.append(row)
-    return rows
+    return rows, skipped
 
 
 def _has_completed_artifacts(run_dir: Path, required_files: list[str]) -> bool:
@@ -315,7 +331,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
                 }
             )
 
-    imported_rows = _load_import_rows(config, dry_run=dry_run)
+    imported_rows, skipped_imports = _load_import_rows(config, dry_run=dry_run)
     rows = collect_metrics(run_root) + imported_rows
     eval_rows = [row for row in rows if str(row.get("mode")) in {"eval_baseline", "memgen_adapter"}]
     summary_path = output_dir / "summary.csv"
@@ -338,6 +354,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
             "reused_train_run_count": reused_train_run_count,
             "reused_eval_run_count": reused_eval_run_count,
             "imported_eval_count": len(imported_rows),
+            "skipped_import_count": len(skipped_imports),
             "dry_run": dry_run,
             "reuse_existing_runs": reuse_existing_runs,
         },
@@ -360,6 +377,7 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
                 }
                 for row in imported_rows
             ],
+            "skipped_imports": skipped_imports,
         },
     )
 

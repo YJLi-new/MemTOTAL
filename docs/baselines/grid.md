@@ -22,6 +22,9 @@
 - `adapter` 当前支持 `shot=0, step=0` 的 zero-adaptation init 点
 - `adapter` 的 `shot=0, step>0` 会被自动剪掉，因为没有 support 数据可更新
 - grid runner 现已支持 `grid.imports`，用于把外部 baseline 的既有评测点导入同一条 `adapt_curve.csv`
+- `grid.imports` 现已支持 `allow_missing: true`
+  - 当前会把未就绪的外部点记入 `adapt_cost.json.skipped_import_count`
+  - 当前会把未就绪的外部点记入 `grid_plan.json.skipped_imports`
 - grid runner 现已支持 `grid.reuse_existing_runs`，可在同一输出目录上复用已有 `train/eval` 产物，避免只改汇总配置时把整套 grid 重跑一遍
   - 当前复用判定会同时检查 `required artifacts + config.snapshot + seed`
 - 当前已验证导入 `MemGen` 的 `story_cloze` `Qwen2.5-1.5B-Instruct` `0-shot / 0-step` 外部评测点
@@ -35,6 +38,8 @@
 - import variant script: `scripts/run_story_cloze_baseline_grid_with_memgen.sh`
 - protocol-smoke config: `configs/exp/m5_story_cloze_baseline_grid_protocol_smoke.yaml`
 - protocol-smoke script: `scripts/run_story_cloze_baseline_grid_protocol_smoke.sh`
+- dual-import protocol config: `configs/exp/m5_story_cloze_baseline_grid_protocol_with_memgen_dual_smoke.yaml`
+- dual-import protocol script: `scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh`
 
 ## Verified Commands
 
@@ -44,6 +49,7 @@
 ./scripts/run_story_cloze_baseline_grid_with_memgen.sh 993 results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke
 python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --seed 701 --output_root data/benchmarks/materialized --manifest_root data/benchmarks/manifests --summary_path data/benchmarks/source_summary.json
 ./scripts/run_story_cloze_baseline_grid_protocol_smoke.sh 997 results/generated/m5-story-cloze-baseline-grid-protocol-smoke
+./scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh 1001 results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke
 ```
 
 ## Verified Outputs
@@ -60,6 +66,9 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
 - `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_cost.json`
 - `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/summary.csv`
 - `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/grid_plan.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/summary.svg`
 - `data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl`
 
 当前已验证：
@@ -77,6 +86,11 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
   - `eval_run_count = 76`
   - `imported_eval_count = 1`
   - 重跑复用验证：`train_run_count = 0`、`eval_run_count = 0`、`reused_train_run_count = 52`、`reused_eval_run_count = 76`
+- dual-import protocol:
+  - `imported_eval_count = 1`
+  - `skipped_import_count = 1`
+  - 当前已导入 `MemGen / Qwen2.5-1.5B-Instruct`
+  - 当前将 `MemGen / Qwen3-8B` 记录为 skipped import，等待真实 run 完成后同目录重跑
 
 ## Current Smoke Signals
 
@@ -102,3 +116,4 @@ python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --
 - 统一 grid 现在也能把外部 baseline 点导入同一张曲线，而不需要手工抄数
 - materialize 层现在不会再因为不同 `max_examples` 覆盖同一个 real-smoke 文件，`smoke4` 和 `smoke8` 可以并存
 - 只改导入点或汇总配置时，grid suite 现在可以直接复用已有 run，避免重复计算
+- 外部 baseline 点现在可以先占位、后补齐，不会因为某一条尚未完成就阻断整套 grid 汇总

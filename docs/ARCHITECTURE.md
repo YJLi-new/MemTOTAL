@@ -201,6 +201,7 @@
   - 当前针对 `story_cloze` real-source smoke
   - 会在单个 suite 内循环 `shots / steps`
   - 支持通过 `grid.imports` 把外部 baseline run 导入同一条 `adapt_curve.csv`
+  - `grid.imports` 支持 `allow_missing: true`，会把未就绪外部点写入 `skipped_imports`
   - 支持通过 `grid.config_overrides` 在不复制模板配置的前提下覆写 `task/runtime` 字段
   - 支持通过 `grid.reuse_existing_runs` 复用已存在的 `train/eval` 产物，并通过 `config.snapshot + seed` 校验避免误复用
   - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
@@ -233,3 +234,4 @@
 - 当前 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 外部评测点已可通过 `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml` 导入到同一套 grid 汇总，产物位于 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
 - 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置
 - 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=76`
+- 当前 dual-import protocol suite 位于 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`：它已真实导入 qwen25 的 `MemGen` 点，并把尚未完成的 qwen3 `MemGen` 点记录为 skipped import
