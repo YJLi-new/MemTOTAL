@@ -373,6 +373,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - Stage B 现支持 `query_learning_mode in {meta_trained, non_meta_multitask, random}`，并把模式写入 `queries_meta_init.pt` / `metrics.json`
 - Stage C 已真实产出 `queries_adapted.pt`、`adapt_curve.csv` 与 `adapt_cost.json`；当前默认 `adaptation_target=q_only`，并已按 `Q-only / W-only / W+Q` 跑通对齐预算的 smoke 曲线
 - Stage C 现支持 `expected_query_learning_mode` 校验，避免把 `random / non-meta / meta-trained` 的 reader init resume 混到错误 run 里
+- `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
   - `python -m train --config configs/exp/m3_stage_a_qwen25_smoke.yaml --seed 301 --output_dir runs/verify/m3-stage-a`
@@ -391,9 +392,14 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `meta-trained`：Stage B `mean_adaptation_gain=0.02427813410758972`；Stage C `zero_shot_query_loss=0.7023470401763916`
   - `non-meta multi-task`：Stage B `source_eval_query_loss=0.6913747191429138`；Stage C `zero_shot_query_loss=0.7048434019088745`
   - `random`：Stage B `source_eval_query_loss=0.6923675537109375`；Stage C `zero_shot_query_loss=0.7098537683486938`
+- 训练失败模式显式检查：`results/generated/m3-failure-checks-canonical/`
+  - `reader_uses_memory`：通过，`0.6890493258833885 -> 0.7001845389604568`
+  - `writer_beats_noise`：通过，`0.6890493258833885 -> 0.6904618516564369`
+  - `fuser_avoids_collapse`：未通过，当前 `base_short_slot_diversity≈0`，`collapsed_fuser` 与 base loss 持平
 
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
+说明：退化模式检查条目当前已完成的是“显式检查 + smoke ablation harness”。它现在已经能自动抓出一个真实问题：canonical meta run 在 toy smoke 上触发了 `fuser` 折叠告警，因此这项工作完成后，最自然的下一步就是修 `fuser collapse`，而不是假装没有问题。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 
@@ -410,10 +416,10 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - [x] meta-trained queries
   - **DoD**：能直接比较 meta 的价值
 
-- [ ] 把训练失败常见模式写成显式检查
-  - [ ] Reader 忽略 memory
-  - [ ] Writer 输出退化为噪声
-  - [ ] Fuser 折叠为单一 token
+- [x] 把训练失败常见模式写成显式检查
+  - [x] Reader 忽略 memory
+  - [x] Writer 输出退化为噪声
+  - [x] Fuser 折叠为单一 token
   - **DoD**：至少有 2–3 个 smoke ablation 可快速识别退化
 
 ### P2 加分

@@ -107,6 +107,8 @@
 - 2026-03-06 12:22 UTC: 已真实跑通三组适配对象消融，当前 canonical 结果位于 `runs/verify/m3-adaptation-targets-canonical/`：`Q-only` 保持 `0.7023470401763916 -> 0.7023470401763916`，`W-only` 与 `W+Q` 均为 `0.7023470401763916 -> 0.694838285446167`；三组均输出 `adapt_curve.csv`、`adapt_cost.json`，且预算对齐为 `shots={0,2}`、`steps=3`、`lr=0.2`。
 - 2026-03-06 12:17 UTC: 已为 Stage B 引入 `query_learning_mode in {meta_trained, non_meta_multitask, random}`，并新增 `m3_stage_b_qwen25_smoke_{non_meta,random}.yaml`；Stage C 同时新增 `expected_query_learning_mode` 校验和 `m3_stage_c_qwen25_smoke_{non_meta,random}.yaml`，避免 resume 错误混用 reader init。
 - 2026-03-06 12:17 UTC: 已真实跑通 Reader 学习方式消融，canonical 结果位于 `runs/verify/m3-reader-learning-modes-canonical/`：`meta-trained` 在 target `narrative` 上得到 `zero_shot_query_loss=0.7023470401763916`，`non-meta` 为 `0.7048434019088745`，`random` 为 `0.7098537683486938`。三者当前在 `q_only` few-shot accuracy 上仍都保持 `0.5`，说明 harness 已能比较初始化质量，但更强的 few-shot 提升仍需后续任务。
+- 2026-03-06 12:37 UTC: 已为 `analysis` 增加 `m3_failure_checks` 模式，并真实跑通 `zero_memory / writer_noise / collapsed_fuser` 三类 smoke ablation；结果位于 `results/generated/m3-failure-checks-canonical/`。
+- 2026-03-06 12:37 UTC: 当前 canonical meta run 的 failure checks 中，`reader_uses_memory` 与 `writer_beats_noise` 已通过，但 `fuser_avoids_collapse` 未通过，当前观测是 `base_short_slot_diversity≈0` 且 `collapsed_fuser` 与 base loss 持平。这说明退化检查 harness 已经成立，而且它确实发现了当前 toy 路线里的一个结构问题。
 
 ## Decision Log
 
@@ -129,6 +131,7 @@
 - 2026-03-06: 若 toy smoke 因任务构造本身阻碍 few-shot 观测，应优先重构 toy 数据与 episode 结构，而不是只盲扫学习率。
 - 2026-03-06: Stage C 的默认适配对象若与文档定义冲突，应以 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的“queries-only by default” 为准；writer-inclusive 变体通过显式 `runtime.adaptation_target` 配置进入 ablation，而不是混入默认口径。
 - 2026-03-06: Reader 学习方式消融优先通过显式 `query_learning_mode` 工件契约完成，而不是靠临时脚本保存不同 queries 快照；后续真实 benchmark 也应沿用同一 resume 契约。
+- 2026-03-06: 训练失败模式检查的目标不是“让所有 smoke 都通过”，而是把退化显式暴露出来；若 canonical smoke 被新检查抓出问题，应优先记录并修结构，而不是降低阈值掩盖。
 
 ## Surprises & Discoveries
 

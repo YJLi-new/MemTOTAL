@@ -43,6 +43,9 @@ class RepoContractTest(unittest.TestCase):
             train_dir = temp_root / "train"
             eval_dir = temp_root / "eval"
             analysis_dir = temp_root / "analysis"
+            stage_a_dir = temp_root / "stage_a"
+            stage_b_dir = temp_root / "stage_b"
+            failure_dir = temp_root / "failure_checks"
             config_path = ROOT / "configs/exp/smoke_qwen25.yaml"
 
             self.assertEqual(
@@ -91,6 +94,49 @@ class RepoContractTest(unittest.TestCase):
                 ),
                 0,
             )
+            self.assertEqual(
+                train_main(
+                    [
+                        "--config",
+                        str(ROOT / "configs/exp/m3_stage_a_qwen25_smoke.yaml"),
+                        "--seed",
+                        "301",
+                        "--output_dir",
+                        str(stage_a_dir),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                train_main(
+                    [
+                        "--config",
+                        str(ROOT / "configs/exp/m3_stage_b_qwen25_smoke.yaml"),
+                        "--seed",
+                        "303",
+                        "--output_dir",
+                        str(stage_b_dir),
+                        "--resume",
+                        str(stage_a_dir),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                analysis_main(
+                    [
+                        "--config",
+                        str(ROOT / "configs/exp/m3_failure_checks_qwen25_smoke.yaml"),
+                        "--seed",
+                        "307",
+                        "--output_dir",
+                        str(failure_dir),
+                        "--resume",
+                        str(stage_b_dir),
+                    ]
+                ),
+                0,
+            )
 
             self.assertTrue((train_dir / "config.snapshot.yaml").is_file())
             self.assertTrue((train_dir / "run_info.json").is_file())
@@ -103,6 +149,9 @@ class RepoContractTest(unittest.TestCase):
             self.assertTrue((analysis_dir / "summary.csv").is_file())
             self.assertTrue((analysis_dir / "summary.svg").is_file())
             self.assertTrue((analysis_dir / "profiling.json").is_file())
+            self.assertTrue((failure_dir / "failure_checks.json").is_file())
+            self.assertTrue((failure_dir / "failure_ablation_summary.csv").is_file())
+            self.assertTrue((failure_dir / "failure_ablation_summary.svg").is_file())
 
             run_info = json.loads((train_dir / "run_info.json").read_text())
             self.assertIn("git_hash", run_info)

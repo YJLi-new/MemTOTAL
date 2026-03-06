@@ -69,6 +69,20 @@ class ReportingTest(unittest.TestCase):
                 )
             )
 
+            failure_checks_dir = temp_root / "failure_checks"
+            failure_checks_dir.mkdir()
+            (failure_checks_dir / "run_info.json").write_text(
+                json.dumps({"backbone": "Qwen2.5-1.5B-Instruct", "task_name": "toy_meta_smoke"})
+            )
+            (failure_checks_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "analysis_failure_checks",
+                        "checks_pass_rate": 2.0 / 3.0,
+                    }
+                )
+            )
+
             rows = collect_metrics(temp_root)
             by_mode = {str(row["mode"]): row for row in rows}
             by_stage = {str(row.get("training_stage", "")): row for row in rows}
@@ -90,6 +104,8 @@ class ReportingTest(unittest.TestCase):
                 by_mode_and_query[("train", "non_meta_multitask")]["primary_score"],
                 0.75,
             )
+            self.assertEqual(by_mode["analysis_failure_checks"]["primary_metric"], "checks_pass_rate")
+            self.assertAlmostEqual(by_mode["analysis_failure_checks"]["primary_score"], 2.0 / 3.0)
 
     def test_write_sanity_plot_uses_primary_metric_labels(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

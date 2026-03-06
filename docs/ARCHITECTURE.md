@@ -82,7 +82,25 @@
   - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json`
   - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / adaptation_target / trainable_module / trainable_parameter_count`
 
-当前 M3 smoke 已经把工件、resume 链路、Stage C 适配对象配置契约、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
+当前 M3 smoke 已经把工件、resume 链路、Stage C 适配对象配置契约、Reader 学习方式消融、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
+
+## M3 Failure Checks
+
+- `analysis_mode=m3_failure_checks` 会加载 `writer.ckpt + queries_meta_init.pt`
+- 当前显式运行三个退化 ablation：
+  - `zero_memory`
+  - `writer_noise`
+  - `collapsed_fuser`
+- 输出：
+  - `failure_checks.json`
+  - `failure_ablation_summary.csv`
+  - `failure_ablation_summary.svg`
+- 当前检查规则：
+  - `reader_uses_memory`: `zero_memory` loss 必须显著劣于 base
+  - `writer_beats_noise`: `writer_noise` loss 必须显著劣于 base
+  - `fuser_avoids_collapse`: base slot diversity 与 `collapsed_fuser` loss gap 不能同时退化
+
+当前 canonical meta run 已通过前两项，但 `fuser_avoids_collapse` 失败，说明这套 harness 已经具备“把真实退化显式暴露出来”的能力。
 
 ## Backbone Policy
 

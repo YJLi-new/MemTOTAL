@@ -17,6 +17,7 @@ def resolve_primary_metric(row: dict[str, object]) -> tuple[str, float]:
     metric_preferences = [
         ("accuracy", _coerce_float(row.get("accuracy"))),
         ("compute_reward", _coerce_float(row.get("compute_reward"))),
+        ("checks_pass_rate", _coerce_float(row.get("checks_pass_rate"))),
         ("best_adapt_query_accuracy", _coerce_float(row.get("best_adapt_query_accuracy"))),
         ("zero_shot_query_accuracy", _coerce_float(row.get("zero_shot_query_accuracy"))),
         ("mean_adaptation_gain", _coerce_float(row.get("mean_adaptation_gain"))),
