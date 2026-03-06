@@ -367,10 +367,10 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - **DoD**：固定一个 target domain，自动产出 shot-curve 与 step-curve
 
 当前 M3 smoke 已完成并验证的部分：
-- 已新增 `toy_meta_smoke` 数据与 meta split；当前配置是 `source={math, code, qa}`、`target=narrative`、`support_size=1`、`query_size=2`
+- 已新增 `toy_meta_smoke` 数据与 meta split；当前配置是 `source={math, code, qa}`、`target=narrative`、`support_size=2`、`query_size=2`
 - Stage A 已真实产出 `writer.ckpt`，并把 `dataset_sha256`、domain 采样规则写入 `meta_data_manifest.json`
 - Stage B 已真实产出 `queries_meta_init.pt`，当前实现是 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`，Writer 固定
-- Stage C 已真实产出 `queries_adapted.pt` 与 `adapt_curve.csv`，当前 target domain smoke 位于 `runs/verify/m3-stage-c/`
+- Stage C 已真实产出 `queries_adapted.pt`、`adapt_curve.csv` 与 `adapt_cost.json`；当前默认 `adaptation_target=q_only`，并已按 `Q-only / W-only / W+Q` 跑通对齐预算的 smoke 曲线
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
   - `python -m train --config configs/exp/m3_stage_a_qwen25_smoke.yaml --seed 301 --output_dir runs/verify/m3-stage-a`
@@ -381,14 +381,20 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 最新已验证结果：
 - Stage B：`runs/verify/m3-stage-b/metrics.json` 当前记录 `mean_zero_shot_query_loss=0.6781679193178812`、`mean_adapted_query_loss=0.6538897852102915`、`mean_adaptation_gain=0.02427813410758972`
 - Stage C：`runs/verify/m3-stage-c/adapt_curve.csv` 当前记录 target domain `narrative` 上从 `zero_shot_query_loss=0.7023470401763916` 下降到 `best_adapt_query_loss=0.6856379508972168`
+- Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
+  - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
+  - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
+  - `W+Q`：`writer+reader.queries`，`trainable_parameter_count=72000`，`0.7023470401763916 -> 0.694838285446167`
+
+说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 
 ### P1 重要
-- [ ] 适配对象消融
-  - [ ] Q-only
-  - [ ] W-only
-  - [ ] W+Q
+- [x] 适配对象消融
+  - [x] Q-only
+  - [x] W-only
+  - [x] W+Q
   - **DoD**：三条曲线齐全，且对齐相同预算
 
 - [ ] Reader 学习方式消融

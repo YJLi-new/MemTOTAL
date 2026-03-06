@@ -71,10 +71,14 @@
   - 当前实现为 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`
   - episode 采样按 label 分层，评估使用 domain 内 label prototype，而不是逐样本候选集
 - Stage C：
+  - 默认按 `adaptation_target=q_only` 对齐 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的 Stage C 契约，只更新 `reader.queries`
+  - 支持 `adaptation_target in {q_only, w_only, w_plus_q}`
   - 产出 `queries_adapted.pt`
-  - 产出 `adapt_curve.csv` / `adapt_curve.json`
+  - 若 writer 参与适配，则额外产出 `writer_adapted.ckpt`
+  - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json`
+  - `adapt_curve.csv` 当前会显式写出 `adaptation_target / trainable_module / trainable_parameter_count`
 
-当前 M3 smoke 已经把工件、resume 链路、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
+当前 M3 smoke 已经把工件、resume 链路、Stage C 适配对象配置契约、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
 
 ## Backbone Policy
 

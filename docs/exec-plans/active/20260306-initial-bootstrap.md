@@ -103,6 +103,8 @@
 - 2026-03-06 11:55 UTC: 已将 `toy_meta_smoke` 改成“每域 2 label × 每 label 2 样本”的结构，并把 episode sampler 改为按 label 分层采样；Stage B/C 的分类目标也已切换到 domain 内 label prototype，而不是逐样本候选。
 - 2026-03-06 11:55 UTC: 重新跑通 M3 顺序 smoke 后，`runs/verify/m3-stage-b/metrics.json` 当前记录 `mean_adaptation_gain=0.02427813410758972`，说明 source-domain 上已经能观察到正向适配收益；原 blocker 已解除。
 - 2026-03-06 11:55 UTC: 当前 `runs/verify/m3-stage-c/adapt_curve.csv` 记录 target domain `narrative` 上 `zero_shot_query_loss=0.7023470401763916 -> best_adapt_query_loss=0.6856379508972168`，但 accuracy 仍为 `0.5 -> 0.5`；这说明 M3 smoke contract 已成立，但更强的 target few-shot 提升仍留给后续正式实验。
+- 2026-03-06 12:22 UTC: 已将 Stage C 的 code drift 显式收口到文档契约：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都要求 Stage C 默认“只更新 queries”，因此仓库现引入 `runtime.adaptation_target in {q_only, w_only, w_plus_q}`，并把默认 `m3_stage_c_qwen25_smoke.yaml` 对齐为 `q_only`。
+- 2026-03-06 12:22 UTC: 已真实跑通三组适配对象消融，当前 canonical 结果位于 `runs/verify/m3-adaptation-targets-canonical/`：`Q-only` 保持 `0.7023470401763916 -> 0.7023470401763916`，`W-only` 与 `W+Q` 均为 `0.7023470401763916 -> 0.694838285446167`；三组均输出 `adapt_curve.csv`、`adapt_cost.json`，且预算对齐为 `shots={0,2}`、`steps=3`、`lr=0.2`。
 
 ## Decision Log
 
@@ -123,6 +125,7 @@
 - 2026-03-06: 对 `injection_position=none` 这类合法 ablation，不把“无梯度”视为配置错误；训练 harness 应显式记录而不是直接失败。
 - 2026-03-06: M3 当前优先保证 Stage A/B/C 的 artifact contract 与 resume 链路成立；若 smoke 结果尚未出现正向 meta gain，应把它记录为未达 DoD，而不是调文案掩盖。
 - 2026-03-06: 若 toy smoke 因任务构造本身阻碍 few-shot 观测，应优先重构 toy 数据与 episode 结构，而不是只盲扫学习率。
+- 2026-03-06: Stage C 的默认适配对象若与文档定义冲突，应以 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的“queries-only by default” 为准；writer-inclusive 变体通过显式 `runtime.adaptation_target` 配置进入 ablation，而不是混入默认口径。
 
 ## Surprises & Discoveries
 

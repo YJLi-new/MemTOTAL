@@ -64,6 +64,49 @@ def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     raise FileNotFoundError(f"Could not resolve required artifact '{expected_name}' from --resume={resume}.")
 
 
+def _resolve_stage_c_adaptation_target(config: dict) -> str:
+    adaptation_target = str(config["runtime"].get("adaptation_target", "q_only"))
+    if adaptation_target not in {"q_only", "w_only", "w_plus_q"}:
+        raise ValueError(
+            f"Unsupported Stage C adaptation_target={adaptation_target}. "
+            "Expected one of q_only, w_only, w_plus_q."
+        )
+    return adaptation_target
+
+
+def _configure_stage_c_trainables(
+    runtime: MemoryRuntime,
+    adaptation_target: str,
+) -> tuple[list[torch.nn.Parameter], str]:
+    # Stage C follows the paper contract: default adaptation is query-only.
+    runtime.writer.freeze()
+    runtime.reader.freeze()
+    runtime.fuser.freeze()
+
+    if adaptation_target == "q_only":
+        runtime.reader.queries.requires_grad_(True)
+        return [runtime.reader.queries], "reader.queries"
+    if adaptation_target == "w_only":
+        runtime.writer.unfreeze()
+        return list(runtime.writer.parameters()), "writer"
+
+    runtime.writer.unfreeze()
+    runtime.reader.queries.requires_grad_(True)
+    return [*runtime.writer.parameters(), runtime.reader.queries], "writer+reader.queries"
+
+
+def _count_unique_parameters(parameters: list[torch.nn.Parameter]) -> int:
+    seen: set[int] = set()
+    total = 0
+    for parameter in parameters:
+        pointer = parameter.data_ptr()
+        if pointer in seen:
+            continue
+        seen.add(pointer)
+        total += int(parameter.numel())
+    return total
+
+
 def _example_loss(runtime: MemoryRuntime, example: dict[str, str]) -> torch.Tensor:
     forward = runtime.forward_example(example)
     return F.mse_loss(forward.predicted_state, forward.target_state)
@@ -114,6 +157,15 @@ def _compute_accuracy(
         predicted_label = candidate_labels[int(torch.argmax(scores).item())]
         correct += int(predicted_label == example["label"])
     return correct / len(examples)
+
+
+def _stage_c_row_key(row: dict[str, object]) -> tuple[float, float, int, int]:
+    return (
+        float(row["query_accuracy"]),
+        -float(row["query_loss"]),
+        int(row["shot"]),
+        int(row["step"]),
+    )
 
 
 def _build_meta_context(config: dict) -> tuple[dict[str, list[dict[str, str]]], dict[str, object]]:
@@ -318,15 +370,15 @@ def run_stage_c(
 
     writer_path = _resolve_artifact_path(resume, "writer.ckpt")
     queries_path = _resolve_artifact_path(resume, "queries_meta_init.pt")
+    adaptation_target = _resolve_stage_c_adaptation_target(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
-    runtime.writer.freeze()
     state = torch.load(queries_path, map_location="cpu")
     runtime.reader.load_state_dict(state["reader_state"])
-    runtime.reader.unfreeze()
     if "fuser_state" in state:
         runtime.fuser.load_state_dict(state["fuser_state"])
-    runtime.fuser.unfreeze()
+    adaptable_parameters, trainable_module = _configure_stage_c_trainables(runtime, adaptation_target)
+    trainable_parameter_count = _count_unique_parameters(adaptable_parameters)
 
     target_episode = split_target_domain_examples(
         grouped_examples,
@@ -343,6 +395,10 @@ def run_stage_c(
     profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
     curve_rows: list[dict[str, object]] = []
     best_runtime = copy.deepcopy(runtime)
+    best_adapt_row: dict[str, object] | None = None
+    support_updates = 0
+    support_examples_touched = 0
+    query_examples_touched = 0
 
     for shot in shots_list:
         current_runtime = copy.deepcopy(runtime)
@@ -350,6 +406,10 @@ def run_stage_c(
         max_recorded_steps = 0 if shot == 0 else max_steps
         for step in range(max_recorded_steps + 1):
             profiler.add_example()
+            for example in target_episode.query_examples:
+                profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+                profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+                query_examples_touched += 1
             query_loss = _mean_classification_loss(
                 current_runtime,
                 target_episode.query_examples,
@@ -364,18 +424,24 @@ def run_stage_c(
             )
             curve_rows.append(
                 {
+                    "adaptation_target": adaptation_target,
+                    "trainable_module": trainable_module,
+                    "trainable_parameter_count": trainable_parameter_count,
                     "shot": shot,
                     "step": step,
                     "query_loss": query_loss,
                     "query_accuracy": query_accuracy,
                 }
             )
-            if shot == max(shots_list) and step == max_recorded_steps:
-                best_runtime = copy.deepcopy(current_runtime)
+            if shot > 0:
+                current_row = curve_rows[-1]
+                if best_adapt_row is None or _stage_c_row_key(current_row) > _stage_c_row_key(best_adapt_row):
+                    best_adapt_row = dict(current_row)
+                    best_runtime = copy.deepcopy(current_runtime)
             if step == max_recorded_steps or shot == 0:
                 continue
-            adapt_parameters = [current_runtime.reader.queries, *current_runtime.fuser.parameters()]
-            optimizer = torch.optim.SGD(adapt_parameters, lr=adapt_lr)
+            current_adapt_parameters, _ = _configure_stage_c_trainables(current_runtime, adaptation_target)
+            optimizer = torch.optim.SGD(current_adapt_parameters, lr=adapt_lr)
             support_loss = torch.stack(
                 [
                     _classification_loss(
@@ -390,41 +456,85 @@ def run_stage_c(
             optimizer.zero_grad()
             support_loss.backward()
             optimizer.step()
+            support_updates += 1
             for example in support_examples:
                 profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
                 profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+                support_examples_touched += 1
 
     adapt_curve_path = output_dir / "adapt_curve.csv"
     with adapt_curve_path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["shot", "step", "query_loss", "query_accuracy"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "adaptation_target",
+                "trainable_module",
+                "trainable_parameter_count",
+                "shot",
+                "step",
+                "query_loss",
+                "query_accuracy",
+            ],
+        )
         writer.writeheader()
         for row in curve_rows:
             writer.writerow(row)
+    adapted_writer_path = None
+    if adaptation_target in {"w_only", "w_plus_q"}:
+        adapted_writer_path = best_runtime.writer.save_to(output_dir / "writer_adapted.ckpt")
     torch.save(
         {
             "reader_state": best_runtime.reader.state_dict(),
             "fuser_state": best_runtime.fuser.state_dict(),
             "seed": seed,
             "target_domain": manifest["target_domain"],
+            "adaptation_target": adaptation_target,
+            "trainable_module": trainable_module,
+            "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
         },
         output_dir / "queries_adapted.pt",
     )
     zero_shot_row = next(row for row in curve_rows if row["shot"] == 0)
-    best_row = max(curve_rows, key=lambda row: row["query_accuracy"])
+    best_row = best_adapt_row or zero_shot_row
+    profile_metrics = profiler.finalize()
+    adapt_cost = {
+        "adaptation_target": adaptation_target,
+        "trainable_module": trainable_module,
+        "trainable_parameter_count": trainable_parameter_count,
+        "adapt_learning_rate": adapt_lr,
+        "adapt_steps": max_steps,
+        "adapt_shots": shots_list,
+        "support_updates": support_updates,
+        "support_examples_touched": support_examples_touched,
+        "query_examples_touched": query_examples_touched,
+        "target_domain": manifest["target_domain"],
+        **profile_metrics,
+    }
+    adapt_cost_path = output_dir / "adapt_cost.json"
+    write_json(adapt_cost_path, adapt_cost)
     metrics = {
         "mode": "train",
         "training_stage": "stage_c",
         "target_domain": manifest["target_domain"],
+        "adaptation_target": adaptation_target,
+        "trainable_module": trainable_module,
+        "trainable_parameter_count": trainable_parameter_count,
         "zero_shot_query_loss": zero_shot_row["query_loss"],
         "zero_shot_query_accuracy": zero_shot_row["query_accuracy"],
         "best_adapt_query_accuracy": best_row["query_accuracy"],
-        "best_adapt_query_loss": min(row["query_loss"] for row in curve_rows),
+        "best_adapt_query_loss": best_row["query_loss"],
+        "best_adapt_shot": best_row["shot"],
+        "best_adapt_step": best_row["step"],
         "adapt_curve_path": str(adapt_curve_path.resolve()),
+        "adapt_cost_path": str(adapt_cost_path.resolve()),
         "queries_meta_init": str(queries_path.resolve()),
         "writer_checkpoint": str(writer_path.resolve()),
         "adapted_queries_checkpoint": str((output_dir / "queries_adapted.pt").resolve()),
+        "adapted_writer_checkpoint": (
+            str(adapted_writer_path.resolve()) if adapted_writer_path is not None else None
+        ),
         "dataset_sha256": manifest["dataset_sha256"],
-        **profiler.finalize(),
+        **profile_metrics,
     }
     write_json(output_dir / "metrics.json", metrics)
     write_json(output_dir / "adapt_curve.json", {"rows": curve_rows})

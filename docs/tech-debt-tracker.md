@@ -10,7 +10,8 @@
 - 验证 MemGen `trigger.active=True` 路径，并决定哪些坑需要升级为强制脚本规则。
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
 - 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
-- 当前 `toy_meta_smoke` 已能体现正的 `Stage B mean_adaptation_gain`，但 Stage C 在 target domain 上目前主要体现为 loss 下降，accuracy 仍持平；后续需要用更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
+- 当前 `toy_meta_smoke` 的 canonical Stage B run 已能体现正的 `mean_adaptation_gain`，但该信号对 seed 仍敏感；后续需要更稳的 toy 任务或更多 seeds，避免把单个正向 smoke 误当成稳定规律。
+- Stage C 适配对象消融现已完成，但在 canonical toy smoke 上仍表现为 `Q-only` 基本不动、`W-only/W+Q` 只降低 loss 而不提升 accuracy；后续需要更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
 
 ## Resolved In This Bootstrap
 

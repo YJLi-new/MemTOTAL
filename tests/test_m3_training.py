@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -18,6 +20,25 @@ from memtotal.training.run_train import main as train_main
 
 
 class M3TrainingTest(unittest.TestCase):
+    def _write_stage_c_override(self, root: Path, adaptation_target: str) -> Path:
+        override_path = root / f"stage_c_{adaptation_target}.yaml"
+        override_path.write_text(
+            yaml.safe_dump(
+                {
+                    "includes": [str(ROOT / "configs/exp/m3_stage_c_qwen25_smoke.yaml")],
+                    "experiment": {
+                        "name": f"m3_stage_c_{adaptation_target}_test",
+                        "method_variant": f"ours-stage-c-{adaptation_target}-test",
+                    },
+                    "runtime": {
+                        "adaptation_target": adaptation_target,
+                    },
+                },
+                sort_keys=False,
+            )
+        )
+        return override_path
+
     def test_episode_sampler_respects_meta_split(self) -> None:
         grouped = load_domain_dataset(ROOT / "data/toy/meta_samples.jsonl")
         validate_meta_split(
@@ -49,7 +70,6 @@ class M3TrainingTest(unittest.TestCase):
             root = Path(tmpdir)
             stage_a_dir = root / "stage_a"
             stage_b_dir = root / "stage_b"
-            stage_c_dir = root / "stage_c"
 
             self.assertEqual(
                 train_main(
@@ -87,28 +107,60 @@ class M3TrainingTest(unittest.TestCase):
             stage_b_metrics = json.loads(stage_b_dir.joinpath("metrics.json").read_text())
             self.assertEqual(stage_b_metrics["training_stage"], "stage_b")
 
-            self.assertEqual(
-                train_main(
-                    [
-                        "--config",
-                        str(ROOT / "configs/exp/m3_stage_c_qwen25_smoke.yaml"),
-                        "--seed",
-                        "47",
-                        "--output_dir",
-                        str(stage_c_dir),
-                        "--resume",
-                        str(stage_b_dir),
-                    ]
+            expectations = [
+                (
+                    ROOT / "configs/exp/m3_stage_c_qwen25_smoke.yaml",
+                    "q_only",
+                    "reader.queries",
+                    False,
                 ),
-                0,
-            )
-            self.assertTrue(stage_c_dir.joinpath("queries_adapted.pt").exists())
-            self.assertTrue(stage_c_dir.joinpath("adapt_curve.csv").exists())
-            stage_c_metrics = json.loads(stage_c_dir.joinpath("metrics.json").read_text())
-            self.assertEqual(stage_c_metrics["training_stage"], "stage_c")
-            with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
-                rows = list(csv.DictReader(handle))
-            self.assertGreaterEqual(len(rows), 2)
+                (
+                    self._write_stage_c_override(root, "w_only"),
+                    "w_only",
+                    "writer",
+                    True,
+                ),
+                (
+                    self._write_stage_c_override(root, "w_plus_q"),
+                    "w_plus_q",
+                    "writer+reader.queries",
+                    True,
+                ),
+            ]
+
+            for index, (config_path, adaptation_target, trainable_module, expects_writer) in enumerate(expectations):
+                stage_c_dir = root / f"stage_c_{adaptation_target}"
+                self.assertEqual(
+                    train_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "--seed",
+                            str(47 + index),
+                            "--output_dir",
+                            str(stage_c_dir),
+                            "--resume",
+                            str(stage_b_dir),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertTrue(stage_c_dir.joinpath("queries_adapted.pt").exists())
+                self.assertTrue(stage_c_dir.joinpath("adapt_curve.csv").exists())
+                self.assertTrue(stage_c_dir.joinpath("adapt_cost.json").exists())
+                stage_c_metrics = json.loads(stage_c_dir.joinpath("metrics.json").read_text())
+                self.assertEqual(stage_c_metrics["training_stage"], "stage_c")
+                self.assertEqual(stage_c_metrics["adaptation_target"], adaptation_target)
+                self.assertEqual(stage_c_metrics["trainable_module"], trainable_module)
+                if expects_writer:
+                    self.assertTrue(stage_c_dir.joinpath("writer_adapted.ckpt").exists())
+                else:
+                    self.assertFalse(stage_c_dir.joinpath("writer_adapted.ckpt").exists())
+                with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
+                    rows = list(csv.DictReader(handle))
+                self.assertGreaterEqual(len(rows), 2)
+                self.assertEqual({row["adaptation_target"] for row in rows}, {adaptation_target})
+                self.assertEqual({row["trainable_module"] for row in rows}, {trainable_module})
 
 
 if __name__ == "__main__":

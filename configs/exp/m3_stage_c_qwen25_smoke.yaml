@@ -5,7 +5,7 @@ includes:
 experiment:
   name: m3_stage_c_qwen25_smoke
   stage: M3-stage-c
-  method_variant: ours-stage-c-fewshot-adapt
+  method_variant: ours-stage-c-fewshot-adapt-q-only
 
 backbone:
   name: Qwen2.5-1.5B-Instruct
@@ -15,6 +15,7 @@ backbone:
 
 runtime:
   training_stage: stage_c
+  adaptation_target: q_only
   adapt_steps: 3
   adapt_learning_rate: 0.2
   adapt_shots:
