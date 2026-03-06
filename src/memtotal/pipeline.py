@@ -13,6 +13,7 @@ class ExampleForward:
     memory_long: torch.Tensor
     readouts: torch.Tensor
     memory_short: torch.Tensor
+    generation_memory: torch.Tensor | None
     injected_inputs: torch.Tensor
     predicted_state: torch.Tensor
     target_state: torch.Tensor
@@ -40,18 +41,39 @@ class MemoryRuntime(nn.Module):
             mode=config["method"]["segmenter"]["mode"],
             delimiter=config["method"]["segmenter"]["delimiter"],
         )
-        self.writer = MemoryWriter(embed_dim=embed_dim, memory_slots=config["method"]["writer"]["memory_slots"])
+        writer_cfg = config["method"]["writer"]
+        reader_cfg = config["method"]["reader"]
+        fuser_cfg = config["method"]["fuser"]
+        self.writer = MemoryWriter(
+            embed_dim=embed_dim,
+            memory_slots=writer_cfg["memory_slots"],
+            arch=writer_cfg.get("arch", "mlp"),
+            hidden_dim=writer_cfg.get("hidden_dim"),
+            num_heads=writer_cfg.get("num_heads", 4),
+            transformer_layers=writer_cfg.get("transformer_layers", 1),
+            dropout=writer_cfg.get("dropout", 0.0),
+        )
         self.reader = MemoryReader(
             embed_dim=embed_dim,
-            num_queries=config["method"]["reader"]["num_queries"],
-            use_query_gating=config["method"]["reader"]["use_query_gating"],
+            num_queries=reader_cfg["num_queries"],
+            use_query_gating=reader_cfg["use_query_gating"],
+            num_heads=reader_cfg.get("num_heads", 4),
+            condition_on_context=reader_cfg.get("condition_on_context", True),
+            dropout=reader_cfg.get("dropout", 0.0),
         )
         self.fuser = MemoryFuser(
             embed_dim=embed_dim,
-            num_queries=config["method"]["reader"]["num_queries"],
-            short_slots=config["method"]["fuser"]["short_slots"],
+            num_queries=reader_cfg["num_queries"],
+            short_slots=fuser_cfg["short_slots"],
+            arch=fuser_cfg.get("arch", "linear"),
+            hidden_dim=fuser_cfg.get("hidden_dim"),
+            num_heads=fuser_cfg.get("num_heads", 4),
+            dropout=fuser_cfg.get("dropout", 0.0),
         )
-        self.injector = MemoryInjector(mode=config["method"]["injector"]["mode"])
+        self.injector = MemoryInjector(
+            mode=config["method"]["injector"]["mode"],
+            enabled=bool(config["method"]["injector"].get("enabled", True)),
+        )
 
     def forward_example(self, example: dict[str, str]) -> ExampleForward:
         segments = self.segmenter.split(example["segment"])
@@ -61,6 +83,7 @@ class MemoryRuntime(nn.Module):
         memory_short = self.fuser.fuse(reader_output["readouts"])
         next_prompt = f"{example['segment']} || Continue:"
         next_inputs = self.backbone.encode_texts([next_prompt])
+        generation_memory = self.injector.memory_for_generation(memory_short)
         injected_inputs = self.injector.inject(memory_short, next_inputs)
         predicted_state = injected_inputs.mean(dim=1)
         target_state = self.backbone.summarize_texts([example["continuation"]])
@@ -68,6 +91,7 @@ class MemoryRuntime(nn.Module):
             memory_long=memory_long,
             readouts=reader_output["readouts"],
             memory_short=memory_short,
+            generation_memory=generation_memory,
             injected_inputs=injected_inputs,
             predicted_state=predicted_state,
             target_state=target_state,
@@ -88,4 +112,3 @@ class MemoryRuntime(nn.Module):
         scores = torch.matmul(normalized_pred, normalized_candidates.transpose(0, 1)).squeeze(0)
         best_index = int(torch.argmax(scores).item())
         return candidate_labels[best_index], float(scores[best_index].item()), forward
-

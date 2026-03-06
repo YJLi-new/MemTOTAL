@@ -276,25 +276,25 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 > `MAIN_IDEA.md` 的“方法总览 / 四个模块契约 / 与 MemGen 差异”是本里程碑唯一方法口径来源。
 
 ### P0 必须
-- [ ] 实现 Writer
-  - [ ] 至少两种可切换实现：MLP / small transformer（或等价）
-  - [ ] 支持 freeze / unfreeze / save / load
+- [x] 实现 Writer
+  - [x] 至少两种可切换实现：MLP / small transformer（或等价）
+  - [x] 支持 freeze / unfreeze / save / load
   - **DoD**：在固定输入下输出稳定、可被 Reader 正常消费
 
-- [ ] 实现 Reader
-  - [ ] `H` 个 learned queries
-  - [ ] cross-attention 读 `M_long`
-  - [ ] 支持 batch / mask / variable segment
+- [x] 实现 Reader
+  - [x] `H` 个 learned queries
+  - [x] cross-attention 读 `M_long`
+  - [x] 支持 batch / mask / variable segment
   - **DoD**：读出 shape 正确，梯度稳定
 
-- [ ] 实现 Fuser
-  - [ ] 支持 `H×d -> K×d`
-  - [ ] 至少实现一个简单版（MLP / identity when K=H）
+- [x] 实现 Fuser
+  - [x] 支持 `H×d -> K×d`
+  - [x] 至少实现一个简单版（MLP / identity when K=H）
   - **DoD**：能输出合法 `M_short`
 
-- [ ] 实现 Injector
-  - [ ] 至少实现 prefix injection
-  - [ ] 支持通过 config 切换注入开关
+- [x] 实现 Injector
+  - [x] 至少实现 prefix injection
+  - [x] 支持通过 config 切换注入开关
   - **DoD**：开关注入会引起可测的生成变化
 
 ### P1 重要
@@ -307,9 +307,20 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - **DoD**：只改 config 即可切换
 
 - [ ] 给方法模块补最小结构约束
-  - [ ] 输入输出 shape 校验
+  - [x] 输入输出 shape 校验
   - [ ] domain / task conditioning 的命名和保存约定
   - **DoD**：常见 shape 错误与错误配置能在早期报错，而不是训练半天后崩
+
+当前 M2 已完成并验证的最小方法骨架：
+- `MemoryWriter`: `mlp` / `transformer` 两档实现，已补 `freeze()/unfreeze()/save_to()/load_from()`
+- `MemoryReader`: `H` 个 learned queries + cross-attention，支持 `memory_mask`
+- `MemoryFuser`: `linear` / `resampler`
+- `MemoryInjector`: `enabled` 开关已进入 config 契约，且 on/off 已有测试验证会改变生成路径
+- 已验证命令：
+  - `python -m unittest discover -s tests -v`
+  - `python -m train --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir runs/verify/m2-transformer-writer-v2/train`
+  - `python -m eval --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir runs/verify/m2-transformer-writer-v2/eval --checkpoint runs/verify/m2-transformer-writer-v2/train/checkpoint.pt`
+  - `python -m analysis --config configs/exp/smoke_qwen25_transformer_writer.yaml --seed 123 --output_dir results/generated/m2-transformer-writer-summary-v2 --input_root runs/verify/m2-transformer-writer-v2`
 
 ### P2 加分
 - [ ] 更高级的注入方式（如 KV 初始化）

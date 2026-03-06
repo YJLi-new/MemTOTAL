@@ -2,15 +2,27 @@ method:
   name: general-writer-adaptable-reader-bootstrap
   embed_dim: 64
   writer:
+    arch: mlp
     memory_slots: 8
+    hidden_dim: 128
+    num_heads: 4
+    transformer_layers: 1
+    dropout: 0.0
   reader:
     num_queries: 4
     use_query_gating: false
+    num_heads: 4
+    condition_on_context: true
+    dropout: 0.0
   fuser:
+    arch: resampler
     short_slots: 2
+    hidden_dim: 128
+    num_heads: 4
+    dropout: 0.0
   injector:
     mode: prefix
+    enabled: true
   segmenter:
     mode: delimiter
     delimiter: "||"
-

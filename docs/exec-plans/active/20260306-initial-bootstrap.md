@@ -87,6 +87,9 @@
 - 2026-03-06 19:02 UTC: 该 trigger-on 结果仅用于验证 `trigger.active=True` 路径和统一输出桥，不视为正式可比的 MemGen trigger baseline；后者仍需对齐触发器权重来源与插入配置口径。
 - 2026-03-06 19:06 UTC: 已将 `trigger_active / insertion_profile / requires_trained_checkpoint / load_model_path` 纳入 MemGen adapter 的显式配置契约，并新增 `configs/exp/memgen_gsm8k_qwen25_eval_trigger_trained_template.yaml` 作为正式 trigger baseline 模板。
 - 2026-03-06 19:06 UTC: `./scripts/run_memgen.sh --config configs/exp/memgen_gsm8k_qwen25_eval_trigger_trained_template.yaml --seed 91 --output_dir runs/verify/memgen-trigger-trained-template-preflight` 已验证 preflight 直报 checkpoint 缺失；`./scripts/run_memgen.sh --config configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml --seed 72 --output_dir runs/verify/memgen-kodcode-smoke-v2` 证明 `TOKENIZERS_PARALLELISM=false` 已消除先前稳定出现的 tokenizers fork 警告。
+- 2026-03-06 11:17 UTC: 已将方法层从纯 M0 stub 升级为 M2 skeleton：`MemoryWriter` 现支持 `mlp` / `transformer` 两档实现，`MemoryReader` 补齐 learned queries + cross-attention + `memory_mask`，`MemoryFuser` 补齐 `linear` / `resampler` 两档，`MemoryInjector` 新增 `enabled` 配置开关并同步控制生成侧 memory 注入。
+- 2026-03-06 11:17 UTC: 新增 `configs/method/memory_bootstrap_transformer.yaml` 与 `configs/exp/smoke_qwen25_transformer_writer.yaml`；已真实跑通 `train -> eval -> analysis` 轻量闭环，产物位于 `runs/verify/m2-transformer-writer-v2/` 与 `results/generated/m2-transformer-writer-summary-v2/`。
+- 2026-03-06 11:17 UTC: 最新验证包括 `python -m unittest discover -s tests -v`（23 项通过）、transformer-writer toy train（`final_loss=0.04995205998420715`）、eval（`accuracy=0.5`）、analysis（`rows_collected=2`）。
 
 ## Decision Log
 
@@ -102,6 +105,7 @@
 - 2026-03-06: 对 MemGen 首次真实运行，优先通过代码层可配置项移除 `flash_attention_2` 和全量数据依赖，而不是额外安装 `flash_attn` / `deepspeed` 这类更重的系统依赖。
 - 2026-03-06: MemGen 的任务清单对齐先按“真实 smoke + 固定模板 + 统一分析可读”推进，不把 `TODO_LIST.md` 的“主套件全覆盖”偷换成只做单一 benchmark。
 - 2026-03-06: 对 gated 数据任务，优先把阻塞点显式写回仓库，并继续推进其他可公开访问的主套件任务，而不是在未认证环境里反复手工重试。
+- 2026-03-06: M2 当前只收口“可验证的模块骨架与配置契约”，不提前宣称 Stage A/B/C 已完成；训练流水线仍留在 M3。
 
 ## Surprises & Discoveries
 
@@ -115,3 +119,4 @@
 - Narrative 侧除了 `rocstories`，`story_cloze` 也能走同一套 builder / adapter / translation 契约，适合继续作为 CDMI smoke 支点。
 - `gpqa` 的首要阻塞是 Hub 认证，不是数据预处理或 reward 逻辑；这类问题应该前置为环境规则。
 - `triviaqa` 的官方动态评测会反复提示模型输出 `<search>` / `<answer>` 标签；即便 reward 很低，只要统一翻译层能读到 `conversations.txt`，就仍然满足“可评测可汇总”的 M1 目标。
+- `torch.nn.TransformerEncoderLayer(norm_first=True)` 会在当前 PyTorch 版本下持续触发 nested tensor warning；把 skeleton writer 改为默认 post-norm 后，warning 已在测试与 smoke 中消失，减少了后续 agent 调试噪声。

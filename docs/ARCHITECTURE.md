@@ -2,7 +2,7 @@
 
 ## Scope
 
-本仓库当前只完成 `docs/TODO_LIST.md` 的 M0 bootstrap 基座，不启动大训练。实现目标是让后续 agent 能按统一入口、统一输出和统一目录契约推进 Stage A/B/C 与论文实验。
+本仓库当前已经完成 `docs/TODO_LIST.md` 的 M0 bootstrap 基座，并补上了 M2 的最小方法骨架；仍然不启动大训练。当前目标是让后续 agent 能按统一入口、统一输出和统一目录契约推进 Stage A/B/C 与论文实验，而不是停留在只会跑 baseline adapter。
 
 ## Top-Level Layout
 
@@ -25,7 +25,24 @@
 - `MemoryFuser.fuse(readouts) -> M_short`
 - `MemoryInjector.inject(M_short, next_inputs) -> injected_inputs`
 
-M0 只实现 deterministic stub backbone 与 toy memory pipeline，用于验证接口、梯度与结果治理；真实 Qwen 权重加载保留在 `BackboneWrapper` 扩展点中。
+当前方法层的已验证范围：
+
+- `MemoryWriter`
+  - `arch=mlp`：LayerNorm + MLP，直接写出 `[B, L, d]`
+  - `arch=transformer`：learned slot embeddings + state conditioning + Transformer encoder
+  - 支持 `freeze()` / `unfreeze()` / `save_to()` / `load_from()`
+- `MemoryReader`
+  - `H` 个 learned queries
+  - 基于 cross-attention 读取 `M_long`
+  - 支持 `context` conditioning、`memory_mask`、可选 query gating
+- `MemoryFuser`
+  - `arch=linear`：简单投影压缩
+  - `arch=resampler`：learned short queries 读取 readouts，形成 `M_short`
+- `MemoryInjector`
+  - 当前支持 `prefix` 注入
+  - `enabled` 开关已进入 config 契约；关闭时会同时关闭生成侧 memory token 注入
+
+这些实现当前仍运行在 deterministic stub backbone 与 toy pipeline 上，用于先验证接口、梯度、注入路径与结果治理；真实 Qwen 权重加载保留在 `BackboneWrapper` 扩展点中。
 
 ## Backbone Policy
 

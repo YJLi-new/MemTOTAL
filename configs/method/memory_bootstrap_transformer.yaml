@@ -1,0 +1,10 @@
+includes:
+  - memory_bootstrap.yaml
+
+method:
+  name: general-writer-adaptable-reader-transformer-bootstrap
+  writer:
+    arch: transformer
+    hidden_dim: 128
+    num_heads: 4
+    transformer_layers: 2

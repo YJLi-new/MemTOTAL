@@ -63,7 +63,10 @@ def main(argv: list[str] | None = None) -> int:
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
         profiler.add_tokens(runtime.backbone.count_tokens(forward.next_prompt))
-        generated_text = runtime.backbone.generate([forward.next_prompt], memory_tokens=forward.memory_short)[0]
+        generated_text = runtime.backbone.generate(
+            [forward.next_prompt],
+            memory_tokens=forward.generation_memory,
+        )[0]
         profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
         is_correct = predicted_label == example["label"]
         correct += int(is_correct)
