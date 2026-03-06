@@ -28,6 +28,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _select_support_examples(
+    dataset: list[dict[str, object]],
+    example: dict[str, object],
+    support_examples: int,
+) -> list[dict[str, object]]:
+    if support_examples <= 0:
+        return []
+    candidates = [row for row in dataset if row["id"] != example["id"]]
+    return candidates[: min(support_examples, len(candidates))]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     config = load_config(args.config)
@@ -89,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
         uses_candidate_selection = evaluator.evaluator_type in {"dataset_label_classification", "multiple_choice"}
+        baseline_support_examples = _select_support_examples(
+            dataset,
+            example,
+            int(baseline_budget_fields.get("support_examples", 0)) if use_baseline else 0,
+        )
         if use_baseline:
             baseline_output = None
             similarity = 0.0
@@ -111,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                     example,
                     candidate_labels=candidate_labels,
                     candidate_texts=candidate_texts,
+                    support_examples=baseline_support_examples,
                 )
                 predicted_label = baseline_output.predicted_label
                 predicted_text = baseline_output.predicted_text
@@ -120,7 +137,10 @@ def main(argv: list[str] | None = None) -> int:
                     example,
                 )
             else:
-                baseline_output = runtime.generate_text(example)
+                baseline_output = runtime.generate_text(
+                    example,
+                    support_examples=baseline_support_examples,
+                )
                 generated_text = baseline_output.predicted_text
                 predicted_text = generated_text
                 score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
@@ -249,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                 "baseline_family": baseline_cfg.get("family") if use_baseline else None,
                 "baseline_mode": baseline_cfg.get("mode") if use_baseline else None,
                 "baseline_prompt": prompt_text if use_baseline else None,
+                "baseline_support_ids": [row["id"] for row in baseline_support_examples] if use_baseline else [],
                 "candidate_scores": candidate_scores,
                 "gating_mode": None if use_baseline else runtime.reader.gating_mode,
                 "gates": None if use_baseline else [float(value) for value in forward.gating.squeeze(0).tolist()],

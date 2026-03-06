@@ -203,7 +203,11 @@
 - prompt baseline 当前会额外写：
   - `metrics.json.baseline_family`
   - `metrics.json.baseline_mode`
+  - `metrics.json.support_examples`
+  - `metrics.json.train_steps`
+  - `metrics.json.trainable_parameter_count`
   - `predictions.jsonl[].baseline_prompt`
+  - `predictions.jsonl[].baseline_support_ids`
   - `predictions.jsonl[].candidate_scores`
 - 当前已真实 smoke 验证 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
 - 同一套 qwen3 配置 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 也已真实跑通，汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
@@ -212,6 +216,7 @@
   - qwen3: `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
 - 当前最小 `MetaPrompting` smoke 汇总位于 `results/generated/m5-metaprompting-smoke/summary.csv`
 - 同一套 `MetaPrompting` real-source smoke 汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`
+- `prompting / meta_prompting` 当前已支持 `support_examples > 0` 的 in-context few-shot demos；当前 `2-shot story_cloze` real-source 汇总位于 `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
 - 当前 `Prompt Tuning / LoRA` 的最小 smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
 - 同一套 qwen3 adapter smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 - 同一套 `Prompt Tuning / LoRA` 现已推进到 `story_cloze` real-source smoke，汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`

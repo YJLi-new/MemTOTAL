@@ -53,22 +53,53 @@ class PromptBaselineRuntime:
             ),
         }
 
-    def build_prompt(self, example: dict[str, Any]) -> str:
+    def _format_support_examples(self, support_examples: list[dict[str, Any]] | None) -> str:
+        if not support_examples:
+            return ""
+        blocks = []
+        for index, support_example in enumerate(support_examples, start=1):
+            answer_text = str(
+                support_example.get("gold_answer")
+                or support_example.get("continuation")
+                or support_example.get("answer")
+                or support_example["label"]
+            )
+            blocks.append(
+                f"Demo {index} Input: {support_example['segment']} || "
+                f"Demo {index} Answer: {answer_text}"
+            )
+        return " || ".join(blocks)
+
+    def build_prompt(
+        self,
+        example: dict[str, Any],
+        *,
+        support_examples: list[dict[str, Any]] | None = None,
+    ) -> str:
         prompt = str(example["segment"])
+        support_prefix = self._format_support_examples(support_examples)
+        task_prompt = f"Task: {prompt}" if self.family == "meta_prompting" else prompt
+        if support_prefix:
+            task_prompt = f"{support_prefix} || Query: {task_prompt}"
         if self.family == "meta_prompting":
             return (
                 f"{self.meta_roles['planner']} || "
                 f"{self.meta_roles['solver']} || "
                 f"{self.meta_roles['critic']} || "
                 f"{self.meta_roles['finalizer']} || "
-                f"Task: {prompt}"
+                f"{task_prompt}"
             )
         if self.mode == "cot":
-            return f"{prompt} || {self.cot_suffix}"
-        return prompt
+            return f"{task_prompt} || {self.cot_suffix}"
+        return task_prompt
 
-    def generate_text(self, example: dict[str, Any]) -> PromptBaselineOutput:
-        prompt = self.build_prompt(example)
+    def generate_text(
+        self,
+        example: dict[str, Any],
+        *,
+        support_examples: list[dict[str, Any]] | None = None,
+    ) -> PromptBaselineOutput:
+        prompt = self.build_prompt(example, support_examples=support_examples)
         predicted_text = self.backbone.generate([prompt])[0]
         return PromptBaselineOutput(
             prompt=prompt,
@@ -84,8 +115,9 @@ class PromptBaselineRuntime:
         *,
         candidate_labels: list[str],
         candidate_texts: list[str],
+        support_examples: list[dict[str, Any]] | None = None,
     ) -> PromptBaselineOutput:
-        prompt = self.build_prompt(example)
+        prompt = self.build_prompt(example, support_examples=support_examples)
         prompt_state = self.backbone.summarize_texts([prompt])
         candidate_states = self.backbone.summarize_texts(candidate_texts)
         normalized_prompt = torch.nn.functional.normalize(prompt_state, dim=-1)

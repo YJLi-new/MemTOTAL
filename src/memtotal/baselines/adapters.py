@@ -97,6 +97,7 @@ class AdapterBaselineRuntime(nn.Module):
         *,
         candidate_labels: list[str],
         candidate_texts: list[str],
+        support_examples: list[dict[str, Any]] | None = None,
     ) -> AdapterBaselineOutput:
         prompt = self.build_prompt(example)
         scores = self.score_candidates(prompt, candidate_texts)

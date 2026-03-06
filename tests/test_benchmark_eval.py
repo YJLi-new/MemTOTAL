@@ -395,6 +395,95 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertIn("Planner:", predictions[0]["baseline_prompt"])
             self.assertIn("Critic:", predictions[0]["baseline_prompt"])
 
+    def test_prompt_baseline_support_examples_are_injected_into_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze_support.jsonl"
+            dataset_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "story-cloze-support-000",
+                                "story": "Mila practiced free throws all month.",
+                                "choices": [
+                                    {"label": "A", "text": "She scored confidently during the game."},
+                                    {"label": "B", "text": "She refused to touch a basketball again."},
+                                ],
+                                "label": "A",
+                                "answer": "She scored confidently during the game.",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "story-cloze-support-001",
+                                "story": "Owen packed snacks before the trip.",
+                                "choices": [
+                                    {"label": "A", "text": "The group had food during the drive."},
+                                    {"label": "B", "text": "Everyone went hungry by choice."},
+                                ],
+                                "label": "A",
+                                "answer": "The group had food during the drive.",
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_vanilla_story_cloze_support_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-vanilla-support",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "prompting",
+                    "mode": "vanilla",
+                    "support_examples": 1,
+                },
+                "runtime": {
+                    "eval_examples": 2,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "baseline_story_support.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "baseline_story_support_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "541",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["support_examples"], 1)
+            self.assertIn("Demo 1 Input:", predictions[0]["baseline_prompt"])
+            self.assertEqual(len(predictions[0]["baseline_support_ids"]), 1)
+
     def test_narrativeqa_eval_writes_f1_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

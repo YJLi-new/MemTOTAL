@@ -17,6 +17,7 @@
 baseline:
   family: prompting
   mode: vanilla | cot
+  support_examples: 0  # optional; >0 means in-context few-shot demos
   cot_suffix: Think step by step, then give the final answer.
 ```
 
@@ -27,7 +28,11 @@ baseline:
 - 但它会写入：
   - `metrics.json.baseline_family`
   - `metrics.json.baseline_mode`
+  - `metrics.json.support_examples`
+  - `metrics.json.train_steps`
+  - `metrics.json.trainable_parameter_count`
   - `predictions.jsonl[].baseline_prompt`
+  - `predictions.jsonl[].baseline_support_ids`
   - `predictions.jsonl[].candidate_scores`（仅多选/分类任务）
 
 ## Verified Smoke Configs
@@ -48,6 +53,10 @@ baseline:
 - `configs/exp/baseline_cot_gsm8k_qwen3_real_smoke.yaml`
 - `configs/exp/baseline_vanilla_story_cloze_qwen3_real_smoke.yaml`
 - `configs/exp/baseline_cot_story_cloze_qwen3_real_smoke.yaml`
+- `configs/exp/baseline_vanilla_story_cloze_qwen25_real_2shot.yaml`
+- `configs/exp/baseline_cot_story_cloze_qwen25_real_2shot.yaml`
+- `configs/exp/baseline_vanilla_story_cloze_qwen3_real_2shot.yaml`
+- `configs/exp/baseline_cot_story_cloze_qwen3_real_2shot.yaml`
 
 ## Verified Commands
 
@@ -72,6 +81,11 @@ python -m eval --config configs/exp/baseline_cot_gsm8k_qwen3_real_smoke.yaml --s
 python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen3_real_smoke.yaml --seed 841 --output_dir runs/verify/m5-prompt-baseline-real-smoke-qwen3/vanilla-story-cloze
 python -m eval --config configs/exp/baseline_cot_story_cloze_qwen3_real_smoke.yaml --seed 841 --output_dir runs/verify/m5-prompt-baseline-real-smoke-qwen3/cot-story-cloze
 python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_real_smoke.yaml --seed 841 --output_dir results/generated/m5-prompt-baseline-real-smoke-qwen3 --input_root runs/verify/m5-prompt-baseline-real-smoke-qwen3
+python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen25_real_2shot.yaml --seed 981 --output_dir runs/verify/m5-prompt-fewshot-real-smoke/qwen25-vanilla-2shot
+python -m eval --config configs/exp/baseline_cot_story_cloze_qwen25_real_2shot.yaml --seed 981 --output_dir runs/verify/m5-prompt-fewshot-real-smoke/qwen25-cot-2shot
+python -m eval --config configs/exp/baseline_vanilla_story_cloze_qwen3_real_2shot.yaml --seed 981 --output_dir runs/verify/m5-prompt-fewshot-real-smoke/qwen3-vanilla-2shot
+python -m eval --config configs/exp/baseline_cot_story_cloze_qwen3_real_2shot.yaml --seed 981 --output_dir runs/verify/m5-prompt-fewshot-real-smoke/qwen3-cot-2shot
+python -m analysis --config configs/exp/baseline_vanilla_story_cloze_qwen25_real_2shot.yaml --seed 981 --output_dir results/generated/m5-prompt-fewshot-real-smoke --input_root runs/verify/m5-prompt-fewshot-real-smoke
 ```
 
 ## Current Smoke Results
@@ -81,6 +95,7 @@ python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_real_smoke.
 - `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
 - `results/generated/m5-prompt-baseline-real-smoke/summary.csv`
 - `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
+- `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
 
 当前 qwen25 stub smoke：
 - `vanilla-gsm8k`: `accuracy=0.0`
@@ -105,5 +120,13 @@ python -m analysis --config configs/exp/baseline_vanilla_gsm8k_qwen3_real_smoke.
 - `cot-gsm8k`: `accuracy=0.0`
 - `vanilla-story-cloze`: `accuracy=1.0`
 - `cot-story-cloze`: `accuracy=0.75`
+
+当前 real-source `2-shot story_cloze` smoke：
+- qwen25:
+  - `vanilla`: `accuracy=0.75`
+  - `cot`: `accuracy=0.75`
+- qwen3:
+  - `vanilla`: `accuracy=0.75`
+  - `cot`: `accuracy=0.75`
 
 这些数字只说明 baseline harness 已接入统一评测链，不是论文结果。
