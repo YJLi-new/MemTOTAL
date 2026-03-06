@@ -202,7 +202,7 @@
   - 会在单个 suite 内循环 `shots / steps`
   - 支持通过 `grid.imports` 把外部 baseline run 导入同一条 `adapt_curve.csv`
   - 支持通过 `grid.config_overrides` 在不复制模板配置的前提下覆写 `task/runtime` 字段
-  - 支持通过 `grid.reuse_existing_runs` 复用已存在的 `train/eval` 产物
+  - 支持通过 `grid.reuse_existing_runs` 复用已存在的 `train/eval` 产物，并通过 `config.snapshot + seed` 校验避免误复用
   - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。

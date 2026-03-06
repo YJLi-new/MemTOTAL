@@ -175,6 +175,24 @@ def _has_completed_artifacts(run_dir: Path, required_files: list[str]) -> bool:
     return all((run_dir / name).exists() for name in required_files)
 
 
+def _run_matches_requested_config(run_dir: Path, config_path: Path, seed: int) -> bool:
+    snapshot_path = run_dir / "config.snapshot.yaml"
+    run_info_path = run_dir / "run_info.json"
+    if not snapshot_path.exists() or not run_info_path.exists():
+        return False
+    try:
+        snapshot = yaml.safe_load(snapshot_path.read_text()) or {}
+        requested = load_config(config_path)
+        run_info = json.loads(run_info_path.read_text())
+    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+        return False
+    return snapshot == requested and int(run_info.get("seed", -1)) == seed
+
+
+def _can_reuse_run(run_dir: Path, required_files: list[str], config_path: Path, seed: int) -> bool:
+    return _has_completed_artifacts(run_dir, required_files) and _run_matches_requested_config(run_dir, config_path, seed)
+
+
 def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bool) -> None:
     set_seed(seed)
     config_path = Path(config["_meta"]["config_path"]).resolve()
@@ -205,7 +223,12 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
         if cell.family == "adapter":
             train_dir = run_dir / "train"
             eval_dir = run_dir / "eval"
-            train_reused = reuse_existing_runs and _has_completed_artifacts(train_dir, ["metrics.json", "checkpoint.pt"])
+            train_reused = reuse_existing_runs and _can_reuse_run(
+                train_dir,
+                ["metrics.json", "checkpoint.pt"],
+                generated_config_path,
+                seed,
+            )
             if train_reused:
                 reused_train_run_count += 1
             else:
@@ -221,7 +244,12 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
                     + (["--dry-run"] if dry_run else [])
                 )
                 train_run_count += 1
-            eval_reused = reuse_existing_runs and _has_completed_artifacts(eval_dir, ["metrics.json", "predictions.jsonl"])
+            eval_reused = reuse_existing_runs and _can_reuse_run(
+                eval_dir,
+                ["metrics.json", "predictions.jsonl"],
+                generated_config_path,
+                seed,
+            )
             if eval_reused:
                 reused_eval_run_count += 1
             else:
@@ -254,7 +282,12 @@ def run_grid(config: dict[str, Any], *, seed: int, output_dir: Path, dry_run: bo
             )
         else:
             eval_dir = run_dir / "eval"
-            eval_reused = reuse_existing_runs and _has_completed_artifacts(eval_dir, ["metrics.json", "predictions.jsonl"])
+            eval_reused = reuse_existing_runs and _can_reuse_run(
+                eval_dir,
+                ["metrics.json", "predictions.jsonl"],
+                generated_config_path,
+                seed,
+            )
             if eval_reused:
                 reused_eval_run_count += 1
             else:

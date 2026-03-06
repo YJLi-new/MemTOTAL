@@ -156,7 +156,7 @@
 - 2026-03-07 02:36 UTC: 已修正 benchmark materialize 的输出文件命名逻辑：`max_examples` 不再覆盖同一个 `eval-real-smoke4.jsonl`，而是会解析成 `eval-real-smoke<max_examples>.jsonl`。`story_cloze` 已真实产出 `data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl`，manifest 当前记录 `max_examples=8`。
 - 2026-03-07 02:37 UTC: baseline grid 现已支持 `grid.config_overrides`，允许在不复制基线模板配置的情况下覆写 `task/runtime` 字段。`./scripts/run_story_cloze_baseline_grid_protocol_smoke.sh 997 results/generated/m5-story-cloze-baseline-grid-protocol-smoke` 已在 `story_cloze` real-source `smoke8` 子集上真实跑通 `shots={0,1,2,4}`、`steps={0,1,3,5}` 的 protocol-smoke 网格，并保留 `MemGen` 的 `0-shot / 0-step` 外部导入点。
 - 2026-03-07 02:37 UTC: 当前 protocol-smoke 结果为 `cell_count=76`、`train_run_count=52`、`eval_run_count=76`、`imported_eval_count=1`。代表性信号包括：qwen25 `vanilla 0-shot -> 1-shot = 0.625 -> 0.75`，qwen25 `meta_prompting 0-shot -> 4-shot = 0.5 -> 0.625`，qwen3 `prompt_tuning/lora 0-shot -> 4-shot 5-step = 0.5 -> 0.75`。这仍是 contract smoke，不是论文主表结果。
-- 2026-03-07 02:50 UTC: baseline grid 现已支持 `grid.reuse_existing_runs`，并已在 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke` 上真实验证缓存复用。相同输出目录下重跑 protocol-smoke suite 时，不再重复执行已有 cell；当前记录为 `train_run_count=0`、`eval_run_count=0`、`reused_train_run_count=52`、`reused_eval_run_count=76`。这为后续追加 `MemGen / Qwen3-8B` 导入点时避免整套重跑提供了基础。
+- 2026-03-07 02:50 UTC: baseline grid 现已支持 `grid.reuse_existing_runs`，并已在 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke` 上真实验证缓存复用。相同输出目录下重跑 protocol-smoke suite 时，不再重复执行已有 cell；当前记录为 `train_run_count=0`、`eval_run_count=0`、`reused_train_run_count=52`、`reused_eval_run_count=76`。当前复用判定已收紧到 `required artifacts + config.snapshot + seed`，为后续追加 `MemGen / Qwen3-8B` 导入点时避免整套重跑提供了基础。
 
 ## Decision Log
 
