@@ -28,7 +28,7 @@
 | `kodcode` | `KodCode/KodCode-Light-RL-10K` / `train` | public | auto | `data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl` | HF metadata license field is blank; verify upstream card |
 | `rocstories` | `hf://datasets/wza/roc_stories/ROCStories__spring2016.csv` | public | auto | `data/benchmarks/materialized/rocstories/eval-real-smoke4.jsonl` | CSV-backed dataset; verify upstream card manually |
 | `fever` | `Dzeniks/fever_3way` / `validation` | public | auto | `data/benchmarks/materialized/fever/eval-real-smoke4.jsonl` | MIT (from dataset card README metadata) |
-| `alfworld` | environment assets + game files | manual | pending | pending | requires environment/game files, not just flat JSONL |
+| `alfworld` | official ALFWorld TextWorld release assets / `valid_seen` | public | auto | `data/benchmarks/materialized/alfworld/eval-real-smoke4.jsonl` | MIT (from the official ALFWorld GitHub repository) |
 
 ## Notes
 
@@ -37,4 +37,5 @@
 - `rocstories` 由于当前 `datasets` 版本不再支持旧脚本式加载，仓库现在跟随 MemGen 直接走 `hf://` CSV 路径。
 - `math` 当前 real smoke 是跨四个 config 的聚合子集，每个 config 取 1 个样本，用于验证多 config materialize 与统一 exact-match 评测链。
 - `fever` 当前使用公开的 3-way 变体，并在 materialize 时把标签映射为 `SUPPORTS / REFUTES / NOT_ENOUGH_INFO`。
-- `alfworld` 仍然不是平面数据集接入问题，而是环境资产与执行 harness 问题；它仍保持 `manual_pending`。
+- `alfworld` 当前走官方 TextWorld 资产路径，外部资产会放在 `data/benchmarks/external/alfworld/`，并在 materialize 时真实执行一次 hand-coded expert transition，再导出 `eval-real-smoke4.jsonl`。
+- `alfworld` 这轮打通的是 text-only TextWorld smoke，不是完整 THOR/视觉栈；后者若要跑，需要额外的 `ai2thor/cv2` 依赖和更重的执行环境。

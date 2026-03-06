@@ -118,6 +118,8 @@
 - 2026-03-06 13:37 UTC: `scripts/run_real_benchmark_smoke_suite.sh` 已真实跑通 6 个 real-source smoke eval，汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T133708Z/summary.csv`。当前分数仍只是 stub-backbone contract 结果，不代表正式 benchmark 表现。
 - 2026-03-06 13:52 UTC: 已将 `math` 与 `fever` 升级为真实来源 smoke，而不再停留在本地 contract 样例。`math` 当前通过 `EleutherAI/hendrycks_math` 的四个 config 聚合 materialize；`fever` 当前使用公开的 `Dzeniks/fever_3way`，并在 canonicalization 时映射成 `SUPPORTS / REFUTES / NOT_ENOUGH_INFO`。
 - 2026-03-06 13:52 UTC: `./scripts/setup_benchmark_data.sh` 与 `./scripts/run_real_benchmark_smoke_suite.sh` 已重新真实跑通，最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T135108Z/summary.csv`。当前 8 个任务已进入统一 real-source eval：`gsm8k / math / gpqa / triviaqa / kodcode / story_cloze / rocstories / fever`。
+- 2026-03-06 14:18 UTC: 已将 `alfworld` 从 `manual_pending` 升级为真实 TextWorld smoke。`src/memtotal/tasks/alfworld_env.py` 现在会准备官方 TextWorld 资产、挑选 `valid_seen` 子集，并真实执行一次 hand-coded expert transition，再导出 `data/benchmarks/materialized/alfworld/eval-real-smoke4.jsonl`。
+- 2026-03-06 14:18 UTC: `python -m eval --config configs/exp/benchmark_alfworld_qwen25_real_smoke.yaml --seed 707 --output_dir runs/verify/benchmark_alfworld_qwen25_real_smoke` 已真实成功；`./scripts/run_real_benchmark_smoke_suite.sh` 也已重新跑通，最新汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T141831Z/summary.csv`。当前 9 个任务已进入统一 real-source eval，其中 `alfworld` 的 `smoke_subset=textworld_real_smoke4`。
 
 ## Decision Log
 

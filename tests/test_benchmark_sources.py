@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from memtotal.tasks.sources import (
+    BenchmarkSourceSpec,
     _canonicalize_fever,
     _canonicalize_gpqa,
     _canonicalize_gsm8k,
@@ -94,21 +96,41 @@ class BenchmarkSourcesTest(unittest.TestCase):
     def test_manual_source_materialize_writes_pending_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
-            manifest = materialize_benchmark_source(
-                benchmark_id="alfworld",
-                output_root=tmp / "materialized",
-                manifest_root=tmp / "manifests",
-                max_examples=4,
-                seed=23,
+            dummy_spec = BenchmarkSourceSpec(
+                benchmark_id="dummy_manual",
+                display_name="Dummy Manual",
+                access="manual",
+                source_kind="manual",
+                dataset_name=None,
+                dataset_config=None,
+                split=None,
+                data_files=None,
+                output_filename="dummy.jsonl",
+                source_url=None,
+                homepage=None,
+                license_note="manual",
             )
+            with patch.dict("memtotal.tasks.sources.SOURCE_SPECS", {"dummy_manual": dummy_spec}, clear=False):
+                manifest = materialize_benchmark_source(
+                    benchmark_id="dummy_manual",
+                    output_root=tmp / "materialized",
+                    manifest_root=tmp / "manifests",
+                    max_examples=4,
+                    seed=23,
+                )
             self.assertEqual(manifest["status"], "manual_pending")
-            saved = json.loads((tmp / "manifests" / "alfworld.json").read_text())
+            saved = json.loads((tmp / "manifests" / "dummy_manual.json").read_text())
             self.assertEqual(saved["status"], "manual_pending")
 
     def test_source_registry_marks_gpqa_gated(self) -> None:
         source = get_benchmark_source("gpqa")
         self.assertEqual(source.access, "gated")
         self.assertEqual(source.source_kind, "huggingface")
+
+    def test_source_registry_marks_alfworld_textworld(self) -> None:
+        source = get_benchmark_source("alfworld")
+        self.assertEqual(source.access, "public")
+        self.assertEqual(source.source_kind, "alfworld_textworld")
 
 
 if __name__ == "__main__":

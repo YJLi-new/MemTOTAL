@@ -176,23 +176,41 @@
       "status": "materialized"
     },
     {
-      "access": "manual",
+      "access": "public",
+      "asset_root": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld",
       "benchmark_id": "alfworld",
       "data_files": null,
       "dataset_config": null,
       "dataset_configs": null,
-      "dataset_name": null,
+      "dataset_name": "alfworld-textworld-release",
       "display_name": "ALFWorld",
       "homepage": "https://alfworld.github.io/",
-      "license_note": "Pending environment/game-files registration.",
-      "materialized_path": null,
-      "notes": "ALFWorld requires environment assets and execution harness, not just a flat JSONL download.",
-      "num_rows": 0,
+      "license_note": "MIT (from the official ALFWorld GitHub repository).",
+      "logic_root": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/logic",
+      "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/alfworld/eval-real-smoke4.jsonl",
+      "max_examples": 4,
+      "notes": "Uses the official TextWorld release assets. The smoke subset executes the first hand-coded expert action, then predicts the next expert action.",
+      "num_rows": 4,
       "output_filename": "eval-real-smoke4.jsonl",
-      "source_kind": "manual",
-      "source_url": null,
-      "split": null,
-      "status": "manual_pending"
+      "seed": 701,
+      "selected_games": [
+        "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-AlarmClock-None-DeskLamp-323/trial_T20190909_044715_250790/game.tw-pddl",
+        "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Book-None-SideTable-329/trial_T20190908_050633_745514/game.tw-pddl",
+        "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-ButterKnife-None-CounterTop-8/trial_T20190909_105559_983897/game.tw-pddl",
+        "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Apple-None-CounterTop-14/trial_T20190909_044933_815840/game.tw-pddl"
+      ],
+      "selected_task_types": [
+        "look_at_obj_in_light",
+        "pick_and_place_simple",
+        "pick_clean_then_place_in_recep",
+        "pick_cool_then_place_in_recep"
+      ],
+      "source_kind": "alfworld_textworld",
+      "source_url": "https://github.com/alfworld/alfworld/releases",
+      "split": "valid_seen",
+      "split_root": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1",
+      "status": "materialized",
+      "transition_protocol": "Execute the first official hand-coded expert action, then predict the next expert action."
     }
   ]
 }

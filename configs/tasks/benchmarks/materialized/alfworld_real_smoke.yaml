@@ -1,0 +1,11 @@
+task:
+  name: alfworld_real_smoke
+  benchmark_id: alfworld
+  domain: agent
+  split: valid_seen
+  smoke_subset: textworld_real_smoke4
+  dataset_path: data/benchmarks/materialized/alfworld/eval-real-smoke4.jsonl
+  metric_name: exact_match
+  evaluator:
+    type: exact_match
+

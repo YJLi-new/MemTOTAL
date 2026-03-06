@@ -9,6 +9,8 @@ from typing import Any
 
 from datasets import load_dataset
 
+from memtotal.tasks.alfworld_env import materialize_alfworld_textworld_smoke
+
 
 @dataclass(frozen=True)
 class BenchmarkSourceSpec:
@@ -158,18 +160,18 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
     "alfworld": BenchmarkSourceSpec(
         benchmark_id="alfworld",
         display_name="ALFWorld",
-        access="manual",
-        source_kind="manual",
-        dataset_name=None,
+        access="public",
+        source_kind="alfworld_textworld",
+        dataset_name="alfworld-textworld-release",
         dataset_config=None,
         dataset_configs=None,
-        split=None,
+        split="valid_seen",
         data_files=None,
         output_filename="eval-real-smoke4.jsonl",
-        source_url=None,
+        source_url="https://github.com/alfworld/alfworld/releases",
         homepage="https://alfworld.github.io/",
-        license_note="Pending environment/game-files registration.",
-        notes="ALFWorld requires environment assets and execution harness, not just a flat JSONL download.",
+        license_note="MIT (from the official ALFWorld GitHub repository).",
+        notes="Uses the official TextWorld release assets. The smoke subset executes the first hand-coded expert action, then predicts the next expert action.",
     ),
 }
 
@@ -411,6 +413,28 @@ def materialize_benchmark_source(
 
     if spec.source_kind == "multi_huggingface_configs":
         rows = _load_multi_config_rows(spec, max_examples)
+    elif spec.source_kind == "alfworld_textworld":
+        asset_root = Path(output_root).resolve().parent / "external" / "alfworld"
+        canonical_rows, extra_manifest = materialize_alfworld_textworld_smoke(
+            asset_root=asset_root,
+            max_examples=max_examples,
+            split=str(spec.split),
+        )
+        output_path = output_dir / spec.output_filename
+        output_path.write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in canonical_rows) + ("\n" if canonical_rows else "")
+        )
+        manifest = {
+            **asdict(spec),
+            "status": "materialized",
+            "materialized_path": str(output_path),
+            "num_rows": len(canonical_rows),
+            "max_examples": max_examples,
+            "seed": seed,
+            **extra_manifest,
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        return manifest
     else:
         rows = _load_rows(spec)
     if max_examples > 0 and spec.source_kind != "multi_huggingface_configs":

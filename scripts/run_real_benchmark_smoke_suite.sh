@@ -20,6 +20,7 @@ CONFIGS=(
   "benchmark_kodcode_qwen25_real_smoke.yaml"
   "benchmark_rocstories_qwen25_real_smoke.yaml"
   "benchmark_fever_qwen25_real_smoke.yaml"
+  "benchmark_alfworld_qwen25_real_smoke.yaml"
 )
 
 for config_name in "${CONFIGS[@]}"; do
