@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +73,91 @@ class TaskRegistryTest(unittest.TestCase):
             multiple_choice_dataset[0],
         )
         self.assertTrue(multiple_choice_score["correct"])
+
+    def test_load_task_dataset_builds_segmented_narrativeqa_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "narrativeqa.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "narrativeqa-001",
+                        "story": "Alice travels to Paris.",
+                        "story_segments": [
+                            "Alice leaves London.",
+                            "She arrives in Paris and investigates a mystery.",
+                        ],
+                        "question": "Where does Alice investigate the mystery?",
+                        "answer": "Paris",
+                        "aliases": ["Paris"],
+                        "summary_title": "Alice Story",
+                        "document_kind": "movie",
+                        "story_chars": 1200,
+                        "story_word_count": 250,
+                        "story_excerpt_chars": 78,
+                        "story_segment_words": 160,
+                        "story_segments_materialized": 2,
+                        "story_total_segments": 6,
+                        "story_selection_strategy": "evenly_spaced_chunks",
+                        "story_truncated_for_smoke": True,
+                        "narrativeqa_view": "full_text_segmented",
+                    }
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "benchmark_narrativeqa_test",
+                    "stage": "M4",
+                    "method_variant": "ours-benchmark-real-smoke",
+                },
+                "task": {
+                    "name": "narrativeqa_real_smoke",
+                    "benchmark_id": "narrativeqa",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "hf_real_smoke4_full_text_segmented",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "f1",
+                    "evaluator": {"type": "qa_f1"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "method": {
+                    "embed_dim": 64,
+                    "segmenter": {"mode": "delimiter", "delimiter": "||"},
+                    "writer": {"memory_slots": 4, "arch": "mlp"},
+                    "reader": {
+                        "num_queries": 4,
+                        "use_query_gating": False,
+                        "gating_mode": "off",
+                        "num_heads": 4,
+                        "condition_on_context": True,
+                        "conditioning": {"domain_key": "domain", "include_task_name": True},
+                    },
+                    "fuser": {"short_slots": 2, "arch": "linear"},
+                    "injector": {"mode": "prefix", "enabled": True, "position": "segment"},
+                },
+                "runtime": {
+                    "train_steps": 2,
+                    "eval_examples": 1,
+                    "learning_rate": 0.01,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "narrativeqa.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            dataset = load_task_dataset(load_config(config_path))
+            self.assertEqual(len(dataset), 1)
+            self.assertEqual(dataset[0]["benchmark_id"], "narrativeqa")
+            self.assertIn("Story segment 1/2", dataset[0]["segment"])
+            self.assertIn("Story segment 2/2", dataset[0]["segment"])
+            self.assertIn("Question: Where does Alice investigate the mystery?", dataset[0]["segment"])
+            self.assertEqual(dataset[0]["narrativeqa_view"], "full_text_segmented")
 
 
 if __name__ == "__main__":

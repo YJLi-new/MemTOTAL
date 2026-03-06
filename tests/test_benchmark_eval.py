@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -143,24 +144,26 @@ class BenchmarkEvalTest(unittest.TestCase):
             config_path = tmp / "memoryagentbench.yaml"
             config_path.write_text(yaml.safe_dump(config, sort_keys=False))
             output_dir = tmp / "memoryagentbench_eval"
-            self.assertEqual(
-                eval_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "--seed",
-                        "509",
-                        "--output_dir",
-                        str(output_dir),
-                    ]
-                ),
-                0,
-            )
+            with patch("memtotal.models.backbone.BackboneWrapper.generate", return_value=["France"]):
+                self.assertEqual(
+                    eval_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "--seed",
+                            "509",
+                            "--output_dir",
+                            str(output_dir),
+                        ]
+                    ),
+                    0,
+                )
             metrics = json.loads((output_dir / "metrics.json").read_text())
             predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
             self.assertEqual(metrics["benchmark_id"], "memoryagentbench")
             self.assertIn("capability_scores", metrics)
             self.assertIn("AR", metrics["capability_scores"])
+            self.assertEqual(metrics["capability_scores"]["AR"], 1.0)
             self.assertEqual(predictions[0]["capability"], "AR")
             self.assertIn("extra_metrics", predictions[0])
 
@@ -173,6 +176,10 @@ class BenchmarkEvalTest(unittest.TestCase):
                     {
                         "id": "narrativeqa-000",
                         "story": "Alice travels to Paris and solves a mystery.",
+                        "story_segments": [
+                            "Alice leaves London.",
+                            "She travels to Paris and solves a mystery.",
+                        ],
                         "question": "Where does Alice travel?",
                         "answer": "Paris",
                         "aliases": ["Paris", "She travels to Paris"],
@@ -180,7 +187,13 @@ class BenchmarkEvalTest(unittest.TestCase):
                         "document_kind": "movie",
                         "story_chars": 44,
                         "story_word_count": 8,
-                        "narrativeqa_view": "summary_only",
+                        "story_excerpt_chars": 44,
+                        "story_segment_words": 160,
+                        "story_segments_materialized": 2,
+                        "story_total_segments": 2,
+                        "story_selection_strategy": "evenly_spaced_chunks",
+                        "story_truncated_for_smoke": False,
+                        "narrativeqa_view": "full_text_segmented",
                     }
                 )
                 + "\n"
@@ -196,7 +209,7 @@ class BenchmarkEvalTest(unittest.TestCase):
                     "benchmark_id": "narrativeqa",
                     "domain": "narrative",
                     "split": "eval",
-                    "smoke_subset": "hf_real_smoke4_summary_only",
+                    "smoke_subset": "hf_real_smoke4_full_text_segmented",
                     "dataset_path": str(dataset_path),
                     "metric_name": "f1",
                     "evaluator": {"type": "qa_f1"},
@@ -232,23 +245,25 @@ class BenchmarkEvalTest(unittest.TestCase):
             config_path = tmp / "narrativeqa.yaml"
             config_path.write_text(yaml.safe_dump(config, sort_keys=False))
             output_dir = tmp / "narrativeqa_eval"
-            self.assertEqual(
-                eval_main(
-                    [
-                        "--config",
-                        str(config_path),
-                        "--seed",
-                        "511",
-                        "--output_dir",
-                        str(output_dir),
-                    ]
-                ),
-                0,
-            )
+            with patch("memtotal.models.backbone.BackboneWrapper.generate", return_value=["Paris"]):
+                self.assertEqual(
+                    eval_main(
+                        [
+                            "--config",
+                            str(config_path),
+                            "--seed",
+                            "511",
+                            "--output_dir",
+                            str(output_dir),
+                        ]
+                    ),
+                    0,
+                )
             metrics = json.loads((output_dir / "metrics.json").read_text())
             predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
             self.assertEqual(metrics["benchmark_id"], "narrativeqa")
             self.assertEqual(metrics["metric_name"], "f1")
+            self.assertEqual(metrics["f1"], 1.0)
             self.assertIn("extra_metrics", predictions[0])
             self.assertIn("f1", predictions[0]["extra_metrics"])
 

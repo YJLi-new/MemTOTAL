@@ -83,12 +83,18 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(canonical["answer"], "Ending 2")
 
     def test_narrativeqa_canonicalizer_keeps_multiple_answers(self) -> None:
+        long_story = (
+            "*** START OF THIS PROJECT GUTENBERG EBOOK SAMPLE *** "
+            + " ".join(f"scene{i}" for i in range(720))
+            + " *** END OF THIS PROJECT GUTENBERG EBOOK SAMPLE ***"
+        )
         row = {
             "document": {
                 "id": "story-1",
                 "kind": "movie",
                 "word_count": 1234,
                 "summary": {"text": "Alice travels to Paris and solves a mystery.", "title": "Alice Story"},
+                "text": long_story,
             },
             "question": {"text": "Where does Alice travel?"},
             "answers": [{"text": "Paris"}, {"text": "She travels to Paris"}],
@@ -97,7 +103,13 @@ class BenchmarkSourcesTest(unittest.TestCase):
         self.assertEqual(canonical["id"], "story-1-q0")
         self.assertEqual(canonical["answer"], "Paris")
         self.assertEqual(len(canonical["aliases"]), 2)
-        self.assertEqual(canonical["narrativeqa_view"], "summary_only")
+        self.assertEqual(canonical["narrativeqa_view"], "full_text_segmented")
+        self.assertEqual(canonical["story_segments_materialized"], 4)
+        self.assertGreater(canonical["story_total_segments"], canonical["story_segments_materialized"])
+        self.assertTrue(canonical["story_truncated_for_smoke"])
+        self.assertEqual(len(canonical["story_segments"]), 4)
+        self.assertNotIn("PROJECT GUTENBERG", canonical["story_segments"][0].upper())
+        self.assertNotIn("PRODUCED BY", canonical["story_segments"][0].upper())
 
     def test_fever_canonicalizer_maps_three_way_labels(self) -> None:
         row = {

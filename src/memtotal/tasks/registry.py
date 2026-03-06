@@ -84,12 +84,20 @@ TASK_SPECS: dict[str, TaskSpec] = {
         domain="narrative",
         evaluator_type="qa_f1",
         metric_name="f1",
-        prompt_template="Narrative summary: {story} || Question: {question} || Answer briefly.",
+        prompt_template="{story_segments_block} || Question: {question} || Answer briefly.",
         passthrough_fields=(
+            "story",
+            "story_segments",
             "summary_title",
             "document_kind",
             "story_chars",
             "story_word_count",
+            "story_excerpt_chars",
+            "story_segment_words",
+            "story_segments_materialized",
+            "story_total_segments",
+            "story_selection_strategy",
+            "story_truncated_for_smoke",
             "narrativeqa_view",
         ),
     ),
@@ -205,6 +213,19 @@ def _build_canonical_benchmark_example(
 ) -> dict[str, Any]:
     choices = _normalize_choices(raw_row.get(spec.choices_field), spec) if spec.choices_field else []
     render_context = dict(raw_row)
+    if spec.benchmark_id == "narrativeqa":
+        title = str(raw_row.get("summary_title", "")).strip()
+        story_segments = [str(segment).strip() for segment in raw_row.get("story_segments", []) if str(segment).strip()]
+        if not story_segments:
+            story_text = str(raw_row.get("story", "")).strip()
+            if story_text:
+                story_segments = [story_text]
+        story_blocks: list[str] = []
+        if title:
+            story_blocks.append(f"Title: {title}")
+        for segment_index, segment_text in enumerate(story_segments):
+            story_blocks.append(f"Story segment {segment_index + 1}/{len(story_segments)}: {segment_text}")
+        render_context["story_segments_block"] = " || ".join(story_blocks)
     render_context["choices_block"] = _format_choices_block(choices)
     segment = spec.prompt_template.format(**render_context)
     answer_text = str(raw_row.get(spec.answer_field, ""))

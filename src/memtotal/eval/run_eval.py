@@ -64,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         profiler.add_example()
         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
-        if evaluator.evaluator_type in {"dataset_label_classification", "multiple_choice"}:
+        uses_candidate_selection = evaluator.evaluator_type in {"dataset_label_classification", "multiple_choice"}
+        if uses_candidate_selection:
             if evaluator.evaluator_type == "multiple_choice":
                 choices = example.get("choices", [])
                 if not choices:
@@ -96,14 +97,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             predicted_label = ""
             predicted_text = ""
-            score_payload = evaluator.evaluate_prediction({"text": predicted_text}, example)
+            score_payload = {}
         profiler.add_tokens(runtime.backbone.count_tokens(forward.next_prompt))
         generated_text = runtime.backbone.generate(
             [forward.next_prompt],
             memory_tokens=forward.generation_memory,
         )[0]
         profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
-        if evaluator.evaluator_type == "exact_match":
+        if not uses_candidate_selection:
             score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
             predicted_text = generated_text
         is_correct = bool(score_payload["correct"])

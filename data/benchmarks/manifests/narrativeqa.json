@@ -10,7 +10,7 @@
   "license_note": "Apache-2.0 (from the official Hugging Face dataset card metadata).",
   "materialized_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/narrativeqa/eval-real-smoke4.jsonl",
   "max_examples": 4,
-  "notes": "Current smoke materializes the official summary-only view from the validation split. This keeps the real-source narrative path lightweight while staying aligned with the dataset's documented summary-vs-story task variants.",
+  "notes": "Current smoke materializes the official full story text from the validation split, then converts it into a small segment-aware excerpt with evenly spaced chunks. This keeps the local smoke runnable while making the NarrativeQA path closer to the paper-critical M_long -> M_short setting than the older summary-only scaffold.",
   "num_rows": 4,
   "output_filename": "eval-real-smoke4.jsonl",
   "seed": 701,

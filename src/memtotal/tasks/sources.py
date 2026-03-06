@@ -12,6 +12,9 @@ from datasets import load_dataset
 from memtotal.tasks.alfworld_env import materialize_alfworld_textworld_smoke
 from memtotal.tasks.memoryagentbench import materialize_memoryagentbench_smoke
 
+_NARRATIVEQA_SEGMENT_WORDS = 160
+_NARRATIVEQA_MAX_SEGMENTS = 4
+
 
 @dataclass(frozen=True)
 class BenchmarkSourceSpec:
@@ -125,9 +128,10 @@ SOURCE_SPECS: dict[str, BenchmarkSourceSpec] = {
         homepage="https://github.com/deepmind/narrativeqa",
         license_note="Apache-2.0 (from the official Hugging Face dataset card metadata).",
         notes=(
-            "Current smoke materializes the official summary-only view from the validation split. "
-            "This keeps the real-source narrative path lightweight while staying aligned with the "
-            "dataset's documented summary-vs-story task variants."
+            "Current smoke materializes the official full story text from the validation split, "
+            "then converts it into a small segment-aware excerpt with evenly spaced chunks. This "
+            "keeps the local smoke runnable while making the NarrativeQA path closer to the "
+            "paper-critical M_long -> M_short setting than the older summary-only scaffold."
         ),
     ),
     "kodcode": BenchmarkSourceSpec(
@@ -277,6 +281,93 @@ def _load_multi_config_rows(spec: BenchmarkSourceSpec, max_examples: int) -> lis
     return rows
 
 
+def _normalize_story_text(text: str) -> str:
+    cleaned = text.replace("\ufeff", " ").replace("ï»¿", " ")
+    start_match = re.search(r"\*\*\*\s*START OF (?:THIS )?PROJECT GUTENBERG EBOOK .*?\*\*\*", cleaned, flags=re.IGNORECASE)
+    if start_match:
+        cleaned = cleaned[start_match.end() :]
+    end_match = re.search(r"\*\*\*\s*END OF (?:THIS )?PROJECT GUTENBERG EBOOK .*?\*\*\*", cleaned, flags=re.IGNORECASE)
+    if end_match:
+        cleaned = cleaned[: end_match.start()]
+    normalized = re.sub(r"\s+", " ", cleaned.replace("\x00", " ")).strip()
+    return normalized
+
+
+def _chunk_story_text(text: str, *, max_words: int) -> list[str]:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = [
+        _normalize_story_text(paragraph)
+        for paragraph in re.split(r"\n\s*\n+", normalized)
+        if _normalize_story_text(paragraph)
+    ]
+    if not paragraphs:
+        paragraphs = [_normalize_story_text(normalized)]
+    segments: list[str] = []
+    current: list[str] = []
+    current_words = 0
+
+    def flush_current() -> None:
+        nonlocal current, current_words
+        if current:
+            segments.append(" ".join(current).strip())
+            current = []
+            current_words = 0
+
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if not words:
+            continue
+        if len(words) > max_words:
+            flush_current()
+            for start in range(0, len(words), max_words):
+                chunk = " ".join(words[start : start + max_words]).strip()
+                if chunk:
+                    segments.append(chunk)
+            continue
+        if current_words and current_words + len(words) > max_words:
+            flush_current()
+        current.append(" ".join(words))
+        current_words += len(words)
+    flush_current()
+    return segments or [_normalize_story_text(text)]
+
+
+def _select_story_segments(segments: list[str], *, max_segments: int) -> list[str]:
+    if len(segments) <= max_segments:
+        return segments
+    if max_segments <= 1:
+        return [segments[0]]
+    selected_indexes = sorted({(slot * (len(segments) - 1)) // (max_segments - 1) for slot in range(max_segments)})
+    next_index = 0
+    while len(selected_indexes) < max_segments and next_index < len(segments):
+        if next_index not in selected_indexes:
+            selected_indexes.append(next_index)
+        next_index += 1
+    selected_indexes = sorted(selected_indexes[:max_segments])
+    return [segments[index] for index in selected_indexes]
+
+
+def _trim_story_front_matter(segments: list[str]) -> list[str]:
+    trimmed = list(segments)
+    front_matter_markers = (
+        "project gutenberg",
+        "produced by",
+        "release date",
+        "everyman's library",
+        "introduction",
+        "table of contents",
+        "contents",
+        "illustrations",
+        "copyright",
+    )
+    while len(trimmed) > 1:
+        head = trimmed[0].lower()
+        if not any(marker in head for marker in front_matter_markers):
+            break
+        trimmed.pop(0)
+    return trimmed or segments
+
+
 def _canonicalize_gsm8k(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
     answer = str(row["answer"]).split("\n####")[-1].strip()
     return {
@@ -393,20 +484,32 @@ def _canonicalize_narrativeqa(row: dict[str, Any], index: int, seed: int) -> dic
     ]
     if not answers:
         raise ValueError("NarrativeQA row is missing answer texts.")
-    story = str(summary.get("text", "")).strip()
-    if not story:
-        raise ValueError("NarrativeQA row is missing summary text for summary-only smoke.")
+    full_story = _normalize_story_text(str(document.get("text", "")))
+    summary_text = _normalize_story_text(str(summary.get("text", "")))
+    story_source = full_story or summary_text
+    if not story_source:
+        raise ValueError("NarrativeQA row is missing both full story text and summary text.")
+    chunked_story = _trim_story_front_matter(_chunk_story_text(story_source, max_words=_NARRATIVEQA_SEGMENT_WORDS))
+    selected_story_segments = _select_story_segments(chunked_story, max_segments=_NARRATIVEQA_MAX_SEGMENTS)
+    story_excerpt = " ".join(selected_story_segments).strip()
     return {
         "id": f"{document.get('id', 'narrativeqa')}-q{index}",
-        "story": story,
+        "story": story_excerpt,
+        "story_segments": selected_story_segments,
         "question": str(row.get("question", {}).get("text", "")).strip(),
         "answer": answers[0],
         "aliases": answers,
         "document_kind": str(document.get("kind", "")),
         "summary_title": str(summary.get("title", "")).strip(),
-        "story_chars": len(story),
-        "story_word_count": int(document.get("word_count", 0) or 0),
-        "narrativeqa_view": "summary_only",
+        "story_chars": len(story_source),
+        "story_word_count": len(story_source.split()),
+        "story_excerpt_chars": len(story_excerpt),
+        "story_segment_words": _NARRATIVEQA_SEGMENT_WORDS,
+        "story_segments_materialized": len(selected_story_segments),
+        "story_total_segments": len(chunked_story),
+        "story_selection_strategy": "evenly_spaced_chunks",
+        "story_truncated_for_smoke": len(selected_story_segments) < len(chunked_story),
+        "narrativeqa_view": "full_text_segmented" if full_story else "summary_only_fallback",
     }
 
 
