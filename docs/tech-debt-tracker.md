@@ -42,3 +42,4 @@
 - `NarrativeQA` 的真实来源 smoke 已升级到 `runtime-pool question-aware full_text_segmented` 视图，并接入统一 registry / eval / summary；当前会进入 `results/generated/m4-real-benchmark-smoke/*/summary.csv`，并与 `Story Cloze / ROCStories` 一起构成 Narrative 域 smoke 入口。
 - `NarrativeQA` 当前已具备两档固定 backbone 的 smoke 配置：`Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B` 都能跑通同一条 runtime-pool NarrativeQA 路径。
 - `NarrativeQA` selector 消融当前已接入统一汇总；但 qwen25 stub smoke 下的排序是 `anchor_only > question_aware > oracle_like_proxy`（按 `mean_similarity`），这说明 contract 生效了，不说明启发式已接近正式最优，后续仍需要用真实长上下文方法与正式指标重评。
+- `Qwen3-8B` 上同一组 NarrativeQA selector smoke 的排序又变成了 `question_aware > anchor_only > oracle_like_proxy`，进一步说明当前 smoke 更像“backbone-sensitive contract check”而不是“稳定实验结论”；后续若要用于论文主表，仍需升级到真实权重与正式指标。

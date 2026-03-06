@@ -472,6 +472,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - `benchmark_narrativeqa_qwen3_real_smoke.yaml` 已新增并真实跑通，当前 NarrativeQA 这条 smoke 路径已经覆盖两档固定 backbone：`Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B`
 - `NarrativeQA` 的 runtime selector 现在已补上显式消融：`anchor_only / question_aware / oracle_like_proxy` 三档都能通过同一份 `story_chunk_pool` 运行，相关配置为 `configs/exp/benchmark_narrativeqa_qwen25_real_smoke{,_anchor_only,_oracle_like_proxy}.yaml`，统一汇总位于 `results/generated/m4-narrativeqa-selector-ablations/summary.csv`
 - 当前 qwen25 selector smoke 的结果是：`anchor_only mean_similarity=0.0182232353836298`、`question_aware mean_similarity=0.015230493620038033`、`oracle_like_proxy mean_similarity=-0.019175926223397255`；这些数字只用于验证 selector contract 已生效，不代表正式方法优劣
+- 同一组 selector 消融现已补到 `Qwen3-8B`：配置为 `configs/exp/benchmark_narrativeqa_qwen3_real_smoke{,_anchor_only,_oracle_like_proxy}.yaml`，统一汇总位于 `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv`；当前 qwen3 stub 结果为 `question_aware=0.03560512885451317`、`anchor_only=-0.011595143005251884`、`oracle_like_proxy=-0.033963803201913834`
 - 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T163014Z/summary.csv`
 - 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果；`MemoryAgentBench` 当前为了本地 stub-harness 可运行，会把 context 截断到 `512` tokens，`NarrativeQA` 当前也只是“官方 full story -> runtime-selected 6 chunk excerpt”的 smoke 版本，因此两者都不是正式长上下文协议结果
 

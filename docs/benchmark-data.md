@@ -49,5 +49,6 @@
 - `NarrativeQA` 当前的 `predictions.jsonl` 会额外写出 runtime 选段元数据，如 `story_chunk_pool_size / story_selected_indexes / story_runtime_selector`，用于核对当前 run 实际从多大的 chunk pool 中选了哪些段。
 - `configs/exp/benchmark_narrativeqa_qwen3_real_smoke.yaml` 已提供 NarrativeQA 的 `Qwen3-8B` smoke 配置，并已在本地 stub runtime 下真实跑通。
 - `results/generated/m4-narrativeqa-selector-ablations/summary.csv` 当前记录了 qwen25 下 `anchor_only / question_aware / oracle_like_proxy` 的 selector contract smoke，对比的主字段是 `story_runtime_selector / smoke_subset / mean_similarity / f1`。
+- `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv` 当前记录了同一组 selector 在 `Qwen3-8B` 上的 contract smoke；这让 NarrativeQA 这条 runtime ablation 不再只停留在单一 backbone。
 - `memtotal.tasks.setup_data` 现在支持增量 merge `data/benchmarks/source_summary.json`：单独重建某个 benchmark 时，不会再把其他 benchmark 的 source summary 覆盖掉。
 - `scripts/run_real_benchmark_smoke_suite.sh` 现支持 `SKIP_SETUP_BENCHMARK_DATA=1`，用于在数据已 materialize 的情况下避免重复 setup 被 HF 缓存锁拖住。

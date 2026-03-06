@@ -134,6 +134,7 @@
   - `configs/exp/benchmark_narrativeqa_qwen3_real_smoke.yaml` 已提供 NarrativeQA 的 `Qwen3-8B` 同构 smoke 配置，并已真实验证跑通
   - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T163014Z/summary.csv`
   - `NarrativeQA` selector 消融的统一汇总位于 `results/generated/m4-narrativeqa-selector-ablations/summary.csv`，可直接对比 `anchor_only / question_aware / oracle_like_proxy`
+  - `Qwen3-8B` 版本的 NarrativeQA selector 消融也已真实跑通，汇总位于 `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv`
 
 当前 `M4` 已不只是本地 contract smoke。现在已有 11 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。其中特别需要区分：`MemoryAgentBench` 当前是“真实 source + 截断 context 的 smoke scaffold”，`NarrativeQA` 当前是“真实 full story source + runtime-selected selector-ablation excerpt + qa_f1 代理评测”的 smoke scaffold，二者都不是正式长上下文主结果。
 
