@@ -412,6 +412,8 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `runs/verify/m3-core4-qwen3/stage-c/metrics.json` 当前记录 `zero_shot_task_score=1.0`、`best_adapt_task_score=1.0`、`best_adapt_query_loss=1.522208571434021`
   - `results/generated/m3-core4-stage-b-probe-suite-v2/metrics.json` 当前记录 `best_by_backbone`：qwen25 最优为 `qwen25-canonical(meta_episodes=16, meta_learning_rate=0.05)`，qwen3 最优为 `qwen3-canonical(meta_episodes=6, meta_learning_rate=0.05)`
   - Stage C 现在还会显式写 `mean_support_grad_norm / max_support_update_max_abs / adaptation_effective`；qwen25 canonical 当前是 `mean_support_grad_norm=2.0708178345536896e-08`、`max_support_update_max_abs=9.313225746154785e-10`
+  - `results/generated/m3-stage-c-gradient-audit-qwen25/metrics.json` 当前记录 `queries_grad_norm=2.0715830091178723e-08`、`reader_non_query_grad_norm=0.03952188577112001`、`fuser_grad_norm=0.11522613661274937`、`writer_grad_norm=0.012883167814417517`
+  - 同一份 gradient audit 当前记录 `query_to_fuser_grad_ratio=1.7978412450640637e-07`、`query_to_writer_grad_ratio=1.6079764223823658e-06`
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
@@ -434,7 +436,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有一套正式 probe harness 去比较 backbone-specific Stage B 预算；当前它支持写出 `best_by_backbone` 并安全复用旧结果。与此同时，Stage C 现在能显式诊断 q-only 是否几乎无更新；qwen25 canonical 已被标记为 `adaptation_effective=False`。这说明当前下一个最直接的工作不是继续盲扫 Stage B，而是攻克 benchmark-native Stage C 的 q-only no-op。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有一套正式 probe harness 去比较 backbone-specific Stage B 预算；当前它支持写出 `best_by_backbone` 并安全复用旧结果。与此同时，Stage C 现在不仅能显式诊断 q-only 是否几乎无更新，还能通过 gradient audit 说明“为什么没更新”：在 qwen25 canonical 上，queries 梯度比 fuser / writer 小 6 到 7 个数量级。这说明当前下一个最直接的工作不是继续盲扫 Stage B，而是攻克 benchmark-native Stage C 的 q-only no-op。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 
