@@ -91,6 +91,7 @@ def collect_stage_c_probe_rows(
             "target_episode_repeats": metrics.get("target_episode_repeats"),
             "target_episode_policy": metrics.get("target_episode_policy"),
             "target_support_weighting": metrics.get("target_support_weighting"),
+            "target_split_policy": metrics.get("target_split_policy"),
             "zero_shot_task_score": zero_shot_task_score,
             "best_adapt_task_score": best_adapt_task_score,
             "task_gain": best_adapt_task_score - zero_shot_task_score,
@@ -148,6 +149,7 @@ def write_stage_c_probe_csv(output_path: str | Path, rows: list[dict[str, object
         "target_episode_repeats",
         "target_episode_policy",
         "target_support_weighting",
+        "target_split_policy",
         "zero_shot_task_score",
         "best_adapt_task_score",
         "task_gain",
@@ -244,10 +246,14 @@ def write_stage_c_probe_svg(output_path: str | Path, rows: list[dict[str, object
             parts.append(
                 f"<text x='{center_x + half_bar + 16}' y='{top + 44}' font-size='11' font-family='monospace'>episode_policy={row.get('target_episode_policy')} repeats={row.get('target_episode_repeats') or 1} weight={row.get('target_support_weighting') or 'uniform'}</text>"
             )
+        if row.get("target_split_policy"):
+            parts.append(
+                f"<text x='{center_x + half_bar + 16}' y='{top + 58}' font-size='11' font-family='monospace'>split={row.get('target_split_policy')}</text>"
+            )
         ratio = row.get("query_to_writer_grad_ratio")
         if ratio is not None:
             parts.append(
-                f"<text x='{center_x + half_bar + 16}' y='{top + 58}' font-size='11' font-family='monospace'>q/w grad ratio={float(ratio):.3e}</text>"
+                f"<text x='{center_x + half_bar + 16}' y='{top + 72}' font-size='11' font-family='monospace'>q/w grad ratio={float(ratio):.3e}</text>"
             )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -288,6 +294,7 @@ def run_m3_stage_c_probe_summary(
                 "target_episode_repeats": row.get("target_episode_repeats"),
                 "target_episode_policy": row.get("target_episode_policy"),
                 "target_support_weighting": row.get("target_support_weighting"),
+                "target_split_policy": row.get("target_split_policy"),
                 "trainable_parameter_count": row["trainable_parameter_count"],
             }
 
@@ -307,6 +314,7 @@ def run_m3_stage_c_probe_summary(
             "target_episode_repeats": row.get("target_episode_repeats"),
             "target_episode_policy": row.get("target_episode_policy"),
             "target_support_weighting": row.get("target_support_weighting"),
+            "target_split_policy": row.get("target_split_policy"),
             "adaptation_effective": row["adaptation_effective"],
             "best_adapt_task_score": row["best_adapt_task_score"],
             "best_adapt_task_proxy_score": row.get("best_adapt_task_proxy_score"),

@@ -73,6 +73,7 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
                 "target_episode_repeats": metrics.get("target_episode_repeats"),
                 "target_episode_policy": metrics.get("target_episode_policy"),
                 "target_support_weighting": metrics.get("target_support_weighting"),
+                "target_split_policy": metrics.get("target_split_policy"),
                 "support_updates": metrics.get("support_updates", adapt_cost.get("support_updates")),
                 "support_examples_touched": metrics.get(
                     "support_examples_touched",
@@ -116,6 +117,7 @@ def write_stage_c_seed_sweep_csv(output_path: str | Path, rows: list[dict[str, o
         "target_episode_repeats",
         "target_episode_policy",
         "target_support_weighting",
+        "target_split_policy",
         "support_updates",
         "support_examples_touched",
         "zero_shot_task_score",
@@ -176,7 +178,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
         bar_x = center_x if value >= 0 else center_x - bar_width
         backbone = str(row["backbone"])
         parts.append(
-            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} {row.get('target_episode_policy') or 'independent'} {row.get('target_support_weighting') or 'uniform'} seed={row['seed']}</text>"
+            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} {row.get('target_split_policy') or 'random'} {row.get('target_support_weighting') or 'uniform'} seed={row['seed']}</text>"
         )
         parts.append(
             f"<rect x='{center_x - half_bar}' y='{top}' width='{half_bar * 2}' height='24' fill='#efe6d0' rx='4' />"
@@ -195,7 +197,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
             f"<text x='{center_x + half_bar + 16}' y='{top + 16}' font-size='12' font-family='monospace'>{value:.3f} score={score_label}</text>"
         )
         parts.append(
-            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1} weight={row.get('target_support_weighting') or 'uniform'}</text>"
+            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1} split={row.get('target_split_policy') or 'random'}</text>"
         )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -243,6 +245,9 @@ def run_m3_stage_c_seed_sweep_summary(
             ),
             "target_support_weightings": sorted(
                 {str(row.get("target_support_weighting") or "uniform") for row in group_rows}
+            ),
+            "target_split_policies": sorted(
+                {str(row.get("target_split_policy") or "random") for row in group_rows}
             ),
             "best_seed": best_row["seed"],
             "best_task_gain": best_row["task_gain"],
@@ -296,6 +301,21 @@ def run_m3_stage_c_seed_sweep_summary(
                 continue
             by_backbone_support_weighting[f"{backbone}::weight={weighting}"] = _summarize(grouped_rows)
 
+    by_backbone_target_split: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        for split_policy in sorted(
+            {str(row.get("target_split_policy") or "random") for row in rows if str(row["backbone"]) == backbone}
+        ):
+            grouped_rows = [
+                row
+                for row in rows
+                if str(row["backbone"]) == backbone
+                and str(row.get("target_split_policy") or "random") == split_policy
+            ]
+            if not grouped_rows:
+                continue
+            by_backbone_target_split[f"{backbone}::split={split_policy}"] = _summarize(grouped_rows)
+
     metrics = {
         "mode": "analysis",
         "analysis_mode": "m3_stage_c_seed_sweep_summary",
@@ -307,6 +327,7 @@ def run_m3_stage_c_seed_sweep_summary(
         "by_backbone_policy": by_backbone_policy,
         "by_backbone_episode_budget": by_backbone_episode_budget,
         "by_backbone_support_weighting": by_backbone_support_weighting,
+        "by_backbone_target_split": by_backbone_target_split,
     }
     write_json(output_dir / "metrics.json", metrics)
     return metrics

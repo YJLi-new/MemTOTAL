@@ -98,6 +98,16 @@ def _resolve_target_support_weighting(config: dict) -> str:
     return weighting
 
 
+def _resolve_target_split_policy(config: dict) -> str:
+    policy = str(config["runtime"].get("target_split_policy", "random"))
+    if policy not in {"random", "proxy_topk_support", "proxy_bottomk_support"}:
+        raise ValueError(
+            f"Unsupported runtime.target_split_policy={policy}. "
+            "Expected one of random, proxy_topk_support, proxy_bottomk_support."
+        )
+    return policy
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -477,6 +487,7 @@ def _sample_target_eval_query_sets(
 
 def _build_stage_c_episode_states(
     *,
+    runtime: MemoryRuntime,
     grouped_examples: dict[str, list[dict[str, Any]]],
     manifest: dict[str, object],
     domain_examples: list[dict[str, Any]],
@@ -484,6 +495,7 @@ def _build_stage_c_episode_states(
     seed: int,
     target_episode_repeats: int,
     target_eval_repeats: int,
+    target_split_policy: str,
 ) -> list[dict[str, object]]:
     episode_states: list[dict[str, object]] = []
     for episode_index in range(target_episode_repeats):
@@ -496,7 +508,13 @@ def _build_stage_c_episode_states(
             seed=episode_seed,
             sampling_policy=str(manifest["sampling_policy"]),
         )
-        support_examples = target_episode.support_examples[:shot]
+        candidate_support_examples = list(target_episode.support_examples) + list(target_episode.query_examples)
+        support_examples = _select_target_support_examples(
+            runtime,
+            candidate_support_examples,
+            shot=shot,
+            split_policy=target_split_policy,
+        )
         eval_query_sets, query_candidate_pool = _sample_target_eval_query_sets(
             domain_examples,
             support_examples=support_examples,
@@ -533,6 +551,38 @@ def _resolve_episode_support_weights(
     logits = torch.tensor(episode_proxy_scores, dtype=torch.float32)
     weights = torch.softmax(logits, dim=0)
     return [float(value.item()) for value in weights]
+
+
+def _score_target_support_candidate(
+    runtime: MemoryRuntime,
+    example: dict[str, Any],
+) -> float:
+    metrics = _evaluate_task_example(runtime, example)
+    return float(metrics["task_proxy_score"])
+
+
+def _select_target_support_examples(
+    runtime: MemoryRuntime,
+    candidate_examples: list[dict[str, Any]],
+    *,
+    shot: int,
+    split_policy: str,
+) -> list[dict[str, Any]]:
+    if shot <= 0:
+        return []
+    if split_policy == "random":
+        return list(candidate_examples[:shot])
+    scored_examples = [
+        (
+            _score_target_support_candidate(runtime, example),
+            str(example["id"]),
+            example,
+        )
+        for example in candidate_examples
+    ]
+    reverse = split_policy == "proxy_topk_support"
+    scored_examples.sort(key=lambda item: (item[0], item[1]), reverse=reverse)
+    return [item[2] for item in scored_examples[:shot]]
 
 
 def _continuation_retrieval_loss(
@@ -1100,6 +1150,7 @@ def run_stage_c(
     target_episode_repeats = _resolve_target_episode_repeats(config)
     target_episode_policy = _resolve_target_episode_policy(config)
     target_support_weighting = _resolve_target_support_weighting(config)
+    target_split_policy = _resolve_target_split_policy(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1149,6 +1200,7 @@ def run_stage_c(
 
     for shot in shots_list:
         episode_states = _build_stage_c_episode_states(
+            runtime=runtime,
             grouped_examples=grouped_examples,
             manifest=manifest,
             domain_examples=domain_examples,
@@ -1156,6 +1208,7 @@ def run_stage_c(
             seed=seed,
             target_episode_repeats=target_episode_repeats,
             target_eval_repeats=target_eval_repeats,
+            target_split_policy=target_split_policy,
         )
         if target_episode_policy == "aggregate_support":
             shared_runtime = copy.deepcopy(runtime)
@@ -1259,6 +1312,7 @@ def run_stage_c(
                     "target_episode_repeats": target_episode_repeats,
                     "target_episode_policy": target_episode_policy,
                     "target_support_weighting": target_support_weighting,
+                    "target_split_policy": target_split_policy,
                     "evaluated_target_episodes": len(episode_states),
                     "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": (
@@ -1424,6 +1478,7 @@ def run_stage_c(
                 "target_episode_repeats",
                 "target_episode_policy",
                 "target_support_weighting",
+                "target_split_policy",
                 "evaluated_target_episodes",
                 "evaluated_query_examples",
                 "query_candidate_pool_size",
@@ -1458,6 +1513,7 @@ def run_stage_c(
             "query_objective": query_objective,
             "target_episode_policy": target_episode_policy,
             "target_support_weighting": target_support_weighting,
+            "target_split_policy": target_split_policy,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -1486,6 +1542,7 @@ def run_stage_c(
         "target_episode_repeats": target_episode_repeats,
         "target_episode_policy": target_episode_policy,
         "target_support_weighting": target_support_weighting,
+        "target_split_policy": target_split_policy,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1534,6 +1591,7 @@ def run_stage_c(
         "target_episode_repeats": target_episode_repeats,
         "target_episode_policy": target_episode_policy,
         "target_support_weighting": target_support_weighting,
+        "target_split_policy": target_split_policy,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],

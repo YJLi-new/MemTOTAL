@@ -402,6 +402,15 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 当前每个 `shot/step` 点会在 3 组 target support/query episodes 上聚合
   - `adapt_curve.csv` 现同步写出 `target_episode_repeats / evaluated_target_episodes`
 - 已新增 benchmark-native `Stage C sensitivity audit`：`scripts/run_m3_core4_stage_c_sensitivity_audit.sh`
+- 已新增 benchmark-native `Stage C q-only target-split sweep` harness：`scripts/run_m3_core4_stage_c_qonly_target_split_sweep.sh`
+  - 固定 `aggregate_support + ep3 + uniform`，对比 `target_split_policy in {random, proxy_topk_support, proxy_bottomk_support}`
+  - fresh `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v1/metrics.json` 当前显示：`proxy_bottomk_support` 在两档 backbone 上都明显优于 `random`，且稳定压过 `proxy_topk_support`
+  - 当前 qwen25：`bottomk=0.3037037037037037 > random=0.044444444444444474 > topk=-0.2592592592592592`
+  - 当前 qwen3：`bottomk=0.22962962962962963 > random=-0.02962962962962965 > topk=-0.2518518518518519`
+  - 因此 canonical `Stage C` 现已切到 `target_split_policy=proxy_bottomk_support`
+  - fresh clean canonical rerun `results/generated/m3-core4-stage-c-qonly-seed-sweep-v4-bottomk/metrics.json` 现进一步显示：切到 `proxy_bottomk_support` 后，两档 backbone 的 canonical q-only 5-seed 都达到 `positive_gain_rate=1.0`
+  - 当前 qwen25 canonical：`mean_task_gain=0.25925925925925924`
+  - 当前 qwen3 canonical：`mean_task_gain=0.17037037037037037`
   - 当前直接比较 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
@@ -450,7 +459,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-qonly-policy-sweep-v1/metrics.json` 现进一步把 policy 本身从 blocker 列表里拿掉：在同一组 5 seeds 上，`aggregate_support` 与 `independent` 给出的 `mean_task_gain` 完全一致，qwen25 都是 `-0.059259259259259255`，qwen3 都是 `0.0962962962962963`；但 `aggregate_support` 的 `mean_support_updates` 从 `9.0` 降到 `3.0`
   - `results/generated/m3-core4-stage-c-qonly-episode-budget-sweep-v1/metrics.json` 现进一步显示：在固定 `aggregate_support` 与同一组 5 seeds 的口径下，`target_episode_repeats=1` 的均值反而是两档 backbone 最优。当前 qwen25 是 `ep1=0.08888888888888889 > ep3=0.02222222222222222 > ep5=-0.013333333333333336`；qwen3 是 `ep1=0.022222222222222233 > ep5=0.013333333333333358 > ep3=0.007407407407407407`
   - `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 现进一步显示：在固定 `aggregate_support + ep3` 与同一组 5 seeds 的口径下，`target_support_weighting in {uniform, proxy_softmax, proxy_top1}` 的 official `mean_task_gain` 基本完全一致。当前 qwen25 三档都为 `-0.11111111111111112` 左右，qwen3 三档都为 `-0.022222222222222233`
-  - 因此，当前剩余 blocker 已进一步更新为“target split / support set 本身的方差仍然很宽”，而不是继续怀疑 q-only 是否有效、也不是继续怀疑 `target_episode_policy / target_episode_repeats / target_support_weighting`
+  - 这一步之后，`target split` 已不再只是待查 blocker，而是已经出现并通过 clean canonical rerun 验证的有效方案；下一步更该把这条新 canonical 路径推进到正式 multi-seed/正式曲线，而不是继续在聚合细节上盲扫
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
@@ -473,7 +482,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有四套正式 probe harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证不同 `lr/steps` 下的 q-only 行为，Stage C sensitivity audit 用于直接比较 query path 和 memory path 的函数影响量级。同时，Stage C 现在已有并行的 `task_proxy_score` 观测层：当 official `task_score` 因为样本太少或指标太粗而打平时，仍能继续观测 `gold_choice_probability` 这种更平滑的 target-side变化。当前最新证据已经说明：benchmark-native Stage C 的主 blocker 已不再是 `q_only` 参数化无效，也不再是“完全看不到 target 改善”，而是如何把这些 proxy-level 的改善稳定转化成 official target metric 的提升。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有五套正式 probe harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证不同 `lr/steps` 下的 q-only 行为，Stage C sensitivity audit 用于直接比较 query path 和 memory path 的函数影响量级，Stage C q-only target-split sweep 用于直接比较 target support/query 抽样结构。同时，Stage C 现在已有并行的 `task_proxy_score` 观测层：当 official `task_score` 因为样本太少或指标太粗而打平时，仍能继续观测 `gold_choice_probability` 这种更平滑的 target-side变化。当前最新证据已经说明：benchmark-native Stage C 的主 blocker 已不再是 `q_only` 参数化无效，也不再是“完全看不到 target 改善”，而且 `proxy_bottomk_support` 这条 target split 已通过 clean canonical rerun 稳定翻正；下一步重点变成把这条更稳的 canonical q-only 路径推进到正式 few-shot 曲线和更大 benchmark 预算。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

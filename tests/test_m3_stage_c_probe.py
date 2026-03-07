@@ -33,6 +33,7 @@ class M3StageCProbeTest(unittest.TestCase):
         target_episode_repeats: int = 1,
         target_episode_policy: str = "independent",
         target_support_weighting: str = "uniform",
+        target_split_policy: str = "random",
         best_adapt_query_loss: float = 1.6,
         zero_shot_task_proxy_score: float = 0.4,
         best_adapt_task_proxy_score: float = 0.4,
@@ -58,6 +59,7 @@ class M3StageCProbeTest(unittest.TestCase):
                     "target_episode_repeats": target_episode_repeats,
                     "target_episode_policy": target_episode_policy,
                     "target_support_weighting": target_support_weighting,
+                    "target_split_policy": target_split_policy,
                     "zero_shot_task_score": zero_shot_task_score,
                     "best_adapt_task_score": best_adapt_task_score,
                     "task_metric_name": "accuracy",
@@ -136,6 +138,7 @@ class M3StageCProbeTest(unittest.TestCase):
             self.assertEqual(rows[0]["target_episode_repeats"], 1)
             self.assertEqual(rows[0]["target_episode_policy"], "independent")
             self.assertEqual(rows[0]["target_support_weighting"], "uniform")
+            self.assertEqual(rows[0]["target_split_policy"], "random")
             self.assertAlmostEqual(float(rows[0]["task_gain"]), 0.0)
             self.assertAlmostEqual(float(rows[0]["query_to_writer_grad_ratio"]), 1.6e-6)
             self.assertEqual(rows[0]["task_proxy_name"], "gold_choice_probability")
@@ -159,6 +162,7 @@ class M3StageCProbeTest(unittest.TestCase):
                 target_episode_repeats=3,
                 target_episode_policy="aggregate_support",
                 target_support_weighting="proxy_softmax",
+                target_split_policy="proxy_topk_support",
             )
             self._write_stage_c_run(
                 input_root,
@@ -174,6 +178,7 @@ class M3StageCProbeTest(unittest.TestCase):
                 target_episode_repeats=3,
                 target_episode_policy="aggregate_support",
                 target_support_weighting="proxy_softmax",
+                target_split_policy="proxy_topk_support",
             )
             self._write_stage_c_run(
                 input_root,
@@ -191,6 +196,7 @@ class M3StageCProbeTest(unittest.TestCase):
                 target_episode_repeats=3,
                 target_episode_policy="aggregate_support",
                 target_support_weighting="proxy_softmax",
+                target_split_policy="proxy_topk_support",
             )
             self._write_stage_c_run(
                 input_root,
@@ -206,6 +212,7 @@ class M3StageCProbeTest(unittest.TestCase):
                 target_episode_repeats=3,
                 target_episode_policy="aggregate_support",
                 target_support_weighting="proxy_softmax",
+                target_split_policy="proxy_topk_support",
             )
             self._write_gradient_audit_run(
                 input_root,
@@ -255,6 +262,10 @@ class M3StageCProbeTest(unittest.TestCase):
                 metrics["best_by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_support_weighting"],
                 "proxy_softmax",
             )
+            self.assertEqual(
+                metrics["best_by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_split_policy"],
+                "proxy_topk_support",
+            )
             self.assertTrue(metrics["seed_consistent_by_backbone"]["Qwen2.5-1.5B-Instruct"])
             self.assertEqual(metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["run_name"], "qwen25-q-only-lr1")
             self.assertEqual(
@@ -270,6 +281,10 @@ class M3StageCProbeTest(unittest.TestCase):
             self.assertEqual(
                 metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_support_weighting"],
                 "proxy_softmax",
+            )
+            self.assertEqual(
+                metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_split_policy"],
+                "proxy_topk_support",
             )
             self.assertFalse(metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["adaptation_effective"])
 
