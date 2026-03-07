@@ -12,6 +12,7 @@
   - `prompting`
   - `meta_prompting`
   - `rag`
+  - `memory_bank`
   - `lightthinker`
   - `adapter`
 - 当前 smoke 网格：
@@ -29,7 +30,7 @@
   - 当前会把未就绪的外部点记入 `grid_plan.json.skipped_imports`
 - grid runner 现已支持 `grid.reuse_existing_runs`，可在同一输出目录上复用已有 `train/eval` 产物，避免只改汇总配置时把整套 grid 重跑一遍
   - 当前复用判定会同时检查 `required artifacts + config.snapshot + seed`
-- 当前已验证导入 `MemGen` 的 `story_cloze` `Qwen2.5-1.5B-Instruct` `0-shot / 0-step` 外部评测点
+- 当前已验证导入 `MemGen` 的 `story_cloze` `Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B` 两个 `0-shot / 0-step` 外部评测点
 
 ## Entry Points
 
@@ -80,7 +81,7 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 当前已验证：
 
 - `cell_count = 32`
-- `variant_count = 14`
+- `variant_count = 16`
 - `train_run_count = 12`
 - `eval_run_count = 32`
 - `imported_eval_count = 0`
@@ -89,23 +90,24 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 - protocol-smoke:
   - `shots = {0, 1, 2, 4}`
   - `steps = {0, 1, 3, 5}`
-  - `cell_count = 92`
-  - `variant_count = 14`
+  - `cell_count = 100`
+  - `variant_count = 16`
   - `train_run_count = 0`
   - `eval_run_count = 8`
   - `reused_train_run_count = 52`
-  - `reused_eval_run_count = 84`
+  - `reused_eval_run_count = 92`
   - `imported_eval_count = 1`
-  - 当前新增的是 `lightthinker` 的 `8` 个 eval cell，其余 cell 已直接复用
+  - 当前新增的是 `memory_bank` 的 `8` 个 eval cell，其余 cell 已直接复用
 - dual-import protocol:
-  - `imported_eval_count = 1`
-  - `skipped_import_count = 1`
-  - `cell_count = 92`
-  - `variant_count = 14`
-  - `reused_eval_run_count = 84`
-  - 当前已导入 `MemGen / Qwen2.5-1.5B-Instruct`
-  - 当前将 `MemGen / Qwen3-8B` 记录为 skipped import，等待真实 run 完成后同目录重跑
-  - watcher 当前已进入 `waiting` 状态，等待 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json`
+  - `imported_eval_count = 2`
+  - `skipped_import_count = 0`
+  - `cell_count = 100`
+  - `variant_count = 16`
+  - `reused_train_run_count = 52`
+  - `reused_eval_run_count = 92`
+  - 当前已同时导入 `MemGen / Qwen2.5-1.5B-Instruct` 与 `MemGen / Qwen3-8B`
+  - `watcher_state.json` 当前为 `status=refreshed`
+  - watcher 已在 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后自动刷新同目录汇总
 
 ## Current Smoke Signals
 
@@ -118,14 +120,17 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
   - `adapter`: 当前 `0-step` 就已达到 `1.0`，`4-step` 不再提升
 - imported external point:
   - `MemGen / Qwen2.5-1.5B-Instruct / 0-shot / 0-step`: `compute_reward = 0.75`
+  - `MemGen / Qwen3-8B / 0-shot / 0-step`: `compute_reward = 1.0`
 - protocol-smoke:
   - `qwen25 / vanilla`: `0-shot=0.625`，`1-shot=0.75`
   - `qwen25 / meta_prompting`: `0-shot=0.5`，`4-shot=0.625`
   - `qwen25 / rag`: `0~4-shot` 当前都在 `0.625` 量级
+  - `qwen25 / memory_bank`: `0-shot=0.5`，`1-shot=0.75`
   - `qwen25 / lightthinker`: `0-shot=0.625`，`1~4-shot=0.625`
   - `qwen3 / prompt_tuning`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / lora`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / rag`: 当前 best cell 是 `1-shot / 0-step = 0.75`
+  - `qwen3 / memory_bank`: 当前 `1~4-shot / 0-step = 0.75`
   - `qwen3 / lightthinker`: `0-shot=0.375`，`1~4-shot=0.5`
 
 这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：
@@ -135,4 +140,4 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 - 统一 grid 现在也能把外部 baseline 点导入同一张曲线，而不需要手工抄数
 - materialize 层现在不会再因为不同 `max_examples` 覆盖同一个 real-smoke 文件，`smoke4` 和 `smoke8` 可以并存
 - 只改导入点或汇总配置时，grid suite 现在可以直接复用已有 run，避免重复计算
-- 外部 baseline 点现在可以先占位、后补齐，不会因为某一条尚未完成就阻断整套 grid 汇总
+- 外部 baseline 点现在可以先占位、后补齐，不会因为某一条尚未完成就阻断整套 grid 汇总；`MemGen / Qwen3-8B` 这条链已经从 `waiting` 实际走到了 `refreshed`

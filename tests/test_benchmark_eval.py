@@ -395,6 +395,106 @@ class BenchmarkEvalTest(unittest.TestCase):
             self.assertIn("Planner:", predictions[0]["baseline_prompt"])
             self.assertIn("Critic:", predictions[0]["baseline_prompt"])
 
+    def test_memory_bank_baseline_writes_structured_bank_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "story_cloze_memory_bank.jsonl"
+            dataset_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "story-cloze-memory-bank-000",
+                                "story": "Eli packed sandwiches before the road trip.",
+                                "choices": [
+                                    {"label": "A", "text": "Everyone had food when they got hungry."},
+                                    {"label": "B", "text": "They canceled the drive immediately."},
+                                ],
+                                "label": "A",
+                                "answer": "Everyone had food when they got hungry.",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "story-cloze-memory-bank-001",
+                                "story": "Mina charged her camera the night before the concert.",
+                                "choices": [
+                                    {"label": "A", "text": "She captured photos during the show."},
+                                    {"label": "B", "text": "She forgot why she brought the camera."},
+                                ],
+                                "label": "A",
+                                "answer": "She captured photos during the show.",
+                            }
+                        ),
+                    ]
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "baseline_memory_bank_story_cloze_test",
+                    "stage": "M5",
+                    "method_variant": "baseline-memory-bank",
+                },
+                "task": {
+                    "name": "story_cloze_smoke",
+                    "benchmark_id": "story_cloze",
+                    "domain": "narrative",
+                    "split": "eval",
+                    "smoke_subset": "local_contract_v1",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "baseline": {
+                    "family": "memory_bank",
+                    "mode": "episodic_bank",
+                    "support_examples": 1,
+                    "memory_bank": {
+                        "selector": "overlap_then_recency",
+                        "eviction_policy": "topk",
+                        "bank_capacity": 1,
+                    },
+                },
+                "runtime": {
+                    "eval_examples": 1,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "baseline_memory_bank_story_cloze.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            output_dir = tmp / "baseline_memory_bank_eval"
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "527",
+                        "--output_dir",
+                        str(output_dir),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["baseline_family"], "memory_bank")
+            self.assertEqual(metrics["baseline_mode"], "episodic_bank")
+            self.assertEqual(metrics["memory_bank_selector"], "overlap_then_recency")
+            self.assertEqual(metrics["memory_bank_eviction_policy"], "topk")
+            self.assertEqual(metrics["mean_memory_bank_entry_count"], 1.0)
+            self.assertEqual(predictions[0]["baseline_memory_bank_selector"], "overlap_then_recency")
+            self.assertEqual(predictions[0]["baseline_memory_bank_eviction_policy"], "topk")
+            self.assertEqual(len(predictions[0]["baseline_memory_bank_entries"]), 1)
+            self.assertIn("Memory 1 Cue:", predictions[0]["baseline_prompt"])
+
     def test_prompt_baseline_support_examples_are_injected_into_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

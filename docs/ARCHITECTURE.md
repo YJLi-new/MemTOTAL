@@ -207,6 +207,7 @@
   - 支持通过 `grid.config_overrides` 在不复制模板配置的前提下覆写 `task/runtime` 字段
   - 支持通过 `grid.reuse_existing_runs` 复用已存在的 `train/eval` 产物，并通过 `config.snapshot + seed` 校验避免误复用
   - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
+  - 当前 dual-import protocol suite 已真实导入 `MemGen / story_cloze` 的 qwen25 与 qwen3 两个 `0-shot / 0-step` 外部点；对应 `adapt_cost.json` 为 `imported_eval_count=2`、`skipped_import_count=0`
 - 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
 - `run_memgen.py` 现在会在启动前做磁盘空间 preflight，并在空间不足时直接给出固定清理建议，而不是等官方进程中途失败。
 - 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
@@ -232,6 +233,10 @@
   - qwen25: `runs/verify/baseline_rag_story_cloze_qwen25_real_smoke/metrics.json`
   - qwen3: `runs/verify/baseline_rag_story_cloze_qwen3_real_smoke/metrics.json`
 - `rag` baseline 当前会额外写出 `baseline_retriever / mean_support_retrieval_score / baseline_support_scores`
+- 当前最小 `memory_bank` real-source smoke 也已接入：
+  - qwen25: `runs/verify/baseline_memory_bank_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_memory_bank_story_cloze_qwen3_real_smoke/metrics.json`
+- `memory_bank` baseline 当前会额外写出 `mean_memory_bank_entry_count / mean_memory_bank_selection_score / baseline_memory_bank_entries`
 - 当前最小 `LightThinker` real-source smoke 也已接入：
   - qwen25: `runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke/metrics.json`
   - qwen3: `runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke/metrics.json`
@@ -241,10 +246,10 @@
 - 同一套 qwen3 adapter smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 - 同一套 `Prompt Tuning / LoRA` 现已推进到 `story_cloze` real-source smoke，汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
 - baseline run 当前会统一写出 `support_examples / train_steps / trainable_parameter_count / budget_signature`
-- `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter / rag / lightthinker` 五个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
+- `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 六个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
 - 当前最小 baseline grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`，并已真实产出 `adapt_curve.csv`
 - 当前 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 外部评测点已可通过 `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml` 导入到同一套 grid 汇总，产物位于 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
-- 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置；当前 variant 数已扩到 `14`，其中包含 `rag + lightthinker`
-- 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=84`；本轮新增 `lightthinker` 后只补跑了 `8` 个 eval cell
-- 当前 dual-import protocol suite 位于 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`：它已真实导入 qwen25 的 `MemGen` 点，并把尚未完成的 qwen3 `MemGen` 点记录为 skipped import
+- 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置；当前 variant 数已扩到 `16`，其中包含 `rag + memory_bank + lightthinker`
+- 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=92`；本轮新增 `memory_bank` 后只补跑了 `8` 个 eval cell
+- 当前 dual-import protocol suite 位于 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`：它已真实导入 qwen25 与 qwen3 的 `MemGen` 点，并把 `memory_bank` 一起纳入同一套 `16` 个 variant 的 protocol-smoke 汇总
 - `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh` 现提供一个任务定制 watcher：等待 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后，自动刷新 dual-import protocol suite

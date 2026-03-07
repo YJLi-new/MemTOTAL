@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from memtotal.baselines import (
     AdapterBaselineRuntime,
     LightThinkerBaselineRuntime,
+    MemoryBankBaselineRuntime,
     PromptBaselineRuntime,
     RetrievalBaselineRuntime,
 )
@@ -58,13 +59,15 @@ def main(argv: list[str] | None = None) -> int:
     evaluator = build_task_evaluator(config)
     baseline_cfg = config.get("baseline", {})
     baseline_family = str(baseline_cfg.get("family", ""))
-    use_baseline = baseline_family in {"prompting", "adapter", "meta_prompting", "rag", "lightthinker"}
+    use_baseline = baseline_family in {"prompting", "adapter", "meta_prompting", "rag", "lightthinker", "memory_bank"}
     if baseline_family in {"prompting", "meta_prompting"}:
         runtime = PromptBaselineRuntime(config=config, seed=args.seed)
     elif baseline_family == "rag":
         runtime = RetrievalBaselineRuntime(config=config, seed=args.seed)
     elif baseline_family == "lightthinker":
         runtime = LightThinkerBaselineRuntime(config=config, seed=args.seed)
+    elif baseline_family == "memory_bank":
+        runtime = MemoryBankBaselineRuntime(config=config, seed=args.seed)
     elif baseline_family == "adapter":
         runtime = AdapterBaselineRuntime(config=config, seed=args.seed)
         if args.checkpoint:
@@ -96,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     active_query_counts = []
     retrieval_support_score_means: list[float] = []
     thought_sketch_token_counts: list[int] = []
+    memory_bank_entry_counts: list[int] = []
+    memory_bank_selection_score_means: list[float] = []
     segment_gate_means: list[float] = []
     segment_active_query_counts: list[int] = []
     capability_scores: dict[str, list[float]] = {}
@@ -117,6 +122,12 @@ def main(argv: list[str] | None = None) -> int:
         requested_support_examples = int(baseline_budget_fields.get("support_examples", 0)) if use_baseline else 0
         if use_baseline:
             if baseline_family == "rag":
+                (
+                    baseline_support_examples,
+                    baseline_support_scores,
+                    baseline_retriever,
+                ) = runtime.select_support_examples(dataset, example, requested_support_examples)
+            elif baseline_family == "memory_bank":
                 (
                     baseline_support_examples,
                     baseline_support_scores,
@@ -146,15 +157,21 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     candidate_labels = [str(row["label"]) for row in dataset]
                     candidate_texts = [str(row["continuation"]) for row in dataset]
+                baseline_kwargs = (
+                    {"support_examples": baseline_support_examples}
+                    if baseline_family in {"prompting", "meta_prompting", "rag", "lightthinker"}
+                    else {
+                        "support_examples": baseline_support_examples,
+                        "support_scores": baseline_support_scores,
+                    }
+                    if baseline_family == "memory_bank"
+                    else {}
+                )
                 baseline_output = runtime.predict_multiple_choice(
                     example,
                     candidate_labels=candidate_labels,
                     candidate_texts=candidate_texts,
-                    **(
-                        {"support_examples": baseline_support_examples}
-                        if baseline_family in {"prompting", "meta_prompting", "rag", "lightthinker"}
-                        else {}
-                    ),
+                    **baseline_kwargs,
                 )
                 predicted_label = baseline_output.predicted_label
                 predicted_text = baseline_output.predicted_text
@@ -164,13 +181,19 @@ def main(argv: list[str] | None = None) -> int:
                     example,
                 )
             else:
+                baseline_kwargs = (
+                    {"support_examples": baseline_support_examples}
+                    if baseline_family in {"prompting", "meta_prompting", "rag", "lightthinker"}
+                    else {
+                        "support_examples": baseline_support_examples,
+                        "support_scores": baseline_support_scores,
+                    }
+                    if baseline_family == "memory_bank"
+                    else {}
+                )
                 baseline_output = runtime.generate_text(
                     example,
-                    **(
-                        {"support_examples": baseline_support_examples}
-                        if baseline_family in {"prompting", "meta_prompting", "rag", "lightthinker"}
-                        else {}
-                    ),
+                    **baseline_kwargs,
                 )
                 generated_text = baseline_output.predicted_text
                 predicted_text = generated_text
@@ -199,10 +222,16 @@ def main(argv: list[str] | None = None) -> int:
             candidate_scores = baseline_output.candidate_scores
             prompt_text = baseline_output.prompt
             if baseline_support_scores:
-                retrieval_support_score_means.append(sum(baseline_support_scores) / len(baseline_support_scores))
+                if baseline_family == "rag":
+                    retrieval_support_score_means.append(sum(baseline_support_scores) / len(baseline_support_scores))
+                if baseline_family == "memory_bank":
+                    memory_bank_selection_score_means.append(sum(baseline_support_scores) / len(baseline_support_scores))
             thought_sketch = getattr(baseline_output, "thought_sketch", "")
             if thought_sketch:
                 thought_sketch_token_counts.append(runtime.backbone.count_tokens(thought_sketch))
+            memory_bank_entries = getattr(baseline_output, "memory_bank_entries", [])
+            if memory_bank_entries:
+                memory_bank_entry_counts.append(len(memory_bank_entries))
         else:
             if uses_candidate_selection:
                 if evaluator.evaluator_type == "multiple_choice":
@@ -308,6 +337,15 @@ def main(argv: list[str] | None = None) -> int:
                 "baseline_support_ids": [row["id"] for row in baseline_support_examples] if use_baseline else [],
                 "baseline_support_scores": baseline_support_scores if use_baseline else [],
                 "baseline_retriever": baseline_retriever if use_baseline else None,
+                "baseline_memory_bank_entries": (
+                    getattr(baseline_output, "memory_bank_entries", None) if use_baseline else None
+                ),
+                "baseline_memory_bank_selector": (
+                    baseline_retriever if use_baseline and baseline_family == "memory_bank" else None
+                ),
+                "baseline_memory_bank_eviction_policy": (
+                    getattr(runtime, "eviction_policy", None) if use_baseline and baseline_family == "memory_bank" else None
+                ),
                 "lightthinker_compression_prompt": (
                     getattr(baseline_output, "compression_prompt", None) if use_baseline else None
                 ),
@@ -376,6 +414,17 @@ def main(argv: list[str] | None = None) -> int:
         metrics["mean_thought_sketch_tokens"] = (
             sum(thought_sketch_token_counts) / len(thought_sketch_token_counts)
         )
+    if memory_bank_entry_counts:
+        metrics["mean_memory_bank_entry_count"] = (
+            sum(memory_bank_entry_counts) / len(memory_bank_entry_counts)
+        )
+    if memory_bank_selection_score_means:
+        metrics["mean_memory_bank_selection_score"] = (
+            sum(memory_bank_selection_score_means) / len(memory_bank_selection_score_means)
+        )
+    if baseline_family == "memory_bank":
+        metrics["memory_bank_selector"] = str(getattr(runtime, "selector", "overlap_then_recency"))
+        metrics["memory_bank_eviction_policy"] = str(getattr(runtime, "eviction_policy", "topk"))
     narrativeqa_runtime_cfg = config["task"].get("narrativeqa_runtime")
     if isinstance(narrativeqa_runtime_cfg, dict):
         metrics["story_runtime_selector"] = str(narrativeqa_runtime_cfg.get("selector", "question_aware"))

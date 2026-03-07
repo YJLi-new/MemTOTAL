@@ -46,16 +46,17 @@
 - `M5` 的 `prompting` baseline family 现已接入 `Vanilla / CoT`，并补到了两档固定 backbone以及 `GSM8K + Story Cloze` 的 real-source smoke；但当前仍是 zero-shot smoke 验证，后续还需要补更多真实 benchmark、few-shot/step 预算对齐，以及主表需要的 Prompt Tuning / LoRA / MetaPrompting 家族。
 - `prompting / meta_prompting` 当前已支持最小 in-context few-shot demo 注入，并在 `story_cloze` real-source 上真实跑通了 `2-shot` smoke；但这还不是正式 shot-curve，后续仍需要把更多 shots、更多任务和 seeds 纳入统一网格。
 - 当前 `story_cloze` baseline grid suite 只覆盖最小 smoke 网格 `shots={0,2}`、`steps={0,4}`；它证明了 suite contract 已经存在，但离 `EXPERIMENTS_INFO.md` 里锁定的正式网格还差很远。
-- baseline grid 现已能导入外部 baseline 点，且 `MemGen` 的 `story_cloze / qwen25 / 0-shot / 0-step` 已接进同一条 `adapt_curve.csv`；但这仍只是单点导入，不是正式的 `MemGen` shot/step 网格，更没有覆盖 `Qwen3-8B`。
-- baseline grid 现已支持 `allow_missing` 的外部点占位；当前 qwen3 的 `MemGen / story_cloze` 点已经占位进 dual-import protocol suite，但真实 run 仍未完成，因此还只是 `skipped_import`，不是可比较结果。
+- baseline grid 现已能把 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 与 `story_cloze / Qwen3-8B / 0-shot / 0-step` 两个外部点都接进同一条 `adapt_curve.csv`；但这仍只是零样本单点导入，不是正式的 `MemGen` shot/step 网格。
+- baseline grid 虽然已经验证了 `allow_missing -> refreshed` 这条补点链路，但当前还没有把外部点成本建模成与内部 baseline 同构的 `shot/step` 预算口径；`MemGen` 仍处于“统一汇总有了，统一预算还没有”的状态。
 - `story_cloze` grid 现已进一步扩到 protocol-smoke 版本：`smoke8` 子集上的 `shots={0,1,2,4}`、`steps={0,1,3,5}` 已真实跑通；但这仍只是锁定网格的一个小前缀，距离正式 `{0,1,2,4,8,16,32,64,128} x {0,1,3,5,10,20,50}` 还差得很远。
 - `grid.reuse_existing_runs` 现已落地并在 protocol-smoke suite 上验证，可避免仅因导入点/汇总变化而重复执行整套 grid；当前已收紧到 `required artifacts + config.snapshot + seed` 匹配，但仍没有更稳定的显式 config hash / schema version。
+- `memory_bank` 现已作为更完整的 memory-agent 风格 scaffold 接入 `story_cloze` real-source smoke、protocol-smoke grid 与 budget audit；但它当前仍是“结构化 memory entries + 有限容量 bank”的最小实现，不是官方 `MemoryBank` 论文级系统复现。
 - `M5` 的 `adapter` baseline family 现已接入最小 `Prompt Tuning / LoRA` 闭环，并补到了两档固定 backbone和 `story_cloze` real-source smoke；但当前仍只支持 candidate-selection 任务，后续还需要补到更多任务和更正式的 few-shot/step 网格。
 - `M5` 的 `MetaPrompting` 现已接入最小 `planner_critic` scaffold，但当前仍是单次 prompt protocol，而不是正式多轮/多-agent MetaPrompting 复现；后续若要进入主表，需要补更接近原方法的交互与预算口径。
 - `MetaPrompting` 当前已补到 `story_cloze` real-source smoke，但还没有进 `gsm8k / narrativeqa / gpqa` 等更强任务，也没有与 Prompt Tuning / LoRA 对齐到正式 shot/step 网格。
 - `M5 / P1` 的最小 `LightThinker` 路线现已接入 `story_cloze` real-source smoke、budget audit 与 baseline grid；但当前只是一条 `compress -> answer` prompt scaffold，不是正式 `LightThinker` 论文级复现。
 - `M5 / P1` 的最小 `RAG` 路线现已接入 `story_cloze` real-source smoke 与 protocol-smoke grid；但当前只是一条检索式 prompt baseline，不是 `MemoryBank / ExpeL / AWM` 级别的完整系统对照。
-- `baseline_budget_audit` 现已能自动检查 `prompting / meta_prompting / adapter / rag / lightthinker` 的预算字段与双 backbone 覆盖；但 `MemGen` 仍未纳入同一条自动预算审计，因为它的外部训练/权重成本还没有在本仓库统一建模。
+- `baseline_budget_audit` 现已能自动检查 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 的预算字段与双 backbone 覆盖；但 `MemGen` 仍未纳入同一条自动预算审计，因为它的外部训练/权重成本还没有在本仓库统一建模。
 - benchmark materialize 现在已支持按 `max_examples` 生成不同的 real-smoke 文件名，避免 `smoke4` 与 `smoke8` 互相覆盖；但目前 manifest 仍只记录每个 benchmark 最近一次 materialize 的那个子集，还不是“多子集并存”的完整台账。
 - Hugging Face cache 现已迁到 `/root/autodl-tmp/.cache/huggingface`，并新增了固定脚本做 cache 迁移/清理；但这仍是“本机 runbook 级”约束，后续若换机器或换容器镜像，最好把数据盘/cache 根路径做成更显式的配置。
-- `MemGen / Qwen3-8B / story_cloze` 的真实 smoke 目前不再被磁盘阻塞，但官方进程仍在长时间 CPU 侧下载/准备模型；等这条 run 完成后，还需要把结果正式接进 baseline grid 的 imported rows。
+- `MemGen / Qwen3-8B / story_cloze` 的真实 smoke 已完成并接进 dual-import protocol grid；当前剩余缺口不再是“能不能跑通”，而是“如何把 MemGen 的外部训练/权重成本折算进与 prompt/adapter 同构的预算比较”。

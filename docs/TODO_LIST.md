@@ -518,12 +518,12 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 > `EXPERIMENTS_INFO.md` 的 Baselines、预算对齐与 CDMI 组是本里程碑的唯一口径来源。
 
 ### P0 必须
-- [ ] Vanilla
-- [ ] CoT
-- [ ] MemGen
-- [ ] Prompt Tuning
-- [ ] LoRA
-- [ ] MetaPrompting
+- [x] Vanilla
+- [x] CoT
+- [x] MemGen
+- [x] Prompt Tuning
+- [x] LoRA
+- [x] MetaPrompting
 - **DoD**：这些 baseline 都能在同一套 shot/step 网格下运行，并进入统一汇总器
 
 当前进展：
@@ -539,11 +539,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 同一套 `MetaPrompting` 现已进一步补到 `story_cloze` real-source smoke，统一汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`
 - `prompting / meta_prompting` 当前已支持 `support_examples > 0` 的 in-context few-shot demos，并已在 `story_cloze` real-source 上真实跑通两档 backbone 的 `2-shot` smoke，汇总位于 `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
 - 已新增 `baseline_budget_audit`，当前会自动检查 `prompting / meta_prompting / adapter` 的预算字段完整性与双 backbone 覆盖，已验证汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
-- `baseline_budget_audit` 当前已进一步扩到 `prompting / meta_prompting / adapter / rag / lightthinker` 五个 family，最新汇总仍位于 `results/generated/m5-baseline-budget-audit/summary.csv`
+- `baseline_budget_audit` 当前已进一步扩到 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 六个 family；最新 `metrics.json` 为 `rows_collected=52`、`checks_pass_rate=1.0`
 - 已新增最小 `story_cloze` baseline grid smoke suite：单个命令会在同一套 suite 内循环 `shots={0,2}`、`steps={0,4}`，并产出 `adapt_curve.csv / adapt_cost.json / summary.csv`，结果位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`
 - 同一套 grid 现已支持导入外部 baseline 点；当前已把 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 评测结果导入到 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
 - 已新增更接近协议的 `story_cloze` protocol-smoke grid：在 `smoke8` real-source 子集上跑 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并保留同一条曲线里的 `MemGen` 外部零样本点；结果位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
-- 说明：这一步完成的是“baseline harness 接入统一评测链”，还不是 `shot/step` 网格、也不是主表级 baseline DoD
+- 已新增最小 `memory_bank` baseline family，支持 `family=memory_bank`、`mode=episodic_bank`，并已真实跑通 `story_cloze` real-source smoke 的双 backbone 配置：
+  - qwen25: `runs/verify/baseline_memory_bank_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_memory_bank_story_cloze_qwen3_real_smoke/metrics.json`
+- `memory_bank` 当前已接入 baseline grid 与 budget audit：
+  - minimal grid: `results/generated/m5-story-cloze-baseline-grid-smoke/`
+  - protocol-smoke grid: `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
+  - budget audit: `results/generated/m5-baseline-budget-audit/summary.csv`
+- `MemGen / story_cloze / Qwen3-8B` 真实 smoke 现已完成，`runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 当前记录 `compute_reward=1.0`
+- dual-import protocol suite 现已把 `MemGen / Qwen2.5-1.5B-Instruct` 与 `MemGen / Qwen3-8B` 两个 `0-shot / 0-step` 外部点同时导入到 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`
+- 当前 dual-import suite 的 `adapt_cost.json` 为 `cell_count=100`、`variant_count=16`、`imported_eval_count=2`、`skipped_import_count=0`、`reused_train_run_count=52`、`reused_eval_run_count=92`
+- 说明：`M5 / P0` 当前已经在 protocol-smoke contract 层面满足 DoD；这表示 baseline family 已能进入同一套 `shot/step` 网格与统一汇总，不表示主表级 baseline 已完成
 
 ### P1 重要
 - [x] LightThinker
@@ -570,7 +580,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 说明：`LightThinker` 当前也只是“最小统一 scaffold”，不是正式论文级复现
 
 ### P2 加分
-- [ ] 更完整的 memory agent baseline 家族
+- [x] 更完整的 memory agent baseline 家族
 - [ ] 更多 prompt-based / adapter-based meta-learning variants
 - [x] baseline 自动预算检查脚本
 

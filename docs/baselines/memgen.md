@@ -19,7 +19,7 @@
 | --- | --- | --- | --- | --- |
 | `gsm8k` | Math / main suite | `MemGen-master/configs/latent_memory/gsm8k.yaml` | `configs/exp/memgen_gsm8k_qwen25_smoke_eval.yaml`, `configs/exp/memgen_gsm8k_qwen25_eval.yaml`, `configs/exp/memgen_gsm8k_qwen3_eval.yaml` | real smoke passed, unified translation passed |
 | `rocstories` | Narrative / CDMI | `MemGen-master/configs/latent_memory/rocstories.yaml` | `configs/exp/memgen_rocstories_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
-| `story_cloze` | Narrative / CDMI | `MemGen-master/configs/latent_memory/story_cloze.yaml` | `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml`, `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` | qwen25 real smoke passed; qwen3 smoke launched, pending completion |
+| `story_cloze` | Narrative / CDMI | `MemGen-master/configs/latent_memory/story_cloze.yaml` | `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml`, `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` | qwen25 + qwen3 real smoke passed; dual-import protocol grid point imported |
 | `gpqa` | Knowledge QA / main suite | `MemGen-master/configs/latent_memory/gpqa.yaml` | `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
 | `triviaqa` | Knowledge QA / main suite | `MemGen-master/configs/latent_memory/triviaqa.yaml` | `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` | real smoke passed, dynamic translation passed |
 | `kodcode` | Code / main suite | `MemGen-master/configs/latent_memory/kodcode.yaml` | `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` | real smoke passed, unified translation passed |
@@ -32,7 +32,7 @@
 - `configs/exp/memgen_gsm8k_qwen25_smoke_eval.yaml` with `--seed 23`
 - `configs/exp/memgen_rocstories_qwen25_smoke_eval.yaml` with `--seed 31`
 - `configs/exp/memgen_story_cloze_qwen25_smoke_eval.yaml` with `--seed 41`
-- `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` with `--seed 101` has been launched locally; completion is still pending because the first `Qwen3-8B` weights download is in progress
+- `configs/exp/memgen_story_cloze_qwen3_smoke_eval.yaml` with `--seed 101` real smoke passed; unified `metrics.json` 当前记录 `compute_reward=1.0`
 - `configs/exp/memgen_triviaqa_qwen25_smoke_eval.yaml` with `--seed 62`
 - `configs/exp/memgen_gpqa_qwen25_smoke_eval.yaml` with `--seed 53`
 - `configs/exp/memgen_kodcode_qwen25_smoke_eval.yaml` with `--seed 71`
@@ -46,6 +46,7 @@
 当前里程碑的可视化快照已保存为：
 
 - `docs/assets/milestones/20260306-m1-memgen-summary.svg`
+- `docs/assets/milestones/20260307-m5-story-cloze-baseline-grid-memgen-dual-summary.svg`
 
 ## Harness Rules
 
@@ -71,6 +72,7 @@
   - 统一层：`metrics.json`、`predictions.jsonl`
   - 官方原始层：`memgen_raw/answer.json`、`memgen_raw/launcher.json`、`memgen_raw/log.txt`
 - `run_memgen.py` 会把官方静态任务 `answer.json` 或动态任务 `conversations.txt` 翻译成统一 `predictions.jsonl`，并把 `compute_reward`、`num_predictions`、`wall_time_sec` 写回统一 `metrics.json`
+- `story_cloze / Qwen2.5-1.5B-Instruct` 与 `story_cloze / Qwen3-8B` 的统一 `metrics.json` 现已都能通过 `grid.imports` 导入到同一条 baseline protocol-smoke 曲线
 - 当前已验证 `model.trigger.active=True` 的最小 smoke 路径，配置见 `configs/exp/memgen_gsm8k_qwen25_smoke_eval_trigger_on.yaml`
 - 正式可比的 trigger baseline 模板见 `configs/exp/memgen_gsm8k_qwen25_eval_trigger_trained_template.yaml`；若 checkpoint 缺失，adapter 会在 preflight 阶段直接报错
 - adapter 运行 MemGen 时默认注入 `TOKENIZERS_PARALLELISM=false`，用脚本规则消除 `kodcode` 一类 code-eval task 的稳定 fork 警告
