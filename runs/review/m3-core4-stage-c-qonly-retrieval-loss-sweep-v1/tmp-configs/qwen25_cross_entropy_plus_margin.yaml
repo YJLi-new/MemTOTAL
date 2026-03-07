@@ -1,0 +1,10 @@
+includes:
+  - /root/mydir/MemTOTAL/configs/exp/m3_stage_c_core4_qwen25_smoke.yaml
+
+experiment:
+  name: m3_stage_c_core4_qwen25_qonly_loss_cross_entropy_plus_margin
+  method_variant: m3-core4-stage-c-qonly-loss-cross_entropy_plus_margin-qwen25
+
+runtime:
+  retrieval_loss_type: cross_entropy_plus_margin
+  retrieval_margin_value: 0.1

@@ -1,5 +1,9 @@
-runs/
-results/generated/
+runs/*
+!runs/review/
+!runs/review/**
+results/generated/*
+!results/generated/review/
+!results/generated/review/**
 results/reports/
 MemGen-master/data_chache/
 MemGen-master/results/

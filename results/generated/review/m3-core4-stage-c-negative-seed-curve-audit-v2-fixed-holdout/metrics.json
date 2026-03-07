@@ -1,0 +1,29 @@
+{
+  "analysis_mode": "m3_stage_c_negative_seed_curve_audit",
+  "by_backbone": {
+    "Qwen2.5-1.5B-Instruct": {
+      "max_shot": 3,
+      "max_step": 5,
+      "mean_max_shot_final_gap_to_flip": 0.04245084839769536,
+      "mean_max_shot_step0_gap_to_flip": 0.043387330809815064,
+      "mean_zero_shot_gap_to_flip": 0.043387330809815064,
+      "negative_seed_count": 2
+    },
+    "Qwen3-8B": {
+      "max_shot": 3,
+      "max_step": 5,
+      "mean_max_shot_final_gap_to_flip": 0.07305391222514489,
+      "mean_max_shot_step0_gap_to_flip": 0.07317407436116978,
+      "mean_zero_shot_gap_to_flip": 0.07317407436116978,
+      "negative_seed_count": 3
+    }
+  },
+  "input_root": "/root/autodl-tmp/memtotal-stage-c-curve-suite-v3-fixed-holdout",
+  "mode": "analysis",
+  "negative_seed_curve_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/negative_seed_curve_rows.csv",
+  "negative_seed_shot_curve_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/negative_seed_shot_curve.csv",
+  "negative_seed_shot_curve_svg": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/negative_seed_shot_curve.svg",
+  "negative_seed_step_curve_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/negative_seed_step_curve.csv",
+  "negative_seed_step_curve_svg": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/negative_seed_step_curve.svg",
+  "rows_collected": 95
+}

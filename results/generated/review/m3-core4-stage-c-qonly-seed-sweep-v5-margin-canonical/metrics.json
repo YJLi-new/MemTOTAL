@@ -1,0 +1,1028 @@
+{
+  "analysis_mode": "m3_stage_c_seed_sweep_summary",
+  "by_backbone": {
+    "Qwen2.5-1.5B-Instruct": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_episode_budget": {
+    "Qwen2.5-1.5B-Instruct::episodes=3": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::episodes=3": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_negative_count": {
+    "Qwen2.5-1.5B-Instruct::neg_count=7": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::neg_count=7": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_policy": {
+    "Qwen2.5-1.5B-Instruct::aggregate_support": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::aggregate_support": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_retrieval_loss": {
+    "Qwen2.5-1.5B-Instruct::loss=cross_entropy_plus_margin": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::loss=cross_entropy_plus_margin": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_support_bank_size": {
+    "Qwen2.5-1.5B-Instruct::bank=auto": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::bank=auto": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_support_negative_pool": {
+    "Qwen2.5-1.5B-Instruct::negatives=source_plus_support_bank": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::negatives=source_plus_support_bank": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_support_negative_sampler": {
+    "Qwen2.5-1.5B-Instruct::negative_sampler=hard_by_current_model": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::negative_sampler=hard_by_current_model": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_support_weighting": {
+    "Qwen2.5-1.5B-Instruct::weight=uniform": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::weight=uniform": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "by_backbone_target_split": {
+    "Qwen2.5-1.5B-Instruct::split=random": {
+      "best_seed": 55203,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 4.6088298161817145e-05,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55204,
+      "worst_task_gain": 0.0
+    },
+    "Qwen3-8B::split=random": {
+      "best_seed": 55305,
+      "best_task_gain": 0.0,
+      "mean_proxy_gain": 9.613566928434735e-06,
+      "mean_support_examples_touched": 27.0,
+      "mean_support_updates": 3.0,
+      "mean_task_gain": 0.0,
+      "non_negative_gain_rate": 1.0,
+      "positive_gain_count": 0,
+      "positive_gain_rate": 0.0,
+      "retrieval_loss_types": [
+        "cross_entropy_plus_margin"
+      ],
+      "retrieval_margin_values": [
+        0.1
+      ],
+      "retrieval_negative_counts": [
+        7
+      ],
+      "seed_count": 5,
+      "target_episode_policies": [
+        "aggregate_support"
+      ],
+      "target_episode_repeats": [
+        3
+      ],
+      "target_eval_repeats": [
+        3
+      ],
+      "target_split_policies": [
+        "random"
+      ],
+      "target_support_bank_sizes": [
+        "auto"
+      ],
+      "target_support_negative_pools": [
+        "source_plus_support_bank"
+      ],
+      "target_support_negative_samplers": [
+        "hard_by_current_model"
+      ],
+      "target_support_selection_policies": [
+        "plain"
+      ],
+      "target_support_weightings": [
+        "uniform"
+      ],
+      "worst_seed": 55301,
+      "worst_task_gain": 0.0
+    }
+  },
+  "input_root": "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical",
+  "mode": "analysis",
+  "rows_collected": 10,
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/seed_sweep.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/seed_sweep.svg"
+}

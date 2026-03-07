@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/train.py",
+    "--config",
+    "/root/mydir/MemTOTAL/configs/exp/m3_stage_c_core4_qwen25_smoke.yaml",
+    "--seed",
+    "55205",
+    "--output_dir",
+    "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical/qwen25-seed-55205",
+    "--resume",
+    "runs/verify/m3-core4-qwen25/stage-b"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": null,
+  "experiment_name": "m3_stage_c_core4_qwen25_smoke",
+  "git_hash": "f876243b042f8184c04491abec4a064315ff553a",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "ours-core4-stage-c-fewshot-adapt-q-only",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 55205,
+  "smoke_subset": null,
+  "stage": "M3-core4-stage-c",
+  "task_domain": "cross_domain_meta",
+  "task_name": "core4_transfer_smoke",
+  "task_split": "meta",
+  "timestamp_utc": "2026-03-07T07:45:25.382614+00:00",
+  "torch_version": "2.8.0+cu128"
+}

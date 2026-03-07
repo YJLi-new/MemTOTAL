@@ -1,0 +1,76 @@
+{
+  "events": [
+    {
+      "adaptation_gain": 0.00016188621520996094,
+      "adapted_query_accuracy": 0.0,
+      "adapted_query_loss": 1.6217771768569946,
+      "domain": "code",
+      "episode": 0,
+      "query_candidate_pool_size": 5,
+      "query_objective": "continuation_retrieval",
+      "support_candidate_pool_size": 3,
+      "zero_shot_query_accuracy": 0.0,
+      "zero_shot_query_loss": 1.6219390630722046
+    },
+    {
+      "adaptation_gain": 0.0024765729904174805,
+      "adapted_query_accuracy": 0.0,
+      "adapted_query_loss": 1.6341840028762817,
+      "domain": "math",
+      "episode": 1,
+      "query_candidate_pool_size": 5,
+      "query_objective": "continuation_retrieval",
+      "support_candidate_pool_size": 3,
+      "zero_shot_query_accuracy": 0.0,
+      "zero_shot_query_loss": 1.6366605758666992
+    },
+    {
+      "adaptation_gain": 0.0025637149810791016,
+      "adapted_query_accuracy": 0.3333333333333333,
+      "adapted_query_loss": 1.6205047369003296,
+      "domain": "math",
+      "episode": 2,
+      "query_candidate_pool_size": 5,
+      "query_objective": "continuation_retrieval",
+      "support_candidate_pool_size": 3,
+      "zero_shot_query_accuracy": 0.3333333333333333,
+      "zero_shot_query_loss": 1.6230684518814087
+    },
+    {
+      "adaptation_gain": -0.00025713443756103516,
+      "adapted_query_accuracy": 0.3333333333333333,
+      "adapted_query_loss": 1.5856233835220337,
+      "domain": "code",
+      "episode": 3,
+      "query_candidate_pool_size": 5,
+      "query_objective": "continuation_retrieval",
+      "support_candidate_pool_size": 3,
+      "zero_shot_query_accuracy": 0.3333333333333333,
+      "zero_shot_query_loss": 1.5853662490844727
+    },
+    {
+      "adaptation_gain": 1.5497207641601562e-05,
+      "adapted_query_accuracy": 0.3333333333333333,
+      "adapted_query_loss": 1.6022504568099976,
+      "domain": "code",
+      "episode": 4,
+      "query_candidate_pool_size": 5,
+      "query_objective": "continuation_retrieval",
+      "support_candidate_pool_size": 3,
+      "zero_shot_query_accuracy": 0.3333333333333333,
+      "zero_shot_query_loss": 1.6022659540176392
+    },
+    {
+      "adaptation_gain": -0.00018143653869628906,
+      "adapted_query_accuracy": 0.0,
+      "adapted_query_loss": 1.609963297843933,
+      "domain": "code",
+      "episode": 5,
+      "query_candidate_pool_size": 5,
+      "query_objective": "continuation_retrieval",
+      "support_candidate_pool_size": 3,
+      "zero_shot_query_accuracy": 0.0,
+      "zero_shot_query_loss": 1.6097818613052368
+    }
+  ]
+}

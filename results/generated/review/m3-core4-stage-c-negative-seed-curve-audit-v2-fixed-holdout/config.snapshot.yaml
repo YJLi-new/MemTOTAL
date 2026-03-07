@@ -1,0 +1,51 @@
+task:
+  name: core4_transfer_smoke
+  domain: cross_domain_meta
+  split: meta
+  meta:
+    general_domains:
+    - math
+    - code
+    - qa
+    - narrative
+    source_domains:
+    - math
+    - code
+    - qa
+    target_domain: narrative
+    support_size: 3
+    query_size: 3
+    sampling_policy: uniform_examples
+    dataset_sources:
+    - benchmark_id: gsm8k
+      dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke8.jsonl
+      domain: math
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: kodcode
+      dataset_path: data/benchmarks/materialized/kodcode/eval-real-smoke8.jsonl
+      domain: code
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: gpqa
+      dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke8.jsonl
+      domain: qa
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: story_cloze
+      dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl
+      domain: narrative
+      smoke_subset: hf_real_smoke8
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/m3_stage_c_negative_seed_curve_audit.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml
+experiment:
+  name: m3_stage_c_negative_seed_curve_audit
+  stage: M3-core4-stage-c-negative-seed-curve-audit
+  method_variant: analysis-stage-c-negative-seed-curve-audit
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+runtime:
+  analysis_mode: m3_stage_c_negative_seed_curve_audit
+  device: cpu

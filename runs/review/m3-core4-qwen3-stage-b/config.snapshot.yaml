@@ -1,0 +1,92 @@
+task:
+  name: core4_transfer_smoke
+  domain: cross_domain_meta
+  split: meta
+  meta:
+    general_domains:
+    - math
+    - code
+    - qa
+    - narrative
+    source_domains:
+    - math
+    - code
+    - qa
+    target_domain: narrative
+    support_size: 3
+    query_size: 3
+    sampling_policy: uniform_examples
+    dataset_sources:
+    - benchmark_id: gsm8k
+      dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke8.jsonl
+      domain: math
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: kodcode
+      dataset_path: data/benchmarks/materialized/kodcode/eval-real-smoke8.jsonl
+      domain: code
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: gpqa
+      dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke8.jsonl
+      domain: qa
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: story_cloze
+      dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl
+      domain: narrative
+      smoke_subset: hf_real_smoke8
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/m3_stage_b_core4_qwen3_smoke.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml
+  - /root/mydir/MemTOTAL/configs/method/memory_bootstrap_transformer.yaml
+method:
+  name: general-writer-adaptable-reader-transformer-bootstrap
+  embed_dim: 64
+  writer:
+    arch: transformer
+    memory_slots: 8
+    hidden_dim: 128
+    num_heads: 4
+    transformer_layers: 2
+    dropout: 0.0
+  reader:
+    num_queries: 4
+    gating_mode: false
+    num_heads: 4
+    condition_on_context: true
+    dropout: 0.0
+    conditioning:
+      domain_key: domain
+      include_task_name: true
+  fuser:
+    arch: resampler
+    short_slots: 2
+    hidden_dim: 128
+    num_heads: 4
+    dropout: 0.0
+  injector:
+    mode: prefix
+    enabled: true
+    position: segment
+  segmenter:
+    mode: delimiter
+    delimiter: '||'
+experiment:
+  name: m3_stage_b_core4_qwen3_smoke
+  stage: M3-core4-stage-b
+  method_variant: ours-core4-stage-b-meta-queries
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+runtime:
+  training_stage: stage_b
+  query_learning_mode: meta_trained
+  stage_b_trainable_target: queries_plus_fuser
+  query_objective: continuation_retrieval
+  retrieval_negative_count: 7
+  meta_episodes: 6
+  inner_steps: 1
+  inner_learning_rate: 0.01
+  meta_learning_rate: 0.05
+  device: cpu

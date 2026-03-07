@@ -1,0 +1,9 @@
+backbone,shot,seed_count,mean_task_score,mean_task_gain,mean_task_proxy_score,mean_task_proxy_gain,mean_objective_loss,mean_query_loss,positive_gain_rate,task_metric_name,task_proxy_name,target_episode_policy,target_support_weighting,target_split_policy
+Qwen2.5-1.5B-Instruct,0,5,0.48888888888888893,0.0,0.5001330229971144,0.0,1.1013074689441258,1.1013074689441258,0.0,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen2.5-1.5B-Instruct,1,5,0.5111111111111111,0.02222222222222221,0.500175357527203,4.233453008862797e-05,1.1012912750244142,1.1012912750244142,0.2,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen2.5-1.5B-Instruct,2,5,0.5111111111111111,0.02222222222222221,0.5002187960677676,8.577307065326112e-05,1.1012887557347617,1.1012887557347617,0.2,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen2.5-1.5B-Instruct,3,5,0.5111111111111111,0.02222222222222221,0.5002346012327406,0.0001015782356262207,1.1012909279929268,1.1012909279929268,0.2,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen3-8B,0,5,0.37777777777777777,0.0,0.4945772727330525,0.0,1.103573939535353,1.103573939535353,0.0,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen3-8B,1,5,0.37777777777777777,0.0,0.49455403155750705,-2.324117554556304e-05,1.1035694572660657,1.1035694572660657,0.0,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen3-8B,2,5,0.37777777777777777,0.0,0.49457015328937104,-7.119443681513627e-06,1.1035670863257514,1.1035670863257514,0.0,accuracy,gold_choice_probability,aggregate_support,uniform,random
+Qwen3-8B,3,5,0.37777777777777777,0.0,0.4945962753560808,1.9002623028241406e-05,1.1035635312398275,1.1035635312398275,0.0,accuracy,gold_choice_probability,aggregate_support,uniform,random

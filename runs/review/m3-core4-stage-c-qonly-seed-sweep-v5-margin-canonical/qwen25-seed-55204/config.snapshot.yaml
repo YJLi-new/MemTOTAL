@@ -1,0 +1,104 @@
+task:
+  name: core4_transfer_smoke
+  domain: cross_domain_meta
+  split: meta
+  meta:
+    general_domains:
+    - math
+    - code
+    - qa
+    - narrative
+    source_domains:
+    - math
+    - code
+    - qa
+    target_domain: narrative
+    support_size: 3
+    query_size: 3
+    sampling_policy: uniform_examples
+    dataset_sources:
+    - benchmark_id: gsm8k
+      dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke8.jsonl
+      domain: math
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: kodcode
+      dataset_path: data/benchmarks/materialized/kodcode/eval-real-smoke8.jsonl
+      domain: code
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: gpqa
+      dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke8.jsonl
+      domain: qa
+      smoke_subset: hf_real_smoke8
+    - benchmark_id: story_cloze
+      dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl
+      domain: narrative
+      smoke_subset: hf_real_smoke8
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/m3_stage_c_core4_qwen25_smoke.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml
+  - /root/mydir/MemTOTAL/configs/method/memory_bootstrap_transformer.yaml
+method:
+  name: general-writer-adaptable-reader-transformer-bootstrap
+  embed_dim: 64
+  writer:
+    arch: transformer
+    memory_slots: 8
+    hidden_dim: 128
+    num_heads: 4
+    transformer_layers: 2
+    dropout: 0.0
+  reader:
+    num_queries: 4
+    gating_mode: false
+    query_residual_scale: 1.0
+    num_heads: 4
+    condition_on_context: true
+    dropout: 0.0
+    conditioning:
+      domain_key: domain
+      include_task_name: true
+  fuser:
+    arch: resampler
+    short_slots: 2
+    hidden_dim: 128
+    num_heads: 4
+    dropout: 0.0
+  injector:
+    mode: prefix
+    enabled: true
+    position: segment
+  segmenter:
+    mode: delimiter
+    delimiter: '||'
+experiment:
+  name: m3_stage_c_core4_qwen25_smoke
+  stage: M3-core4-stage-c
+  method_variant: ours-core4-stage-c-fewshot-adapt-q-only
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+runtime:
+  training_stage: stage_c
+  query_objective: continuation_retrieval
+  retrieval_negative_count: 7
+  retrieval_loss_type: cross_entropy_plus_margin
+  retrieval_margin_value: 0.1
+  adaptation_target: q_only
+  expected_query_learning_mode: meta_trained
+  adapt_steps: 3
+  adapt_learning_rate: 0.2
+  target_eval_repeats: 3
+  target_episode_repeats: 3
+  target_episode_policy: aggregate_support
+  target_support_weighting: uniform
+  target_split_policy: random
+  target_support_bank_size: auto
+  target_support_negative_pool: source_plus_support_bank
+  target_support_negative_sampler: hard_by_current_model
+  adapt_shots:
+  - 0
+  - 3
+  device: cpu
