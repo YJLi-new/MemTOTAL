@@ -176,6 +176,10 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                 metrics["by_backbone_policy"]["Qwen2.5-1.5B-Instruct::aggregate_support"]["seed_count"],
                 2,
             )
+            self.assertEqual(
+                metrics["by_backbone_episode_budget"]["Qwen2.5-1.5B-Instruct::episodes=3"]["seed_count"],
+                2,
+            )
             self.assertEqual(metrics["by_backbone"]["Qwen3-8B"]["worst_seed"], 21)
             self.assertAlmostEqual(metrics["by_backbone"]["Qwen3-8B"]["mean_task_gain"], -0.25)
 

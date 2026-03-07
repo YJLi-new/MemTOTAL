@@ -263,6 +263,19 @@ def run_m3_stage_c_seed_sweep_summary(
                 continue
             by_backbone_policy[f"{backbone}::{policy}"] = _summarize(grouped_rows)
 
+    by_backbone_episode_budget: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        for repeats in sorted({int(row.get("target_episode_repeats") or 1) for row in rows if str(row["backbone"]) == backbone}):
+            grouped_rows = [
+                row
+                for row in rows
+                if str(row["backbone"]) == backbone
+                and int(row.get("target_episode_repeats") or 1) == repeats
+            ]
+            if not grouped_rows:
+                continue
+            by_backbone_episode_budget[f"{backbone}::episodes={repeats}"] = _summarize(grouped_rows)
+
     metrics = {
         "mode": "analysis",
         "analysis_mode": "m3_stage_c_seed_sweep_summary",
@@ -272,6 +285,7 @@ def run_m3_stage_c_seed_sweep_summary(
         "summary_plot": str(summary_svg.resolve()),
         "by_backbone": by_backbone,
         "by_backbone_policy": by_backbone_policy,
+        "by_backbone_episode_budget": by_backbone_episode_budget,
     }
     write_json(output_dir / "metrics.json", metrics)
     return metrics
