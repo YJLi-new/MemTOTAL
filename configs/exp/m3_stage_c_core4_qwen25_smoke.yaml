@@ -25,7 +25,7 @@ runtime:
   target_episode_repeats: 3
   target_episode_policy: aggregate_support
   target_support_weighting: uniform
-  target_split_policy: proxy_bottomk_support
+  target_split_policy: random
   adapt_shots:
     - 0
     - 3

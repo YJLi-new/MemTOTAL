@@ -92,4 +92,5 @@
 - 修正协议后的 fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-fixed-eval/metrics.json` 当前记录：qwen25 与 qwen3 的 canonical `q_only` 都是 `mean_task_gain=0.0`、`positive_gain_rate=0.0`、`non_negative_gain_rate=1.0`；两档 backbone 仅剩 `1e-6` 级 `mean_proxy_gain`。
 - 修正协议后的 fresh `results/generated/m3-core4-stage-c-step-saturation-audit-v2-fixed-eval/metrics.json` 也明确显示：qwen25 与 qwen3 的 `mean_zero_to_step0_task_gain` 和 `mean_step0_to_final_task_gain` 都是 `0.0`。因此，旧版“收益全部发生在 `zero->step0`”这条判断本身也已经失效。
 - 现在真正剩下的 tech debt 不再是 target split / support weighting / target episode policy 的口径选择，而是更底层的“在公平 fixed-holdout eval 下，为什么 Stage C official task score 完全不动”。
-- 当前最值得继续拆的是两条线：一是增大 support-side retrieval negatives / support bank 表达力，二是在公平协议下重新做 `target_split_policy` sweep，确认 `proxy_bottomk_support` 是否还有真实贡献，而不是继续沿用旧协议结论。
+- 公平 `target_split_policy` 重扫 `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v2-fixed-eval/metrics.json` 现已把第二条线正式排掉：`random / proxy_topk_support / proxy_bottomk_support` 在两档 backbone 上的 official `mean_task_gain` 都是 `0.0`，proxy 也只剩 `1e-6` 级差异。
+- 因此，当前最值得继续拆的只剩 support-side retrieval 信号本身，优先看 `support_bank_size`、support negative pool 和 inner-loop retrieval 目标强度，而不是继续调 split policy。
