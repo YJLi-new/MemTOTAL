@@ -96,6 +96,8 @@ _REAL_PILOT_ARM_KEYS = {
     "C": "candidate_conditioned_late_fusion|real|continuation_retrieval",
     "D": "candidate_conditioned_late_fusion|shuffled|continuation_retrieval",
     "E": "candidate_conditioned_late_fusion|real|choice_ce_plus_margin",
+    "F": "shared_plus_candidate_delta_late_fusion|real|continuation_retrieval",
+    "G": "shared_plus_candidate_delta_late_fusion|shuffled|continuation_retrieval",
 }
 _DEFAULT_COMPARE_ALIASES = ["A", "B", "C", "D", "E"]
 _DEFAULT_COMPARE_PAIRS = ["A->B", "A->C", "C->D", "C->E"]
@@ -234,6 +236,21 @@ def _pick_real_pilot_run(
     return None
 
 
+def _resolve_import_arm_runs(config: dict[str, Any] | None) -> dict[str, Path]:
+    raw_imports = None if config is None else config.get("runtime", {}).get("import_arm_runs")
+    if raw_imports is None:
+        return {}
+    if not isinstance(raw_imports, dict):
+        raise ValueError("runtime.import_arm_runs must be a mapping from alias to run directory.")
+    resolved: dict[str, Path] = {}
+    for alias, run_dir in raw_imports.items():
+        alias_name = str(alias).strip()
+        if alias_name not in _REAL_PILOT_ARM_KEYS:
+            raise ValueError(f"Unsupported imported arm alias: {alias_name}")
+        resolved[alias_name] = Path(str(run_dir)).resolve()
+    return resolved
+
+
 def _resolve_compare_aliases(config: dict[str, Any] | None) -> list[str]:
     raw_aliases = None if config is None else config.get("runtime", {}).get("required_arm_aliases")
     if raw_aliases is None:
@@ -270,6 +287,32 @@ def _resolve_compare_pairs(
             continue
         resolved.append((left_alias, right_alias))
     return resolved
+
+
+def _resolve_flip_compare_aliases(config: dict[str, Any] | None) -> tuple[str, str]:
+    raw_spec = None if config is None else config.get("runtime", {}).get("flip_compare_aliases")
+    if raw_spec is None:
+        return ("A", "C")
+    if isinstance(raw_spec, str):
+        parts = [part.strip() for part in raw_spec.split("->") if part.strip()]
+    else:
+        parts = [str(part).strip() for part in raw_spec]
+    if len(parts) != 2 or any(part not in _REAL_PILOT_ARM_KEYS for part in parts):
+        raise ValueError("runtime.flip_compare_aliases must specify exactly two supported aliases.")
+    return parts[0], parts[1]
+
+
+def _resolve_memory_control_pair(config: dict[str, Any] | None) -> tuple[str, str]:
+    raw_spec = None if config is None else config.get("runtime", {}).get("memory_control_pair")
+    if raw_spec is None:
+        return ("C", "D")
+    if isinstance(raw_spec, str):
+        parts = [part.strip() for part in raw_spec.split("->") if part.strip()]
+    else:
+        parts = [str(part).strip() for part in raw_spec]
+    if len(parts) != 2 or any(part not in _REAL_PILOT_ARM_KEYS for part in parts):
+        raise ValueError("runtime.memory_control_pair must specify exactly two supported aliases.")
+    return parts[0], parts[1]
 
 
 def _resolve_pilot_split_name(config: dict[str, Any] | None, *, default: str) -> str:
@@ -317,12 +360,24 @@ def _load_selected_rows_by_alias(
     if config is not None and "task" in config and "dataset_path" in config["task"]:
         dataset_filename = Path(str(config["task"]["dataset_path"])).name
     aliases = _resolve_compare_aliases(config)
+    imported_runs = _resolve_import_arm_runs(config)
     runs_by_key = _collect_stage_c_real_pilot_runs(input_root)
     runs: dict[str, tuple[dict[str, Any], Path]] = {}
     selected_rows_by_alias: dict[str, dict[str, dict[str, Any]]] = {}
     arm_summary_rows: list[dict[str, Any]] = []
     missing: list[str] = []
     for alias in aliases:
+        if alias in imported_runs:
+            run_dir = imported_runs[alias]
+            metrics_path = run_dir / "metrics.json"
+            if not metrics_path.exists():
+                raise ValueError(f"Imported arm {alias} is missing metrics.json at {run_dir}")
+            metrics = json.loads(metrics_path.read_text())
+            runs[alias] = (metrics, run_dir)
+            _selected_metrics, rows = _read_selected_case_rows(run_dir)
+            selected_rows_by_alias[alias] = _rows_by_example(rows)
+            arm_summary_rows.append(_build_arm_summary_row(alias, metrics, run_dir))
+            continue
         key = _REAL_PILOT_ARM_KEYS[alias]
         picked = _pick_real_pilot_run(
             runs_by_key.get(key, []),
@@ -809,17 +864,20 @@ def run_stage_c_real_pilot_compare(
         )
 
     flip_rows: list[dict[str, Any]] = []
-    if "A" in selected_rows_by_alias and "C" in selected_rows_by_alias:
-        common_flip_ids = sorted(set(selected_rows_by_alias["A"]) & set(selected_rows_by_alias["C"]))
+    flip_left_alias, flip_right_alias = _resolve_flip_compare_aliases(config)
+    if flip_left_alias in selected_rows_by_alias and flip_right_alias in selected_rows_by_alias:
+        common_flip_ids = sorted(set(selected_rows_by_alias[flip_left_alias]) & set(selected_rows_by_alias[flip_right_alias]))
     else:
         common_flip_ids = []
     for example_id in common_flip_ids:
-        base_row = selected_rows_by_alias["A"][example_id]
-        candidate_row = selected_rows_by_alias["C"][example_id]
+        base_row = selected_rows_by_alias[flip_left_alias][example_id]
+        candidate_row = selected_rows_by_alias[flip_right_alias][example_id]
         if (not bool(base_row["predicted_correct"])) and bool(candidate_row["predicted_correct"]):
             flip_rows.append(
                 {
                     "example_id": example_id,
+                    "left_alias": flip_left_alias,
+                    "right_alias": flip_right_alias,
                     "bucket": str(candidate_row.get("screening_bucket", "")),
                     "base_margin": float(base_row["final_margin"]),
                     "candidate_margin": float(candidate_row["final_margin"]),
@@ -831,17 +889,48 @@ def run_stage_c_real_pilot_compare(
                 }
             )
 
+    bucket_summary_rows: list[dict[str, Any]] = []
+    bucket_keys = sorted(
+        {
+            str(row.get("screening_bucket", ""))
+            for alias_rows in selected_rows_by_alias.values()
+            for row in alias_rows.values()
+        }
+    )
+    for alias, alias_rows in selected_rows_by_alias.items():
+        for bucket in bucket_keys:
+            bucket_rows = [row for row in alias_rows.values() if str(row.get("screening_bucket", "")) == bucket]
+            if not bucket_rows:
+                continue
+            bucket_summary_rows.append(
+                {
+                    "alias": alias,
+                    "bucket": bucket,
+                    "examples": len(bucket_rows),
+                    "task_score": sum(float(row["task_score"]) for row in bucket_rows) / len(bucket_rows),
+                    "task_proxy_score": sum(float(row["task_proxy_score"]) for row in bucket_rows) / len(bucket_rows),
+                    "task_margin": sum(float(row["final_margin"]) for row in bucket_rows) / len(bucket_rows),
+                }
+            )
+
     arm_summary_path = output_dir / "arm_summary.csv"
     pairwise_path = output_dir / "arm_pairwise_compare.csv"
     flip_cases_path = output_dir / "flip_cases.csv"
+    bucket_summary_path = output_dir / "bucket_summary.csv"
     memory_control_gap_path = output_dir / "memory_control_gap.csv"
     write_summary_csv(arm_summary_path, arm_summary_rows)
     write_sanity_plot(output_dir / "summary.svg", arm_summary_rows)
     _write_csv(pairwise_path, pair_rows)
     _write_csv(flip_cases_path, flip_rows)
+    _write_csv(bucket_summary_path, bucket_summary_rows)
+    memory_left_alias, memory_right_alias = _resolve_memory_control_pair(config)
     _write_csv(
         memory_control_gap_path,
-        [row for row in pair_rows if row["left_alias"] == "C" and row["right_alias"] == "D"],
+        [
+            row
+            for row in pair_rows
+            if row["left_alias"] == memory_left_alias and row["right_alias"] == memory_right_alias
+        ],
     )
     report_title = "Stage C Real Pilot Compare"
     if config is not None:
@@ -866,6 +955,15 @@ def run_stage_c_real_pilot_compare(
             f"mean_task_gain={row['mean_task_gain']:.4f}, "
             f"mean_margin_gain={row['mean_margin_gain']:.4f}"
         )
+    report_lines.append("")
+    report_lines.append("## Bucket Summary")
+    for row in bucket_summary_rows:
+        report_lines.append(
+            f"- {row['alias']} / {row['bucket']}: "
+            f"task_score={row['task_score']:.4f}, "
+            f"proxy={row['task_proxy_score']:.4f}, "
+            f"margin={row['task_margin']:.4f}"
+        )
     (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
     write_json(
         output_dir / "metrics.json",
@@ -874,6 +972,7 @@ def run_stage_c_real_pilot_compare(
             "arm_summary_csv": str(arm_summary_path.resolve()),
             "pairwise_compare_csv": str(pairwise_path.resolve()),
             "flip_cases_csv": str(flip_cases_path.resolve()),
+            "bucket_summary_csv": str(bucket_summary_path.resolve()),
             "memory_control_gap_csv": str(memory_control_gap_path.resolve()),
             "pair_count": len(pair_rows),
             "flip_cases": len(flip_rows),

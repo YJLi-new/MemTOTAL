@@ -47,10 +47,12 @@ def _resolve_decision_mode(config: dict[str, Any]) -> str:
         "base_only",
         "shared_summary_late_fusion",
         "candidate_conditioned_late_fusion",
+        "shared_plus_candidate_delta_late_fusion",
     }:
         raise ValueError(
             f"Unsupported runtime.stage_c_decision_mode={decision_mode}. "
-            "Expected one of base_only, shared_summary_late_fusion, candidate_conditioned_late_fusion."
+            "Expected one of base_only, shared_summary_late_fusion, "
+            "candidate_conditioned_late_fusion, shared_plus_candidate_delta_late_fusion."
         )
     return decision_mode
 
@@ -125,6 +127,17 @@ def _resolve_residual_calibration_alpha_grid(
         seen.add(value)
         ordered.append(value)
     return ordered
+
+
+def _resolve_candidate_delta_scale(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("stage_c_candidate_delta_scale", 1.0))
+
+
+def _resolve_candidate_delta_gate_tau(config: dict[str, Any]) -> float:
+    gate_tau = float(config["runtime"].get("stage_c_candidate_delta_gate_tau", 0.01))
+    if gate_tau <= 0.0:
+        raise ValueError("runtime.stage_c_candidate_delta_gate_tau must be > 0.0")
+    return gate_tau
 
 
 def _resolve_story_text(example: dict[str, Any]) -> str:
@@ -240,32 +253,12 @@ def _shared_memory_summary(
     return runtime.summarize_memory_short(memory_short)
 
 
-def _score_choice_residuals(
+def _candidate_conditioned_residual_scores(
     runtime: MemoryRuntime,
     example_cache: PilotExampleCache,
     *,
-    decision_mode: str,
-    memory_control: str,
-    cache_lookup: dict[str, PilotExampleCache],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    memory_source_cache = _resolve_memory_source_cache(
-        example_cache,
-        cache_lookup,
-        memory_control=memory_control,
-    )
-    if decision_mode == "base_only":
-        zero_residual = torch.zeros_like(example_cache.base_scores)
-        return zero_residual, example_cache.base_scores.detach().clone()
-
-    if decision_mode == "shared_summary_late_fusion":
-        memory_summary = _shared_memory_summary(
-            runtime,
-            example_cache,
-            memory_source_cache=memory_source_cache,
-        )
-        residual_scores = runtime.score_candidates(memory_summary, example_cache.candidate_states)
-        return residual_scores, example_cache.base_scores.detach().clone()
-
+    memory_source_cache: PilotExampleCache | None,
+) -> torch.Tensor:
     memory_long = _resolve_memory_long(example_cache, memory_source_cache)
     base_context = _base_reader_context(example_cache)
     residual_scores: list[torch.Tensor] = []
@@ -279,7 +272,144 @@ def _score_choice_residuals(
         memory_short = runtime.fuser.fuse(reader_output["readouts"])
         conditioned_summary = runtime.summarize_memory_short(memory_short)
         residual_scores.append(runtime.score_candidates(conditioned_summary, candidate_state).squeeze(0))
-    return torch.stack(residual_scores), example_cache.base_scores.detach().clone()
+    return torch.stack(residual_scores)
+
+
+def _top2_gap(scores: torch.Tensor) -> float:
+    if scores.numel() < 2:
+        return 0.0
+    topk = torch.topk(scores, k=2, dim=0).values
+    return float((topk[0] - topk[1]).item())
+
+
+def _compute_candidate_delta_gate(shared_residual_scores: torch.Tensor, *, gate_tau: float) -> float:
+    if gate_tau <= 0.0:
+        raise ValueError("gate_tau must be > 0.0")
+    gap = _top2_gap(shared_residual_scores)
+    return float(max(0.0, min(1.0, 1.0 - (gap / gate_tau))))
+
+
+def _zero_mean_candidate_delta(raw_delta_scores: torch.Tensor) -> torch.Tensor:
+    if raw_delta_scores.numel() == 0:
+        return raw_delta_scores
+    return raw_delta_scores - raw_delta_scores.mean()
+
+
+def _compose_shared_plus_candidate_delta_scores(
+    *,
+    base_scores: torch.Tensor,
+    shared_residual_scores: torch.Tensor,
+    conditioned_residual_scores: torch.Tensor,
+    shared_scale: float,
+    delta_scale: float,
+    gate_tau: float,
+) -> dict[str, torch.Tensor | float]:
+    raw_candidate_delta_scores = conditioned_residual_scores - shared_residual_scores
+    candidate_delta_scores = _zero_mean_candidate_delta(raw_candidate_delta_scores)
+    candidate_delta_gate = _compute_candidate_delta_gate(shared_residual_scores, gate_tau=gate_tau)
+    shared_choice_scores = base_scores + (float(shared_scale) * shared_residual_scores)
+    delta_contribution = candidate_delta_gate * float(delta_scale) * candidate_delta_scores
+    final_choice_scores = shared_choice_scores + delta_contribution
+    total_memory_residual_scores = final_choice_scores - base_scores
+    return {
+        "base_scores": base_scores,
+        "shared_residual_scores": shared_residual_scores,
+        "conditioned_residual_scores": conditioned_residual_scores,
+        "raw_candidate_delta_scores": raw_candidate_delta_scores,
+        "candidate_delta_scores": candidate_delta_scores,
+        "candidate_delta_gate": float(candidate_delta_gate),
+        "shared_choice_scores": shared_choice_scores,
+        "memory_residual_scores": total_memory_residual_scores,
+        "final_choice_scores": final_choice_scores,
+    }
+
+
+def _score_choice_components(
+    runtime: MemoryRuntime,
+    example_cache: PilotExampleCache,
+    *,
+    decision_mode: str,
+    memory_control: str,
+    cache_lookup: dict[str, PilotExampleCache],
+    residual_scale: float,
+    candidate_delta_scale: float,
+    candidate_delta_gate_tau: float,
+) -> dict[str, torch.Tensor | float]:
+    memory_source_cache = _resolve_memory_source_cache(
+        example_cache,
+        cache_lookup,
+        memory_control=memory_control,
+    )
+    zero_scores = torch.zeros_like(example_cache.base_scores)
+    base_scores = example_cache.base_scores.detach().clone()
+    if decision_mode == "base_only":
+        return {
+            "base_scores": base_scores,
+            "shared_residual_scores": zero_scores.clone(),
+            "conditioned_residual_scores": zero_scores.clone(),
+            "raw_candidate_delta_scores": zero_scores.clone(),
+            "candidate_delta_scores": zero_scores.clone(),
+            "candidate_delta_gate": 0.0,
+            "shared_choice_scores": base_scores.clone(),
+            "memory_residual_scores": zero_scores.clone(),
+            "final_choice_scores": base_scores.clone(),
+        }
+
+    if decision_mode == "shared_summary_late_fusion":
+        memory_summary = _shared_memory_summary(
+            runtime,
+            example_cache,
+            memory_source_cache=memory_source_cache,
+        )
+        shared_residual_scores = runtime.score_candidates(memory_summary, example_cache.candidate_states)
+        memory_residual_scores = float(residual_scale) * shared_residual_scores
+        final_scores = base_scores + memory_residual_scores
+        return {
+            "base_scores": base_scores,
+            "shared_residual_scores": shared_residual_scores,
+            "conditioned_residual_scores": zero_scores.clone(),
+            "raw_candidate_delta_scores": zero_scores.clone(),
+            "candidate_delta_scores": zero_scores.clone(),
+            "candidate_delta_gate": 0.0,
+            "shared_choice_scores": final_scores.clone(),
+            "memory_residual_scores": memory_residual_scores,
+            "final_choice_scores": final_scores,
+        }
+
+    conditioned_residual_scores = _candidate_conditioned_residual_scores(
+        runtime,
+        example_cache,
+        memory_source_cache=memory_source_cache,
+    )
+    if decision_mode == "candidate_conditioned_late_fusion":
+        memory_residual_scores = float(residual_scale) * conditioned_residual_scores
+        final_scores = base_scores + memory_residual_scores
+        return {
+            "base_scores": base_scores,
+            "shared_residual_scores": zero_scores.clone(),
+            "conditioned_residual_scores": conditioned_residual_scores,
+            "raw_candidate_delta_scores": conditioned_residual_scores.clone(),
+            "candidate_delta_scores": conditioned_residual_scores.clone(),
+            "candidate_delta_gate": 1.0,
+            "shared_choice_scores": base_scores.clone(),
+            "memory_residual_scores": memory_residual_scores,
+            "final_choice_scores": final_scores,
+        }
+
+    shared_memory_summary = _shared_memory_summary(
+        runtime,
+        example_cache,
+        memory_source_cache=memory_source_cache,
+    )
+    shared_residual_scores = runtime.score_candidates(shared_memory_summary, example_cache.candidate_states)
+    return _compose_shared_plus_candidate_delta_scores(
+        base_scores=base_scores,
+        shared_residual_scores=shared_residual_scores,
+        conditioned_residual_scores=conditioned_residual_scores,
+        shared_scale=residual_scale,
+        delta_scale=candidate_delta_scale,
+        gate_tau=candidate_delta_gate_tau,
+    )
 
 
 def _score_multiple_choice_example(
@@ -290,25 +420,45 @@ def _score_multiple_choice_example(
     memory_control: str,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_delta_scale: float,
+    candidate_delta_gate_tau: float,
 ) -> dict[str, Any]:
     evaluator = _build_task_evaluator(example_cache.example)
-    residual_scores, base_scores = _score_choice_residuals(
+    score_components = _score_choice_components(
         runtime,
         example_cache,
         decision_mode=decision_mode,
         memory_control=memory_control,
         cache_lookup=cache_lookup,
+        residual_scale=residual_scale,
+        candidate_delta_scale=candidate_delta_scale,
+        candidate_delta_gate_tau=candidate_delta_gate_tau,
     )
-    final_scores = base_scores + (float(residual_scale) * residual_scores)
+    base_scores = score_components["base_scores"]
+    shared_residual_scores = score_components["shared_residual_scores"]
+    conditioned_residual_scores = score_components["conditioned_residual_scores"]
+    raw_candidate_delta_scores = score_components["raw_candidate_delta_scores"]
+    candidate_delta_scores = score_components["candidate_delta_scores"]
+    shared_choice_scores = score_components["shared_choice_scores"]
+    residual_scores = score_components["memory_residual_scores"]
+    final_scores = score_components["final_choice_scores"]
+    candidate_delta_gate = float(score_components["candidate_delta_gate"])
     base_probabilities = torch.softmax(base_scores, dim=0)
+    shared_probabilities = torch.softmax(shared_choice_scores, dim=0)
     final_probabilities = torch.softmax(final_scores, dim=0)
     gold_label = str(example_cache.example["label"])
     gold_index = example_cache.candidate_labels.index(gold_label)
     base_predicted_index = int(torch.argmax(base_scores).item())
+    shared_predicted_index = int(torch.argmax(shared_choice_scores).item())
     final_predicted_index = int(torch.argmax(final_scores).item())
     base_other_indices = [index for index in range(len(example_cache.candidate_labels)) if index != gold_index]
     base_competitor_index = (
         max(base_other_indices, key=lambda index: float(base_scores[index].item()))
+        if base_other_indices
+        else gold_index
+    )
+    shared_competitor_index = (
+        max(base_other_indices, key=lambda index: float(shared_choice_scores[index].item()))
         if base_other_indices
         else gold_index
     )
@@ -332,32 +482,52 @@ def _score_multiple_choice_example(
         "objective_accuracy": float(final_predicted_index == gold_index),
         "base_choice_scores": [float(value) for value in base_scores.tolist()],
         "memory_residual_scores": [float(value) for value in residual_scores.tolist()],
+        "shared_residual_scores": [float(value) for value in shared_residual_scores.tolist()],
+        "conditioned_residual_scores": [float(value) for value in conditioned_residual_scores.tolist()],
+        "raw_candidate_delta_scores": [float(value) for value in raw_candidate_delta_scores.tolist()],
+        "candidate_delta_scores": [float(value) for value in candidate_delta_scores.tolist()],
+        "candidate_delta_gate": float(candidate_delta_gate),
+        "shared_choice_scores": [float(value) for value in shared_choice_scores.tolist()],
         "final_choice_scores": [float(value) for value in final_scores.tolist()],
         "base_margin": float(base_scores[gold_index].item() - base_scores[base_competitor_index].item()),
+        "shared_margin": float(
+            shared_choice_scores[gold_index].item() - shared_choice_scores[shared_competitor_index].item()
+        ),
         "final_margin": float(final_scores[gold_index].item() - final_scores[final_competitor_index].item()),
         "base_predicted_label": example_cache.candidate_labels[base_predicted_index],
+        "shared_predicted_label": example_cache.candidate_labels[shared_predicted_index],
         "final_predicted_label": predicted_label,
         "base_top_competitor_label": example_cache.candidate_labels[base_competitor_index],
+        "shared_top_competitor_label": example_cache.candidate_labels[shared_competitor_index],
         "final_top_competitor_label": example_cache.candidate_labels[final_competitor_index],
         "base_top_competitor_text": example_cache.candidate_texts[base_competitor_index],
+        "shared_top_competitor_text": example_cache.candidate_texts[shared_competitor_index],
         "final_top_competitor_text": example_cache.candidate_texts[final_competitor_index],
         "gold_label": gold_label,
         "gold_text": example_cache.candidate_texts[gold_index],
         "predicted_correct": bool(final_predicted_index == gold_index),
         "predicted_text": predicted_text,
         "base_probabilities": [float(value) for value in base_probabilities.tolist()],
+        "shared_probabilities": [float(value) for value in shared_probabilities.tolist()],
         "final_probabilities": [float(value) for value in final_probabilities.tolist()],
         "choices": [
             {
                 "label": example_cache.candidate_labels[index],
                 "text": example_cache.candidate_texts[index],
                 "base_score": float(base_scores[index].item()),
+                "shared_residual_score": float(shared_residual_scores[index].item()),
+                "conditioned_residual_score": float(conditioned_residual_scores[index].item()),
+                "raw_candidate_delta_score": float(raw_candidate_delta_scores[index].item()),
+                "candidate_delta_score": float(candidate_delta_scores[index].item()),
                 "residual_score": float(residual_scores[index].item()),
+                "shared_score": float(shared_choice_scores[index].item()),
                 "final_score": float(final_scores[index].item()),
                 "base_probability": float(base_probabilities[index].item()),
+                "shared_probability": float(shared_probabilities[index].item()),
                 "final_probability": float(final_probabilities[index].item()),
                 "is_gold": index == gold_index,
                 "is_base_predicted": index == base_predicted_index,
+                "is_shared_predicted": index == shared_predicted_index,
                 "is_final_predicted": index == final_predicted_index,
             }
             for index in range(len(example_cache.candidate_labels))
@@ -371,17 +541,23 @@ def _choice_ce_plus_margin_support_loss(
     *,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_delta_scale: float,
+    candidate_delta_gate_tau: float,
     memory_control: str,
     margin_value: float,
+    decision_mode: str,
 ) -> tuple[torch.Tensor, float]:
-    residual_scores, base_scores = _score_choice_residuals(
+    score_components = _score_choice_components(
         runtime,
         example_cache,
-        decision_mode="candidate_conditioned_late_fusion",
+        decision_mode=decision_mode,
         memory_control=memory_control,
         cache_lookup=cache_lookup,
+        residual_scale=residual_scale,
+        candidate_delta_scale=candidate_delta_scale,
+        candidate_delta_gate_tau=candidate_delta_gate_tau,
     )
-    final_scores = base_scores + (float(residual_scale) * residual_scores)
+    final_scores = score_components["final_choice_scores"]
     gold_index = example_cache.candidate_labels.index(str(example_cache.example["label"]))
     ce_loss = F.cross_entropy(
         final_scores.unsqueeze(0),
@@ -446,6 +622,8 @@ def _aggregate_evaluation(
     memory_control: str,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_delta_scale: float,
+    candidate_delta_gate_tau: float,
     residual_calibration_mode: str,
     step: int,
     seed: int,
@@ -465,6 +643,8 @@ def _aggregate_evaluation(
             memory_control=memory_control,
             cache_lookup=cache_lookup,
             residual_scale=residual_scale,
+            candidate_delta_scale=candidate_delta_scale,
+            candidate_delta_gate_tau=candidate_delta_gate_tau,
         )
         task_scores.append(float(payload["task_score"]))
         task_proxy_scores.append(float(payload["task_proxy_score"]))
@@ -547,6 +727,8 @@ def _resolve_effective_residual_scale(
     configured_residual_scale: float,
     calibration_mode: str,
     calibration_alpha_grid: list[float],
+    candidate_delta_scale: float,
+    candidate_delta_gate_tau: float,
 ) -> tuple[float, dict[str, float]]:
     if decision_mode == "base_only" or calibration_mode == "none" or not support_caches:
         return float(configured_residual_scale), {
@@ -569,6 +751,8 @@ def _resolve_effective_residual_scale(
                     memory_control=memory_control,
                     cache_lookup=cache_lookup,
                     residual_scale=float(alpha),
+                    candidate_delta_scale=candidate_delta_scale,
+                    candidate_delta_gate_tau=candidate_delta_gate_tau,
                 )
                 task_scores.append(float(payload["task_score"]))
                 task_proxy_scores.append(float(payload["task_proxy_score"]))
@@ -601,6 +785,8 @@ def run_stage_c_real_pilot(
     support_objective = _resolve_choice_objective(config)
     residual_calibration_mode = _resolve_residual_calibration_mode(config)
     residual_scale = float(config["runtime"].get("stage_c_choice_residual_scale", 1.0))
+    candidate_delta_scale = _resolve_candidate_delta_scale(config)
+    candidate_delta_gate_tau = _resolve_candidate_delta_gate_tau(config)
     calibration_alpha_grid = _resolve_residual_calibration_alpha_grid(
         config,
         configured_residual_scale=residual_scale,
@@ -687,6 +873,8 @@ def run_stage_c_real_pilot(
             configured_residual_scale=residual_scale,
             calibration_mode=residual_calibration_mode,
             calibration_alpha_grid=calibration_alpha_grid,
+            candidate_delta_scale=candidate_delta_scale,
+            candidate_delta_gate_tau=candidate_delta_gate_tau,
         )
         calibration_history.append(
             {
@@ -708,6 +896,8 @@ def run_stage_c_real_pilot(
             memory_control=memory_control,
             cache_lookup=cache_lookup,
             residual_scale=effective_residual_scale,
+            candidate_delta_scale=candidate_delta_scale,
+            candidate_delta_gate_tau=candidate_delta_gate_tau,
             residual_calibration_mode=residual_calibration_mode,
             step=step,
             seed=seed,
@@ -730,6 +920,8 @@ def run_stage_c_real_pilot(
             "trainable_parameter_count": trainable_parameter_count,
             "step": step,
             "effective_residual_scale": float(effective_residual_scale),
+            "candidate_delta_scale": float(candidate_delta_scale),
+            "candidate_delta_gate_tau": float(candidate_delta_gate_tau),
             "support_examples": len(support_caches),
             "eval_examples": len(eval_caches),
             "support_loss": latest_support_loss,
@@ -761,8 +953,11 @@ def run_stage_c_real_pilot(
                     example_cache,
                     cache_lookup=cache_lookup,
                     residual_scale=effective_residual_scale,
+                    candidate_delta_scale=candidate_delta_scale,
+                    candidate_delta_gate_tau=candidate_delta_gate_tau,
                     memory_control=memory_control,
                     margin_value=choice_margin,
+                    decision_mode=decision_mode,
                 )
             else:
                 support_loss, support_accuracy = _continuation_retrieval_support_loss(
@@ -798,6 +993,8 @@ def run_stage_c_real_pilot(
                 "trainable_parameter_count",
                 "step",
                 "effective_residual_scale",
+                "candidate_delta_scale",
+                "candidate_delta_gate_tau",
                 "support_examples",
                 "eval_examples",
                 "support_loss",
@@ -858,6 +1055,8 @@ def run_stage_c_real_pilot(
         "eval_examples": len(eval_caches),
         "pilot_split": str(config["task"].get("pilot_split", config["task"].get("smoke_subset", ""))),
         "stage_c_choice_residual_scale": residual_scale,
+        "stage_c_candidate_delta_scale": candidate_delta_scale,
+        "stage_c_candidate_delta_gate_tau": candidate_delta_gate_tau,
         "stage_c_residual_calibration_alpha_grid": calibration_alpha_grid,
         "stage_c_choice_margin": choice_margin,
         "pilot_support_learning_rate": support_learning_rate,

@@ -1,5 +1,5 @@
 {
-  "base_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-story-cloze-real-pilot-qwen25/screen-base",
+  "base_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-story-cloze-real-pilot-qwen25-v2/screen-base",
   "bucket_counts": {
     "base_correct_control": 20,
     "improving_but_unflipped": 40,
@@ -146,6 +146,6 @@
     "fcda8c73-3eea-4c9e-a4d2-5daa960fdd22",
     "fda48989-b699-4081-8e1c-edba35d07ccc"
   ],
-  "shared_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-story-cloze-real-pilot-qwen25/screen-shared",
+  "shared_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-story-cloze-real-pilot-qwen25-v2/screen-shared",
   "source_eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/screen-eval248.jsonl"
 }

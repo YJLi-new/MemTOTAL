@@ -419,11 +419,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `D=base+candidate_conditioned residual+shuffled memory=0.25`
   - `A -> B` 当前有 `flip_count_delta=32`
   - 但 `A -> C` 与 `C -> D` 都是 `0`
+- 已完成更保守的 `shared + candidate delta` 修补：
+  - `F=base+shared residual+candidate delta`
+  - `G=base+shared residual+candidate delta+shuffled memory`
+  - `Story Cloze` 上 `B -> F` 只有极小 `mean_margin_gain=0.0005981`，但 `flip_count_delta=0`
+  - `Story Cloze` 上 `F -> G=0`
+  - `FEVER` 上 `F=0.671875`，虽然明显优于旧的 `C=0.25`，但仍低于 `B=0.75`
+  - `FEVER` 上 `B -> F flip_count_delta=-5`
+  - `FEVER` 上 `F -> G=0`
 - 因而，这轮判别实验后的最稳妥结论已经变成：
   - `Story Cloze` 仍更像 artifact-heavy stress test，不适合作为 memory idea 的单一生死判官
   - 当前 low-bandwidth residual family 不是整体死亡，因为 `shared_summary residual` 在 FEVER 上是 load-bearing 的
-  - 但当前这版 `candidate_conditioned late fusion` 还不能继续扩大 sweep，也不该直接上 `Qwen3-8B`
-  - 下一步应先在 `FEVER` 这类 control task 上修好 candidate-conditioned decision path，再回到 `Story Cloze`
+  - 旧的 `candidate_conditioned late fusion` 已被判定为坏分支；新的 `shared + candidate delta` 只把它修到了“不会完全乱来”
+  - 但当前 candidate 增量仍然没有显出 real-memory 内容效应，因为 `real` 与 `shuffled` 仍重合
+  - 下一步不该继续做更大 sweep，而应直接做 case-conditional routing / sign selection
+  - 在 candidate 增量先于 `FEVER` 上同时满足 `优于 G` 且 `不伤害 B` 之前，不回到 `Story Cloze`，也不上 `Qwen3-8B`
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

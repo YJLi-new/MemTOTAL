@@ -1,0 +1,35 @@
+includes:
+  - ../tasks/benchmarks/pilots/story_cloze_fixed100.yaml
+
+experiment:
+  name: stage_c_real_pilot_compare_story_delta
+  stage: M3-story-cloze-real-pilot
+  method_variant: stage-c-real-pilot-compare-story-delta
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  analysis_mode: stage_c_real_pilot_compare
+  required_arm_aliases:
+    - A
+    - B
+    - C
+    - D
+    - F
+    - G
+  pair_specs:
+    - A->B
+    - B->F
+    - F->G
+    - C->F
+    - A->F
+  flip_compare_aliases: A->F
+  memory_control_pair: F->G
+  import_arm_runs:
+    C: /root/mydir/MemTOTAL/runs/review/m3-story-cloze-real-pilot-qwen25/pilot-C-candidate
+    D: /root/mydir/MemTOTAL/runs/review/m3-story-cloze-real-pilot-qwen25/pilot-D-candidate-shuffled
+  report_title: Story Cloze Real Pilot Compare (Shared + Candidate Delta)

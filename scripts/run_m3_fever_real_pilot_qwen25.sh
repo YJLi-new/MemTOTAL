@@ -75,22 +75,28 @@ fi
   --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_train.sh \
-  --config configs/exp/m3_stage_c_real_qwen25_candidate_fever_fixed64.yaml \
+  --config configs/exp/m3_stage_c_real_qwen25_shared_delta_fever_fixed64.yaml \
   --seed "$((BASE_SEED + 16))" \
-  --output_dir "${RUN_ROOT}/pilot-C-candidate" \
+  --output_dir "${RUN_ROOT}/pilot-F-shared-delta" \
   --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_train.sh \
-  --config configs/exp/m3_stage_c_real_qwen25_candidate_shuffled_fever_fixed64.yaml \
+  --config configs/exp/m3_stage_c_real_qwen25_shared_delta_shuffled_fever_fixed64.yaml \
   --seed "$((BASE_SEED + 18))" \
-  --output_dir "${RUN_ROOT}/pilot-D-candidate-shuffled" \
+  --output_dir "${RUN_ROOT}/pilot-G-shared-delta-shuffled" \
   --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_analysis.sh \
-  --config configs/exp/stage_c_real_pilot_compare_fever.yaml \
+  --config configs/exp/stage_c_real_pilot_compare_fever_delta.yaml \
   --seed "$((BASE_SEED + 20))" \
   --output_dir "${RESULT_ROOT}/compare" \
   --input_root "${RUN_ROOT}"
+
+mkdir -p runs/review results/generated/review
+rsync -a --exclude='*.pt' --exclude='*.ckpt' \
+  "${RUN_ROOT}/" "runs/review/m3-fever-real-pilot-qwen25/"
+rsync -a --exclude='*.pt' --exclude='*.ckpt' \
+  "${RESULT_ROOT}/" "results/generated/review/m3-fever-real-pilot-qwen25/"
 
 ./scripts/publish_review_artifacts.sh
 

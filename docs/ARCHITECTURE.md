@@ -122,9 +122,10 @@
   - `runtime.target_support_negative_pool` 现支持 `support_bank / source_plus_support_bank`；当前 canonical 配置已切到 `source_plus_support_bank`，即在 target support bank 之外，再把 source domains 的 continuations 作为 support inner-loop negatives 接入
   - `runtime.target_support_negative_sampler` 现支持 `deterministic_id / hard_by_continuation / hard_by_current_model`；fresh 5-seed 对照显示 `hard_by_current_model` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain`，因此当前 canonical probe 已切到 `hard_by_current_model`
   - 并行的 real pilot 分支现已固定支持：
-    - `runtime.stage_c_decision_mode in {base_only, shared_summary_late_fusion, candidate_conditioned_late_fusion}`
+    - `runtime.stage_c_decision_mode in {base_only, shared_summary_late_fusion, candidate_conditioned_late_fusion, shared_plus_candidate_delta_late_fusion}`
     - `runtime.stage_c_memory_control in {real, shuffled, zero}`
     - `runtime.stage_c_choice_objective in {continuation_retrieval, choice_ce_plus_margin}`
+    - `runtime.stage_c_candidate_delta_scale` 与 `runtime.stage_c_candidate_delta_gate_tau` 控制保守的 candidate 增量分支；当前实现是 `shared residual` 主干加上零均值 `candidate delta`
   - 真实 `Qwen2.5-1.5B-Instruct` `story_cloze` pilot 当前已完成 `A/B/C/D/E` 五臂对照
     - `A=base_only`
     - `B=base + shared_summary residual`
@@ -133,7 +134,8 @@
     - `E=base + candidate_conditioned residual + choice_ce_plus_margin`
   - 当前结论是负的：hard `fixed100` 上五条臂全部停在 `task_score=0.2`
   - `A -> C` 只有极小 `mean_margin_gain=0.0016285324096679688`，而 `C -> D` 与 `C -> E` 的 `mean_task_gain` 都是 `0.0`
-  - 因此，当前这版 `candidate_conditioned_late_fusion` 还不能作为“decision interface 已修复”的证据；下一步需要更直接的 competitor-aware objective 与 residual calibration
+  - 之后新增的 `shared_plus_candidate_delta_late_fusion` 也已完成双任务 real replay：它在 `Story Cloze` 上只带来极小 proxy/margin 改善，在 `FEVER` 上虽明显优于旧 `candidate_conditioned` 分支，但仍低于 `shared_summary residual`，且 `real` 与 `shuffled` 仍重合
+  - 因此，当前结论已进一步收紧为：candidate 增量分支还没有 real-memory 内容效应；下一步需要 case-conditional routing / sign selection，而不是继续扩大 sweep
   - `runtime.retrieval_loss_type` 现支持 `cross_entropy / margin_pairwise / cross_entropy_plus_margin`，`runtime.retrieval_margin_value` 控制 pairwise margin；fresh 5-seed 对照显示 `cross_entropy_plus_margin` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain` 与 `mean_margin_gain`，因此当前 canonical `Stage C` 已切到 `cross_entropy_plus_margin + margin=0.1`
   - `runtime.target_support_selection_policy` 现支持 `plain / label_diverse_if_possible`；fresh fair-holdout 对照显示它不是当前主杠杆，因此 canonical 仍保留 `plain`
   - `runtime.target_support_weighting` 现支持 `uniform / proxy_softmax / proxy_top1`；当前 canonical 仍保留 `uniform`，因为 fresh support-weight sweep 尚未观察到对 official `task_score` 的稳定改善

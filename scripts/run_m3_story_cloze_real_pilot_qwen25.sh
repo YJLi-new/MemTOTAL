@@ -7,6 +7,7 @@ cd "${ROOT_DIR}"
 BASE_SEED="${1:-2701}"
 RUN_ROOT="${2:-runs/verify/m3-story-cloze-real-pilot-qwen25}"
 RESULT_ROOT="${3:-results/generated/m3-story-cloze-real-pilot-qwen25}"
+RESUME_STAGE_B_ROOT="${4:-runs/verify/m3-story-cloze-real-pilot-qwen25/stage-b}"
 
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
@@ -25,16 +26,20 @@ python -m memtotal.tasks.setup_data \
   --manifest_root data/benchmarks/manifests \
   --summary_path data/benchmarks/source_summary.json
 
-./scripts/10_pretrain_writer.sh \
-  "${BASE_SEED}" \
-  "${RUN_ROOT}/stage-a" \
-  "configs/exp/m3_stage_a_core4_qwen25_real_pilot.yaml"
+if [[ ! -f "${RESUME_STAGE_B_ROOT}/queries_meta_init.pt" ]]; then
+  ./scripts/10_pretrain_writer.sh \
+    "${BASE_SEED}" \
+    "${RUN_ROOT}/stage-a" \
+    "configs/exp/m3_stage_a_core4_qwen25_real_pilot.yaml"
 
-./scripts/20_meta_train_queries.sh \
-  "$((BASE_SEED + 2))" \
-  "${RUN_ROOT}/stage-b" \
-  "${RUN_ROOT}/stage-a" \
-  "configs/exp/m3_stage_b_core4_qwen25_real_pilot.yaml"
+  ./scripts/20_meta_train_queries.sh \
+    "$((BASE_SEED + 2))" \
+    "${RUN_ROOT}/stage-b" \
+    "${RUN_ROOT}/stage-a" \
+    "configs/exp/m3_stage_b_core4_qwen25_real_pilot.yaml"
+
+  RESUME_STAGE_B_ROOT="${RUN_ROOT}/stage-b"
+fi
 
 ./scripts/run_analysis.sh \
   --config configs/exp/story_cloze_real_pilot_split.yaml \
@@ -50,7 +55,7 @@ python -m memtotal.tasks.setup_data \
   --config configs/exp/m3_stage_c_real_qwen25_shared_screening.yaml \
   --seed "$((BASE_SEED + 8))" \
   --output_dir "${RUN_ROOT}/screen-shared" \
-  --resume "${RUN_ROOT}/stage-b"
+  --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_analysis.sh \
   --config configs/exp/story_cloze_real_fixed_set_builder.yaml \
@@ -67,34 +72,32 @@ python -m memtotal.tasks.setup_data \
   --config configs/exp/m3_stage_c_real_qwen25_shared_fixed100.yaml \
   --seed "$((BASE_SEED + 14))" \
   --output_dir "${RUN_ROOT}/pilot-B-shared" \
-  --resume "${RUN_ROOT}/stage-b"
+  --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_train.sh \
-  --config configs/exp/m3_stage_c_real_qwen25_candidate_fixed100.yaml \
+  --config configs/exp/m3_stage_c_real_qwen25_shared_delta_fixed100.yaml \
   --seed "$((BASE_SEED + 16))" \
-  --output_dir "${RUN_ROOT}/pilot-C-candidate" \
-  --resume "${RUN_ROOT}/stage-b"
+  --output_dir "${RUN_ROOT}/pilot-F-shared-delta" \
+  --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_train.sh \
-  --config configs/exp/m3_stage_c_real_qwen25_candidate_shuffled_fixed100.yaml \
+  --config configs/exp/m3_stage_c_real_qwen25_shared_delta_shuffled_fixed100.yaml \
   --seed "$((BASE_SEED + 18))" \
-  --output_dir "${RUN_ROOT}/pilot-D-candidate-shuffled" \
-  --resume "${RUN_ROOT}/stage-b"
-
-./scripts/run_train.sh \
-  --config configs/exp/m3_stage_c_real_qwen25_candidate_choice_fixed100.yaml \
-  --seed "$((BASE_SEED + 20))" \
-  --output_dir "${RUN_ROOT}/pilot-E-candidate-choice" \
-  --resume "${RUN_ROOT}/stage-b"
+  --output_dir "${RUN_ROOT}/pilot-G-shared-delta-shuffled" \
+  --resume "${RESUME_STAGE_B_ROOT}"
 
 ./scripts/run_analysis.sh \
-  --config configs/exp/stage_c_real_pilot_compare.yaml \
-  --seed "$((BASE_SEED + 22))" \
+  --config configs/exp/stage_c_real_pilot_compare_story_delta.yaml \
+  --seed "$((BASE_SEED + 20))" \
   --output_dir "${RESULT_ROOT}/compare" \
   --input_root "${RUN_ROOT}"
 
 mkdir -p runs/review results/generated/review
-rsync -a --delete "${RUN_ROOT}/" "runs/review/m3-story-cloze-real-pilot-qwen25/"
-rsync -a --delete "${RESULT_ROOT}/" "results/generated/review/m3-story-cloze-real-pilot-qwen25/"
+rsync -a --exclude='*.pt' --exclude='*.ckpt' \
+  "${RUN_ROOT}/" "runs/review/m3-story-cloze-real-pilot-qwen25/"
+rsync -a --exclude='*.pt' --exclude='*.ckpt' \
+  "${RESULT_ROOT}/" "results/generated/review/m3-story-cloze-real-pilot-qwen25/"
+
+./scripts/publish_review_artifacts.sh
 
 echo "story-cloze real qwen25 pilot complete"

@@ -1,5 +1,5 @@
 {
-  "base_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-fever-real-pilot-qwen25/screen-base",
+  "base_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-fever-real-pilot-qwen25-v2/screen-base",
   "bucket_counts": {
     "base_correct_control": 16,
     "near_threshold_bad": 32,
@@ -73,6 +73,6 @@
     "94252",
     "97937"
   ],
-  "shared_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-fever-real-pilot-qwen25/screen-shared",
+  "shared_run_dir": "/root/mydir/MemTOTAL/runs/verify/m3-fever-real-pilot-qwen25-v2/screen-shared",
   "source_eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-eval248.jsonl"
 }

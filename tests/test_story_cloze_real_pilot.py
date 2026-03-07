@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import torch
+
 from memtotal.analysis.story_cloze_real_pilot import (
     _pick_oracle_alpha_case,
     run_fever_real_fixed_set_builder,
@@ -16,6 +18,8 @@ from memtotal.analysis.story_cloze_real_pilot import (
     run_story_cloze_real_pilot_split,
 )
 from memtotal.training.m3_real_pilot import (
+    _compose_shared_plus_candidate_delta_scores,
+    _compute_candidate_delta_gate,
     _pick_residual_calibration_row,
     _resolve_residual_calibration_alpha_grid,
 )
@@ -36,6 +40,32 @@ def _story_row(example_id: str, label: str, story: str, good: str, bad: str) -> 
 
 
 class StoryClozeRealPilotAnalysisTest(unittest.TestCase):
+    def test_candidate_delta_gate_closes_when_shared_gap_exceeds_tau(self):
+        gate = _compute_candidate_delta_gate(
+            shared_residual_scores=torch.tensor([0.02, 0.005]),
+            gate_tau=0.01,
+        )
+        self.assertEqual(gate, 0.0)
+
+    def test_shared_plus_candidate_delta_scores_center_delta_and_preserve_formula(self):
+        payload = _compose_shared_plus_candidate_delta_scores(
+            base_scores=torch.tensor([0.4, 0.3]),
+            shared_residual_scores=torch.tensor([0.008, 0.002]),
+            conditioned_residual_scores=torch.tensor([0.020, 0.006]),
+            shared_scale=1.0,
+            delta_scale=1.0,
+            gate_tau=0.02,
+        )
+        candidate_delta_scores = payload["candidate_delta_scores"]
+        self.assertAlmostEqual(float(candidate_delta_scores.mean().item()), 0.0, places=7)
+        self.assertAlmostEqual(float(payload["candidate_delta_gate"]), 0.7, places=6)
+        final_scores = payload["final_choice_scores"]
+        shared_choice_scores = payload["shared_choice_scores"]
+        memory_residual_scores = payload["memory_residual_scores"]
+        expected_final = shared_choice_scores + (0.7 * candidate_delta_scores)
+        self.assertTrue(torch.allclose(final_scores, expected_final))
+        self.assertTrue(torch.allclose(memory_residual_scores, final_scores - payload["base_scores"]))
+
     def test_residual_calibration_alpha_grid_preserves_configured_scale(self):
         config = {"runtime": {"stage_c_residual_calibration_alpha_grid": [0.0, 5.0, 10.0]}}
         grid = _resolve_residual_calibration_alpha_grid(config, configured_residual_scale=1.0)
@@ -420,6 +450,98 @@ class StoryClozeRealPilotAnalysisTest(unittest.TestCase):
             with (output_dir / "arm_pairwise_compare.csv").open() as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 3)
+
+    def test_compare_analysis_supports_imported_history_arms_and_bucket_summary(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            input_root = root / "runs"
+            import_root = root / "history"
+            local_arm_specs = {
+                "A": ("base_only", "real", "continuation_retrieval", 0.0),
+                "B": ("shared_summary_late_fusion", "real", "continuation_retrieval", 1.0),
+                "F": ("shared_plus_candidate_delta_late_fusion", "real", "continuation_retrieval", 1.0),
+                "G": ("shared_plus_candidate_delta_late_fusion", "shuffled", "continuation_retrieval", 0.0),
+            }
+            imported_arm_specs = {
+                "C": ("candidate_conditioned_late_fusion", "real", "continuation_retrieval", 0.0),
+                "D": ("candidate_conditioned_late_fusion", "shuffled", "continuation_retrieval", 0.0),
+            }
+
+            def write_arm(run_dir: Path, *, decision_mode: str, memory_control: str, choice_objective: str, score: float) -> None:
+                run_dir.mkdir(parents=True)
+                (run_dir / "metrics.json").write_text(
+                    json.dumps(
+                        {
+                            "training_stage": "stage_c_real_pilot",
+                            "decision_mode": decision_mode,
+                            "memory_control_mode": memory_control,
+                            "choice_objective": choice_objective,
+                            "pilot_split": "fixed64",
+                            "eval_dataset_path": str(root / "fixed64.jsonl"),
+                            "best_adapt_step": 0,
+                            "best_adapt_task_score": score,
+                            "zero_shot_task_score": 0.0,
+                            "best_adapt_task_proxy_score": 0.5 + score / 2.0,
+                            "best_adapt_task_margin": score / 2.0,
+                            "task_case_dump_path": str(run_dir / "task_case_dump.jsonl"),
+                        }
+                    )
+                )
+                case_rows = [
+                    {
+                        "step": 0,
+                        "example_id": "id-1",
+                        "predicted_correct": bool(score > 0),
+                        "task_score": float(score > 0),
+                        "task_proxy_score": 0.5 + score / 2.0,
+                        "final_margin": score / 2.0,
+                        "segment": "claim and evidence",
+                        "gold_text": "supports",
+                        "final_predicted_label": "SUPPORTS" if score > 0 else "REFUTES",
+                        "screening_bucket": "near_threshold_bad",
+                    }
+                ]
+                (run_dir / "task_case_dump.jsonl").write_text(
+                    "\n".join(json.dumps(row) for row in case_rows) + "\n"
+                )
+
+            for alias, spec in local_arm_specs.items():
+                write_arm(input_root / alias, decision_mode=spec[0], memory_control=spec[1], choice_objective=spec[2], score=spec[3])
+            for alias, spec in imported_arm_specs.items():
+                write_arm(import_root / alias, decision_mode=spec[0], memory_control=spec[1], choice_objective=spec[2], score=spec[3])
+
+            output_dir = root / "analysis"
+            output_dir.mkdir()
+            run_stage_c_real_pilot_compare(
+                config={
+                    "task": {"dataset_path": str(root / "fixed64.jsonl")},
+                    "runtime": {
+                        "pilot_split_name": "fixed64",
+                        "required_arm_aliases": ["A", "B", "C", "D", "F", "G"],
+                        "pair_specs": ["A->B", "B->F", "F->G", "C->F", "A->F"],
+                        "flip_compare_aliases": "A->F",
+                        "memory_control_pair": "F->G",
+                        "import_arm_runs": {
+                            "C": str(import_root / "C"),
+                            "D": str(import_root / "D"),
+                        },
+                    },
+                },
+                output_dir=output_dir,
+                input_root=input_root,
+                dry_run=False,
+            )
+            with (output_dir / "arm_pairwise_compare.csv").open() as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 5)
+            with (output_dir / "bucket_summary.csv").open() as handle:
+                bucket_rows = list(csv.DictReader(handle))
+            self.assertTrue(any(row["alias"] == "F" for row in bucket_rows))
+            with (output_dir / "memory_control_gap.csv").open() as handle:
+                gap_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(gap_rows), 1)
+            self.assertEqual(gap_rows[0]["left_alias"], "F")
+            self.assertEqual(gap_rows[0]["right_alias"], "G")
 
     def test_pick_oracle_alpha_case_prefers_smallest_successful_abs_scale(self):
         row = {

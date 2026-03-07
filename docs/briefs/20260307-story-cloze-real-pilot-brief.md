@@ -150,3 +150,64 @@ pairwise：
 - 先保留 `FEVER` 作为正 control，修 candidate-conditioned decision path
 - 优先尝试 `shared residual + candidate delta` 这类更保守的晚融合，而不是直接用当前这版 candidate residual 替换决策
 - 只有当新的 candidate 分支先在 `FEVER` 上跑出真实净增益，再回到 `Story Cloze`
+
+## 第三轮补充：shared + candidate delta
+
+这轮又补了一条更保守的 real qwen25 分支，不再让 candidate-conditioned residual 直接替代 shared 路径，而是改成：
+
+- `F = base + shared residual + candidate delta`
+- `G = base + shared residual + candidate delta + shuffled memory`
+
+其中 candidate 增量是：
+- 先算 `conditioned_residual - shared_residual`
+- 再做跨候选零均值中心化
+- 只在 `shared residual` 自己不够确定时，通过一个固定 gate 加到最终分数上
+
+### Story Cloze 结果
+
+路径：
+- `runs/review/m3-story-cloze-real-pilot-qwen25/`
+- `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/`
+
+结果：
+- `F = 0.2`
+- `G = 0.2`
+- `B -> F`: `flip_count_delta=0`
+- `B -> F`: `mean_margin_gain=0.0005981`
+- `F -> G`: `flip_count_delta=0`
+
+这说明：
+- 新分支没有把 `Story Cloze` 从 `0.2` 拉起来
+- 它比 `B` 多了一点点 proxy / margin，但还没有变成任何真实 flip
+- 更关键的是，`F` 与 `G` 完全重合，当前仍然看不到 real-memory 内容效应
+
+### FEVER 结果
+
+路径：
+- `runs/review/m3-fever-real-pilot-qwen25/`
+- `results/generated/review/m3-fever-real-pilot-qwen25/compare/`
+
+结果：
+- `A = 0.25`
+- `B = 0.75`
+- `C = 0.25`
+- `D = 0.25`
+- `F = 0.671875`
+- `G = 0.671875`
+
+pairwise：
+- `B -> F`: `flip_count_delta=-5`
+- `C -> F`: `flip_count_delta=27`
+- `F -> G`: `flip_count_delta=0`
+
+这一步给出的结论非常明确：
+- `shared + candidate delta` 确实修掉了旧 `candidate_conditioned` 分支那种“完全不起作用甚至乱推”的最坏状态
+- 但它仍然没有带来 real-memory 内容效应，因为 `F = G`
+- 而且它还伤害了本来已经工作的 `B=shared_summary residual`
+
+### 到这里最稳妥的结论
+
+- 现在不能说 candidate 增量路径已经成功。
+- 更准确的说法是：它把旧坏分支修到了“不会完全胡来”，但还没有成为 load-bearing 的 memory 通道。
+- 当前真正该做的，不是再扫更大 sweep，而是直接做 case-conditional routing / sign selection。
+- 只有当新的 candidate 增量分支先在 `FEVER` 上同时满足“优于 `G` 且不伤害 `B`”，才值得再回到 `Story Cloze`。
