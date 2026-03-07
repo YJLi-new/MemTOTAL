@@ -56,6 +56,21 @@ class IA3Adapter(nn.Module):
         return prompt_state * (1.0 + self.gates.unsqueeze(0))
 
 
+class PrefixTuningAdapter(nn.Module):
+    def __init__(self, hidden_size: int, prefix_tokens: int) -> None:
+        super().__init__()
+        self.prefix_states = nn.Parameter(torch.zeros(prefix_tokens, hidden_size))
+        self.proj = nn.Linear(hidden_size, hidden_size)
+        nn.init.normal_(self.prefix_states, mean=0.0, std=0.02)
+        nn.init.normal_(self.proj.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, prompt_state: torch.Tensor) -> torch.Tensor:
+        prefix_summary = self.prefix_states.mean(dim=0, keepdim=True)
+        prefix_bias = self.proj(prefix_summary)
+        return prompt_state + prefix_bias
+
+
 class AdapterBaselineRuntime(nn.Module):
     def __init__(self, config: dict[str, Any], seed: int) -> None:
         super().__init__()
@@ -64,7 +79,7 @@ class AdapterBaselineRuntime(nn.Module):
         if family != "adapter":
             raise ValueError(f"Unsupported baseline family: {family}")
         mode = str(baseline_cfg.get("mode", "prompt_tuning"))
-        if mode not in {"prompt_tuning", "lora", "ia3"}:
+        if mode not in {"prompt_tuning", "lora", "ia3", "prefix_tuning"}:
             raise ValueError(f"Unsupported adapter baseline mode: {mode}")
         backbone_cfg = config["backbone"]
         self.backbone = BackboneWrapper(
@@ -85,11 +100,17 @@ class AdapterBaselineRuntime(nn.Module):
                 rank=int(lora_cfg.get("rank", 4)),
                 alpha=float(lora_cfg.get("alpha", 8.0)),
             )
-        else:
+        elif mode == "ia3":
             ia3_cfg = baseline_cfg.get("ia3", {})
             self.adapter = IA3Adapter(
                 hidden_size=self.backbone.hidden_size,
                 init_scale=float(ia3_cfg.get("init_scale", 1.0)),
+            )
+        else:
+            prefix_cfg = baseline_cfg.get("prefix_tuning", {})
+            self.adapter = PrefixTuningAdapter(
+                hidden_size=self.backbone.hidden_size,
+                prefix_tokens=int(prefix_cfg.get("prefix_tokens", 4)),
             )
 
     def build_prompt(self, example: dict[str, Any]) -> str:

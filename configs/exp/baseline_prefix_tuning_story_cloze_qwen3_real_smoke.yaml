@@ -1,0 +1,26 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: baseline_prefix_tuning_story_cloze_qwen3_real_smoke
+  stage: M5
+  method_variant: baseline-prefix-tuning
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: adapter
+  mode: prefix_tuning
+  support_examples: 2
+  prefix_tuning:
+    prefix_tokens: 4
+
+runtime:
+  train_steps: 4
+  eval_examples: 4
+  learning_rate: 0.05
+  device: cpu

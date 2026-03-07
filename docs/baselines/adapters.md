@@ -9,7 +9,8 @@
   - `prompt_tuning`
   - `lora`
   - `ia3`
-- 当前目标: 先把 `Prompt Tuning / LoRA / IA3` 接成统一的 `train -> checkpoint -> eval -> summary`
+  - `prefix_tuning`
+- 当前目标: 先把 `Prompt Tuning / LoRA / IA3 / Prefix Tuning` 接成统一的 `train -> checkpoint -> eval -> summary`
 - 当前 smoke 范围: `story_cloze` 多选任务
 
 ## Config Contract
@@ -17,7 +18,7 @@
 ```yaml
 baseline:
   family: adapter
-  mode: prompt_tuning | lora | ia3
+  mode: prompt_tuning | lora | ia3 | prefix_tuning
   support_examples: 1
   prompt_tuning:
     prompt_tokens: 4
@@ -26,12 +27,15 @@ baseline:
     alpha: 8.0
   ia3:
     init_scale: 1.0
+  prefix_tuning:
+    prefix_tokens: 4
 ```
 
 说明：
 - `prompt_tuning` 当前通过可训练 `soft_prompts` 的均值偏移 prompt state
 - `lora` 当前通过低秩残差 `prompt_state + scale * B(A(prompt_state))`
 - `ia3` 当前通过逐通道缩放 `prompt_state * gate`
+- `prefix_tuning` 当前通过可训练 `prefix_states` 和固定启用的 `hidden_size -> hidden_size` 投影，生成 prefix-conditioned prompt bias
 - 当前 adapter baseline 只支持 `multiple_choice / dataset_label_classification` smoke；不支持 exact-match 生成式任务
 
 ## Verified Smoke Configs
@@ -43,9 +47,11 @@ baseline:
 - `configs/exp/baseline_prompt_tuning_story_cloze_qwen25_real_smoke.yaml`
 - `configs/exp/baseline_lora_story_cloze_qwen25_real_smoke.yaml`
 - `configs/exp/baseline_ia3_story_cloze_qwen25_real_smoke.yaml`
+- `configs/exp/baseline_prefix_tuning_story_cloze_qwen25_real_smoke.yaml`
 - `configs/exp/baseline_prompt_tuning_story_cloze_qwen3_real_smoke.yaml`
 - `configs/exp/baseline_lora_story_cloze_qwen3_real_smoke.yaml`
 - `configs/exp/baseline_ia3_story_cloze_qwen3_real_smoke.yaml`
+- `configs/exp/baseline_prefix_tuning_story_cloze_qwen3_real_smoke.yaml`
 
 ## Verified Commands
 
@@ -72,6 +78,10 @@ python -m train --config configs/exp/baseline_ia3_story_cloze_qwen25_real_smoke.
 python -m eval --config configs/exp/baseline_ia3_story_cloze_qwen25_real_smoke.yaml --seed 1301 --output_dir runs/verify/baseline_ia3_story_cloze_qwen25_real_smoke/eval --checkpoint runs/verify/baseline_ia3_story_cloze_qwen25_real_smoke/train/checkpoint.pt
 python -m train --config configs/exp/baseline_ia3_story_cloze_qwen3_real_smoke.yaml --seed 1303 --output_dir runs/verify/baseline_ia3_story_cloze_qwen3_real_smoke/train
 python -m eval --config configs/exp/baseline_ia3_story_cloze_qwen3_real_smoke.yaml --seed 1303 --output_dir runs/verify/baseline_ia3_story_cloze_qwen3_real_smoke/eval --checkpoint runs/verify/baseline_ia3_story_cloze_qwen3_real_smoke/train/checkpoint.pt
+python -m train --config configs/exp/baseline_prefix_tuning_story_cloze_qwen25_real_smoke.yaml --seed 1401 --output_dir runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/train
+python -m eval --config configs/exp/baseline_prefix_tuning_story_cloze_qwen25_real_smoke.yaml --seed 1401 --output_dir runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/eval --checkpoint runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/train/checkpoint.pt
+python -m train --config configs/exp/baseline_prefix_tuning_story_cloze_qwen3_real_smoke.yaml --seed 1403 --output_dir runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/train
+python -m eval --config configs/exp/baseline_prefix_tuning_story_cloze_qwen3_real_smoke.yaml --seed 1403 --output_dir runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/eval --checkpoint runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/train/checkpoint.pt
 python -m analysis --config configs/exp/baseline_prompt_tuning_story_cloze_qwen25_real_smoke.yaml --seed 931 --output_dir results/generated/m5-adapter-baseline-real-smoke --input_root runs/verify/m5-adapter-baseline-real-smoke
 ```
 
@@ -81,6 +91,8 @@ python -m analysis --config configs/exp/baseline_prompt_tuning_story_cloze_qwen2
 - `results/generated/m5-adapter-baseline-smoke/summary.csv`
 - `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
 - `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
+- `runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/{train,eval}/metrics.json`
+- `runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/{train,eval}/metrics.json`
 
 当前 qwen25 stub smoke：
 - `prompt_tuning/train`: `final_loss=0.31129494309425354`, `trainable_parameter_count=256`
@@ -101,11 +113,15 @@ python -m analysis --config configs/exp/baseline_prompt_tuning_story_cloze_qwen2
 - qwen25 `lora/eval`: `accuracy=0.75`
 - qwen25 `ia3/train`: `final_loss=0.6697776317596436`
 - qwen25 `ia3/eval`: `accuracy=0.75`, `trainable_parameter_count=64`
+- qwen25 `prefix_tuning/train`: `final_loss=0.3965227007865906`
+- qwen25 `prefix_tuning/eval`: `accuracy=1.0`, `trainable_parameter_count=4416`
 - qwen3 `prompt_tuning/train`: `final_loss=0.5017770528793335`
 - qwen3 `prompt_tuning/eval`: `accuracy=1.0`
 - qwen3 `lora/train`: `final_loss=0.544849157333374`
 - qwen3 `lora/eval`: `accuracy=1.0`
 - qwen3 `ia3/train`: `final_loss=0.6041036248207092`
 - qwen3 `ia3/eval`: `accuracy=0.75`, `trainable_parameter_count=64`
+- qwen3 `prefix_tuning/train`: `final_loss=0.34002524614334106`
+- qwen3 `prefix_tuning/eval`: `accuracy=1.0`, `trainable_parameter_count=4416`
 
 这些数字只说明 adapter baseline harness 已接入统一训练/评测链，不是论文结果。

@@ -19,6 +19,9 @@ def _infer_adapter_trainable_parameter_count(config: dict[str, Any]) -> int:
         return 2 * hidden_size * rank
     if mode == "ia3":
         return hidden_size
+    if mode == "prefix_tuning":
+        prefix_tokens = int(baseline_cfg.get("prefix_tuning", {}).get("prefix_tokens", 0))
+        return prefix_tokens * hidden_size + hidden_size * hidden_size + hidden_size
     return 0
 
 

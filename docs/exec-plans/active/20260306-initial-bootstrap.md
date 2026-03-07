@@ -177,10 +177,14 @@
 - 2026-03-07 02:11 UTC: 已把 `IA3` 接入同一套 adapter baseline family：`src/memtotal/baselines/adapters.py` 当前支持 `mode=ia3`，实现为逐通道缩放 `prompt_state * gate`，当前 trainable parameter count 为 `hidden_size`，在现有 stub backbone 上即 `64`。
 - 2026-03-07 02:11 UTC: 已真实跑通 `story_cloze` real-source smoke 的双 backbone `IA3` 配置。`runs/verify/baseline_ia3_story_cloze_qwen25_real_smoke/eval/metrics.json` 当前为 `accuracy=0.75`；`runs/verify/baseline_ia3_story_cloze_qwen3_real_smoke/eval/metrics.json` 当前为 `accuracy=0.75`。
 - 2026-03-07 02:11 UTC: 已把 `IA3` 接入 baseline grid 与预算审计。当前 `results/generated/m5-baseline-budget-audit/metrics.json` 更新为 `rows_collected=56`、`checks_pass_rate=1.0`；minimal grid 更新为 `cell_count=42`、`variant_count=18`、`train_run_count=18`、`eval_run_count=42`；protocol-smoke grid 更新为 `cell_count=126`、`variant_count=18`、`train_run_count=26`、`eval_run_count=26`、`reused_eval_run_count=100`；dual-import protocol suite 也同步更新为 `cell_count=126`、`variant_count=18`、`imported_eval_count=2`。
+- 2026-03-07 12:18 UTC: 已把 `Prefix Tuning` 接入同一套 adapter baseline family：`src/memtotal/baselines/adapters.py` 现支持 `mode=prefix_tuning`，实现为 `prefix_states + hidden_size -> hidden_size` 投影形成的 prefix-conditioned prompt bias。当前 smoke 配置位于 `configs/exp/baseline_prefix_tuning_story_cloze_qwen25_real_smoke.yaml` 与 `configs/exp/baseline_prefix_tuning_story_cloze_qwen3_real_smoke.yaml`。
+- 2026-03-07 12:18 UTC: 已真实跑通 `story_cloze` real-source smoke 的双 backbone `Prefix Tuning` 配置。`runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/eval/metrics.json` 当前为 `accuracy=1.0`、`trainable_parameter_count=4416`；`runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/eval/metrics.json` 当前为 `accuracy=1.0`、`trainable_parameter_count=4416`。
+- 2026-03-07 12:18 UTC: 已把 `Prefix Tuning` 接入 baseline grid 与预算审计。当前 `results/generated/m5-baseline-budget-audit/metrics.json` 更新为 `rows_collected=60`、`checks_pass_rate=1.0`；minimal grid 更新为 `cell_count=48`、`variant_count=20`、`train_run_count=24`、`eval_run_count=48`；import grid 更新为 `cell_count=48`、`variant_count=20`、`imported_eval_count=1`。protocol-smoke 与 dual-import protocol suite 当前 grid 尺寸均已更新为 `cell_count=152`、`variant_count=20`，并在同目录重跑后验证 `reused_train_run_count=104`、`reused_eval_run_count=152`。
 
 ## Decision Log
 
 - 2026-03-06: 本轮只做 M0/P0 foundation work，不启动重训练或全 benchmark sweep。
+- 2026-03-07: `M5 / P2` 在 adapter 侧优先选择 `Prefix Tuning`，不同时引入 `prompt ensembling`；原因是它能直接复用现有 `train -> checkpoint -> eval -> grid -> budget` harness，并补上此前 tech-debt 里最明确的 prefix-style 变体缺口。
 - 2026-03-06: backbone 支持范围锁定为 `Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B`；任何新建配置只允许这两档。
 - 2026-03-06: 当前目录不是 git worktree；运行记录将保存 git hash，若不可用则显式写入 `nogit`，避免静默缺失。
 - 2026-03-06: 先实现 deterministic toy backbone 与 smoke harness，再接真实模型加载，避免一开始把 bootstrap 绑定到高成本权重下载。

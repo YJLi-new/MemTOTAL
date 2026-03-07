@@ -80,33 +80,32 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 
 当前已验证：
 
-- `cell_count = 42`
-- `variant_count = 18`
-- `train_run_count = 18`
-- `eval_run_count = 42`
+- `cell_count = 48`
+- `variant_count = 20`
+- `train_run_count = 24`
+- `eval_run_count = 48`
 - `imported_eval_count = 0`
 - import variant:
   - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json` 当前仍是 `imported_eval_count = 1`
 - protocol-smoke:
   - `shots = {0, 1, 2, 4}`
   - `steps = {0, 1, 3, 5}`
-  - `cell_count = 126`
-  - `variant_count = 18`
-  - `train_run_count = 26`
-  - `eval_run_count = 26`
-  - `reused_train_run_count = 52`
-  - `reused_eval_run_count = 100`
+  - `cell_count = 152`
+  - `variant_count = 20`
+  - 当前 fresh run 已覆盖 `104` 个 adapter train cells 与 `152` 个 eval cells
+  - 当前立刻重跑后的 `adapt_cost.json` 为 `train_run_count = 0`、`eval_run_count = 0`
+  - `reused_train_run_count = 104`
+  - `reused_eval_run_count = 152`
   - `imported_eval_count = 1`
-  - 当前新增的是 `ia3` 的 `26` 个 train/eval cell，其余 cell 已直接复用
+  - 当前新增的是 `prefix_tuning` 的 `26` 个 protocol adapter cells，其余 cell 在重跑时已直接复用
 - dual-import protocol:
   - `imported_eval_count = 2`
   - `skipped_import_count = 0`
-  - `cell_count = 126`
-  - `variant_count = 18`
-  - `train_run_count = 26`
-  - `eval_run_count = 26`
-  - `reused_train_run_count = 52`
-  - `reused_eval_run_count = 100`
+  - `cell_count = 152`
+  - `variant_count = 20`
+  - 当前立刻重跑后的 `adapt_cost.json` 为 `train_run_count = 0`、`eval_run_count = 0`
+  - `reused_train_run_count = 104`
+  - `reused_eval_run_count = 152`
   - 当前已同时导入 `MemGen / Qwen2.5-1.5B-Instruct` 与 `MemGen / Qwen3-8B`
   - `watcher_state.json` 当前为 `status=refreshed`
   - watcher 已在 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后自动刷新同目录汇总
@@ -117,9 +116,11 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
   - `meta_prompting`: `0-shot=0.5`，`2-shot=0.75`
   - `prompt_tuning`: `2-shot 0-step=0.75`，`2-shot 4-step=1.0`
   - `lora`: `2-shot 0-step=0.75`，`2-shot 4-step=1.0`
+  - `prefix_tuning`: `0-shot 0-step=0.75`，`2-shot 4-step=0.75`
 - qwen3:
   - `prompting / meta_prompting`: 当前 `0-shot` 与 `2-shot` 都是 `1.0 / 0.75` 这一量级，不形成明显 few-shot 差异
   - `adapter`: 当前 `0-step` 就已达到 `1.0`，`4-step` 不再提升
+  - `prefix_tuning`: `0-shot 0-step=0.75`，`2-shot 4-step=1.0`
 - imported external point:
   - `MemGen / Qwen2.5-1.5B-Instruct / 0-shot / 0-step`: `compute_reward = 0.75`
   - `MemGen / Qwen3-8B / 0-shot / 0-step`: `compute_reward = 1.0`
@@ -129,12 +130,14 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
   - `qwen25 / rag`: `0~4-shot` 当前都在 `0.625` 量级
   - `qwen25 / memory_bank`: `0-shot=0.5`，`1-shot=0.75`
   - `qwen25 / ia3`: `0-shot=0.625`，`1-shot 0-step=0.625`，`1-shot 1~5-step=0.5`
+  - `qwen25 / prefix_tuning`: `0-shot=0.75`，`1-shot 1-step=0.875`
   - `qwen25 / lightthinker`: `0-shot=0.625`，`1~4-shot=0.625`
   - `qwen3 / prompt_tuning`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / lora`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / rag`: 当前 best cell 是 `1-shot / 0-step = 0.75`
   - `qwen3 / memory_bank`: 当前 `1~4-shot / 0-step = 0.75`
   - `qwen3 / ia3`: `0-shot=0.75`，`1-shot 0-step=0.75`
+  - `qwen3 / prefix_tuning`: `0-shot=0.625`，`4-shot 3~5-step=1.0`
   - `qwen3 / lightthinker`: `0-shot=0.375`，`1~4-shot=0.5`
 
 这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：

@@ -532,14 +532,14 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 当前已真实 smoke 验证 `GSM8K + Story Cloze`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
 - 同一套 `Vanilla / CoT` smoke 现已补到 `Qwen3-8B`，汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
 - 同一套 `Vanilla / CoT` 现已进一步补到 real-source smoke：qwen25 汇总位于 `results/generated/m5-prompt-baseline-real-smoke/summary.csv`，qwen3 汇总位于 `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
-- 已新增最小 `adapter` baseline family，支持 `Prompt Tuning / LoRA` 的 `train -> checkpoint -> eval -> summary` 闭环；当前先在 `story_cloze` qwen25 smoke 上真实验证，汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
-- 同一套 `Prompt Tuning / LoRA` smoke 现已补到 `Qwen3-8B`，汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
-- 同一套 `Prompt Tuning / LoRA` 现已进一步补到 `story_cloze` real-source smoke，统一汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
+- 已新增最小 `adapter` baseline family，支持 `Prompt Tuning / LoRA / IA3 / Prefix Tuning` 的 `train -> checkpoint -> eval -> summary` 闭环；当前先在 `story_cloze` qwen25 smoke 上真实验证，汇总位于 `results/generated/m5-adapter-baseline-smoke/summary.csv`
+- 同一套 adapter smoke 现已补到 `Qwen3-8B`，汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
+- 同一套 adapter 现已进一步补到 `story_cloze` real-source smoke；历史汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
 - 已新增最小 `MetaPrompting` scaffold，当前先在 `story_cloze` 的 qwen25/qwen3 smoke 上真实验证，汇总位于 `results/generated/m5-metaprompting-smoke/summary.csv`
 - 同一套 `MetaPrompting` 现已进一步补到 `story_cloze` real-source smoke，统一汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`
 - `prompting / meta_prompting` 当前已支持 `support_examples > 0` 的 in-context few-shot demos，并已在 `story_cloze` real-source 上真实跑通两档 backbone 的 `2-shot` smoke，汇总位于 `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
 - 已新增 `baseline_budget_audit`，当前会自动检查 `prompting / meta_prompting / adapter` 的预算字段完整性与双 backbone 覆盖，已验证汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
-- `baseline_budget_audit` 当前已进一步扩到 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 六个 family；最新 `metrics.json` 为 `rows_collected=56`、`checks_pass_rate=1.0`
+- `baseline_budget_audit` 当前已进一步扩到 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 六个 family；最新 `metrics.json` 为 `rows_collected=60`、`checks_pass_rate=1.0`
 - 已新增最小 `story_cloze` baseline grid smoke suite：单个命令会在同一套 suite 内循环 `shots={0,2}`、`steps={0,4}`，并产出 `adapt_curve.csv / adapt_cost.json / summary.csv`，结果位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`
 - 同一套 grid 现已支持导入外部 baseline 点；当前已把 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 评测结果导入到 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
 - 已新增更接近协议的 `story_cloze` protocol-smoke grid：在 `smoke8` real-source 子集上跑 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并保留同一条曲线里的 `MemGen` 外部零样本点；结果位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`
@@ -553,10 +553,18 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - adapter family 当前已新增 `IA3` 变体，支持 `mode=ia3`，并已真实跑通 `story_cloze` real-source smoke 的双 backbone 配置：
   - qwen25: `runs/verify/baseline_ia3_story_cloze_qwen25_real_smoke/{train,eval}/metrics.json`
   - qwen3: `runs/verify/baseline_ia3_story_cloze_qwen3_real_smoke/{train,eval}/metrics.json`
-- `IA3` 当前也已接入 minimal/protocol baseline grid；最新 protocol-smoke `adapt_cost.json` 为 `cell_count=126`、`variant_count=18`、`train_run_count=26`、`eval_run_count=26`
+- adapter family 当前已进一步新增 `Prefix Tuning` 变体，支持 `mode=prefix_tuning`，并已真实跑通 `story_cloze` real-source smoke 的双 backbone 配置：
+  - qwen25: `runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/{train,eval}/metrics.json`
+  - qwen3: `runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/{train,eval}/metrics.json`
+- `Prefix Tuning` 当前参数量已进入统一预算口径：当前 `trainable_parameter_count=4416`
+- adapter grid 当前已更新到 `variant_count=20`：
+  - minimal grid: `cell_count=48`、`train_run_count=24`、`eval_run_count=48`
+  - protocol-smoke grid: `cell_count=152`、`imported_eval_count=1`
+  - dual-import protocol grid: `cell_count=152`、`imported_eval_count=2`
+- protocol 与 dual-import protocol 当前都已在同一目录重跑验证缓存复用：最新 `adapt_cost.json` 为 `train_run_count=0`、`eval_run_count=0`、`reused_train_run_count=104`、`reused_eval_run_count=152`
 - `MemGen / story_cloze / Qwen3-8B` 真实 smoke 现已完成，`runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 当前记录 `compute_reward=1.0`
 - dual-import protocol suite 现已把 `MemGen / Qwen2.5-1.5B-Instruct` 与 `MemGen / Qwen3-8B` 两个 `0-shot / 0-step` 外部点同时导入到 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`
-- 当前 dual-import suite 的 `adapt_cost.json` 为 `cell_count=126`、`variant_count=18`、`imported_eval_count=2`、`skipped_import_count=0`、`reused_train_run_count=52`、`reused_eval_run_count=100`
+- 当前 dual-import suite 的 `adapt_cost.json` 为 `cell_count=152`、`variant_count=20`、`imported_eval_count=2`、`skipped_import_count=0`、`reused_train_run_count=104`、`reused_eval_run_count=152`
 - 说明：`M5 / P0` 当前已经在 protocol-smoke contract 层面满足 DoD；这表示 baseline family 已能进入同一套 `shot/step` 网格与统一汇总，不表示主表级 baseline 已完成
 
 ### P1 重要
@@ -585,7 +593,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 
 ### P2 加分
 - [x] 更完整的 memory agent baseline 家族
-- [ ] 更多 prompt-based / adapter-based meta-learning variants
+- [x] 更多 prompt-based / adapter-based meta-learning variants
 - [x] baseline 自动预算检查脚本
 
 ---

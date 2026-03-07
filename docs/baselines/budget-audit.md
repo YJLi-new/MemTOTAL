@@ -46,6 +46,7 @@
   - `train_steps = 0`
   - `trainable_parameter_count = 0`
 - `adapter`
+  - 当前已覆盖 `prompt_tuning / lora / ia3 / prefix_tuning`
   - `support_examples` 取配置中的真实 support 数
   - `train_steps` 取当前 run 的真实训练步数
   - `trainable_parameter_count` 取当前 adapter 的可训练参数量
@@ -64,8 +65,8 @@
 
 最新已验证结果：
 
-- `rows_collected = 56`
+- `rows_collected = 60`
 - `checks_pass_rate = 1.0`
 - `issues_found = 0`
 
-这说明当前仓库内已接入 `M5` audit 的 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` baseline runs，预算字段和双 backbone 覆盖都能通过自动检查。
+这说明当前仓库内已接入 `M5` audit 的 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` baseline runs，预算字段和双 backbone 覆盖都能通过自动检查；其中 `prefix_tuning` 当前的推断参数量也已和真实 checkpoint 一致，对应 `trainable_parameter_count=4416`。
