@@ -207,6 +207,10 @@
 - 2026-03-06: 对 `writer_noise` 这类带随机性的退化检查，优先通过多次抽样估计期望而不是下调阈值；这样既保留“writer 必须优于噪声”的检查意图，也避免 tiny smoke 的偶然抽样把 harness 打成不稳定平局。
 - 2026-03-06: 进入 `M4` 时，优先补“统一 benchmark 契约层”和本地 smoke subset，而不是直接宣称真实 benchmark 已接入；只有当真实数据路径、许可、缓存和统一评测都打通后，才能把条目算作正式完成。
 - 2026-03-06: 对 benchmark 数据源，若上游 metadata 没有明确 license 字段，则在仓库内显式写“需核对上游卡片”，而不是靠记忆补许可证；数据合规说明优先准确，不优先好看。
+- 2026-03-07 00:00 UTC: 已把 benchmark-native `core4_transfer_smoke` 固化到配置层：`configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml` 使用 `dataset_sources={gsm8k,kodcode,gpqa,story_cloze}` 和 `sampling_policy=uniform_examples`，不再依赖 toy label 结构。
+- 2026-03-07 00:00 UTC: `src/memtotal/training/m3.py` 现支持 `runtime.query_objective in {label_prototype, continuation_retrieval}`；toy 路径继续走 label prototype，benchmark-native `core4` 路径固定走 continuation retrieval，并把 `source_eval_task_score / best_adapt_task_score` 写入 `metrics.json`。
+- 2026-03-07 00:00 UTC: 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`。两档 backbone 的 `core4` smoke 均已真实跑通，并分别汇总到 `results/generated/m3-core4-summary/` 与 `results/generated/m3-core4-summary-qwen3/`。
+- 2026-03-07 00:00 UTC: benchmark-native `core4` 当前的真实 blocker 已显式记录而非掩盖：`runs/verify/m3-core4-qwen25/stage-b/metrics.json` 的 `mean_adaptation_gain=-0.4028587341308594`，`runs/verify/m3-core4-qwen3/stage-b/metrics.json` 的 `mean_adaptation_gain=-0.3529513080914815`。这说明 retrieval-style Stage B 还没有在 mixed-source smoke 上形成稳定正收益。
 
 ## Surprises & Discoveries
 
@@ -222,3 +226,4 @@
 - `triviaqa` 的官方动态评测会反复提示模型输出 `<search>` / `<answer>` 标签；即便 reward 很低，只要统一翻译层能读到 `conversations.txt`，就仍然满足“可评测可汇总”的 M1 目标。
 - `torch.nn.TransformerEncoderLayer(norm_first=True)` 会在当前 PyTorch 版本下持续触发 nested tensor warning；把 skeleton writer 改为默认 post-norm 后，warning 已在测试与 smoke 中消失，减少了后续 agent 调试噪声。
 - 在 toy runtime 里把 `next_prompt` 作为单块文本编码会掩盖注入位置差异；升级为按 `segment_inputs + delimiter + suffix` 组装后，`segment / delimiter / random / none` 的差异已经真实进入 `injected_inputs` 与生成侧 memory token 宽度。
+- 把 benchmark-native `Stage C` 主曲线从 `best_adapt_query_accuracy` 切到 `best_adapt_task_score` 后，`summary.csv` 才能把真实 benchmark smoke 的 `task_score` 当主字段；否则 analysis 会退回 toy-only 口径，掩盖 continuation-retrieval 路径的真实 contract。

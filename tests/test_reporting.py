@@ -46,6 +46,7 @@ class ReportingTest(unittest.TestCase):
                     {
                         "mode": "train",
                         "training_stage": "stage_c",
+                        "best_adapt_task_score": 0.25,
                         "best_adapt_query_accuracy": 0.5,
                         "best_adapt_query_loss": 1.2,
                     }
@@ -63,6 +64,8 @@ class ReportingTest(unittest.TestCase):
                         "mode": "train",
                         "training_stage": "stage_b",
                         "query_learning_mode": "non_meta_multitask",
+                        "source_eval_task_score": 0.375,
+                        "source_eval_metric_name": "mean_score",
                         "source_eval_query_accuracy": 0.75,
                         "source_eval_query_loss": 0.67,
                     }
@@ -113,15 +116,15 @@ class ReportingTest(unittest.TestCase):
             self.assertEqual(by_mode["memgen_adapter"]["primary_score"], 0.25)
             self.assertEqual(by_mode["train"]["primary_metric"], "inv_mean_loss")
             self.assertAlmostEqual(by_mode["train"]["primary_score"], 2.0 / 3.0)
-            self.assertEqual(by_stage["stage_c"]["primary_metric"], "best_adapt_query_accuracy")
-            self.assertEqual(by_stage["stage_c"]["primary_score"], 0.5)
+            self.assertEqual(by_stage["stage_c"]["primary_metric"], "best_adapt_task_score")
+            self.assertEqual(by_stage["stage_c"]["primary_score"], 0.25)
             self.assertEqual(
                 by_mode_and_query[("train", "non_meta_multitask")]["primary_metric"],
-                "source_eval_query_accuracy",
+                "source_eval_task_score",
             )
             self.assertEqual(
                 by_mode_and_query[("train", "non_meta_multitask")]["primary_score"],
-                0.75,
+                0.375,
             )
             self.assertEqual(by_mode["analysis_failure_checks"]["primary_metric"], "checks_pass_rate")
             self.assertAlmostEqual(by_mode["analysis_failure_checks"]["primary_score"], 2.0 / 3.0)

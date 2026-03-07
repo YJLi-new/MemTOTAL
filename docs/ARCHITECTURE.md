@@ -12,7 +12,7 @@
 - `scripts/cleanup_hf_cache.sh`: 清理 Hugging Face datasets cache 与未完成的模型下载碎片，用于 real-source benchmark / MemGen 的磁盘治理
 - `src/memtotal/models/`: backbone wrapper、Writer/Reader/Fuser/Injector、Segmenter
 - `src/memtotal/training/`: smoke 训练闭环
-- `src/memtotal/training/m3.py`: Stage A/B/C 的 toy smoke runner，负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
+- `src/memtotal/training/m3.py`: Stage A/B/C runner，当前同时承载 `toy_meta_smoke` 与 benchmark-native `core4_transfer_smoke`；负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/baselines/`: 外部 baseline 适配层，当前已接入 MemGen launch adapter
@@ -65,16 +65,24 @@
 
 - `toy_meta_smoke` 目前承载 Stage A/B/C 的最小验证：`data/toy/meta_samples.jsonl`
 - 当前 toy meta 数据采用“每域 2 个 label、每个 label 2 个样本”的结构，便于分层 support/query 采样与最小 few-shot 曲线验证
+- benchmark-native smoke 现已新增 `configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml`
+  - `dataset_sources={gsm8k, kodcode, gpqa, story_cloze}`
+  - `source_domains={math, code, qa}`
+  - `target_domain=narrative`
+  - `sampling_policy=uniform_examples`
 - Stage A：
   - 产出 `writer.ckpt`
   - 保存 `meta_data_manifest.json`，记录 `dataset_sha256` 与 domain split
 - Stage B：
   - 产出 `queries_meta_init.pt`
   - 支持 `query_learning_mode in {meta_trained, non_meta_multitask, random}`
+  - 支持 `query_objective in {label_prototype, continuation_retrieval}`
   - `meta_trained` 当前实现为 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`
   - `non_meta_multitask` 使用固定 Writer + source-domain 全局 label bank 的普通多任务训练
   - `random` 不做 Stage B 更新，只落 reader-side 随机初始化快照
-  - episode 采样按 label 分层，评估使用 domain 内 label prototype，而不是逐样本候选集
+  - toy 路径继续按 label 分层采样并使用 domain 内 label prototype
+  - benchmark-native `core4` 路径改为统一 `continuation_retrieval` 目标：正样本是当前 continuation，负样本来自同域或全局 source pool
+  - `metrics.json` 现已同时记录 `source_eval_query_loss/source_eval_query_accuracy` 与 `source_eval_task_score/source_eval_metric_name`
 - Stage C：
   - 默认按 `adaptation_target=q_only` 对齐 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的 Stage C 契约，只更新 `reader.queries`
   - 支持 `adaptation_target in {q_only, w_only, w_plus_q}`
@@ -82,9 +90,9 @@
   - 产出 `queries_adapted.pt`
   - 若 writer 参与适配，则额外产出 `writer_adapted.ckpt`
   - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json`
-  - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / adaptation_target / trainable_module / trainable_parameter_count`
+  - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / query_objective / adaptation_target / trainable_module / trainable_parameter_count / objective_loss / task_score / task_metric_name`
 
-当前 M3 smoke 已经把工件、resume 链路、Stage C 适配对象配置契约、Reader 学习方式消融、以及最小 meta-train 收益证据搭起来；但它仍是 toy smoke，不应替代后续真实任务上的 few-shot 结果。
+当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；尤其 Stage B 的 mixed-source `mean_adaptation_gain` 仍为负，需要在后续里程碑继续攻克。
 
 ## M4 Benchmark Scaffold
 

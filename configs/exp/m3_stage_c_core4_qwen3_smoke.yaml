@@ -1,0 +1,27 @@
+includes:
+  - ../tasks/benchmarks/meta/core4_transfer_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: m3_stage_c_core4_qwen3_smoke
+  stage: M3-core4-stage-c
+  method_variant: ours-core4-stage-c-fewshot-adapt-q-only
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  training_stage: stage_c
+  query_objective: continuation_retrieval
+  retrieval_negative_count: 7
+  adaptation_target: q_only
+  expected_query_learning_mode: meta_trained
+  adapt_steps: 3
+  adapt_learning_rate: 0.2
+  adapt_shots:
+    - 0
+    - 2
+  device: cpu

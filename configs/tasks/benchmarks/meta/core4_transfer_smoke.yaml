@@ -1,0 +1,35 @@
+task:
+  name: core4_transfer_smoke
+  domain: cross_domain_meta
+  split: meta
+  meta:
+    general_domains:
+      - math
+      - code
+      - qa
+      - narrative
+    source_domains:
+      - math
+      - code
+      - qa
+    target_domain: narrative
+    support_size: 2
+    query_size: 2
+    sampling_policy: uniform_examples
+    dataset_sources:
+      - benchmark_id: gsm8k
+        dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke4.jsonl
+        domain: math
+        smoke_subset: hf_real_smoke4
+      - benchmark_id: kodcode
+        dataset_path: data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl
+        domain: code
+        smoke_subset: hf_real_smoke4
+      - benchmark_id: gpqa
+        dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl
+        domain: qa
+        smoke_subset: hf_real_smoke4
+      - benchmark_id: story_cloze
+        dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl
+        domain: narrative
+        smoke_subset: hf_real_smoke4

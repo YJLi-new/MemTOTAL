@@ -15,11 +15,61 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from memtotal.data import EpisodeSampler, load_domain_dataset, validate_meta_split
+from memtotal.data import (
+    EpisodeSampler,
+    build_meta_manifest,
+    load_domain_dataset,
+    load_meta_grouped_examples,
+    validate_meta_split,
+)
+from memtotal.pipeline import MemoryRuntime
+from memtotal.training.m3 import _continuation_retrieval_loss
 from memtotal.training.run_train import main as train_main
+from memtotal.utils.config import load_config
 
 
 class M3TrainingTest(unittest.TestCase):
+    def _core4_task_config(self) -> dict[str, object]:
+        return {
+            "name": "core4_transfer_smoke_test",
+            "domain": "cross_domain_meta",
+            "split": "meta",
+            "meta": {
+                "general_domains": ["math", "code", "qa", "narrative"],
+                "source_domains": ["math", "code", "qa"],
+                "target_domain": "narrative",
+                "support_size": 2,
+                "query_size": 2,
+                "sampling_policy": "uniform_examples",
+                "dataset_sources": [
+                    {
+                        "benchmark_id": "gsm8k",
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/gsm8k/eval-real-smoke4.jsonl"),
+                        "domain": "math",
+                        "smoke_subset": "hf_real_smoke4",
+                    },
+                    {
+                        "benchmark_id": "kodcode",
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl"),
+                        "domain": "code",
+                        "smoke_subset": "hf_real_smoke4",
+                    },
+                    {
+                        "benchmark_id": "gpqa",
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl"),
+                        "domain": "qa",
+                        "smoke_subset": "hf_real_smoke4",
+                    },
+                    {
+                        "benchmark_id": "story_cloze",
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl"),
+                        "domain": "narrative",
+                        "smoke_subset": "hf_real_smoke4",
+                    },
+                ],
+            },
+        }
+
     def _write_stage_b_override(self, root: Path, query_learning_mode: str) -> Path:
         override_path = root / f"stage_b_{query_learning_mode}.yaml"
         override_path.write_text(
@@ -92,6 +142,62 @@ class M3TrainingTest(unittest.TestCase):
             {row["label"] for row in episode.support_examples},
             {row["label"] for row in episode.query_examples},
         )
+
+    def test_benchmark_meta_loader_builds_multisource_manifest(self) -> None:
+        task_cfg = self._core4_task_config()
+        grouped = load_meta_grouped_examples(task_cfg)
+        validate_meta_split(
+            grouped,
+            general_domains=["math", "code", "qa", "narrative"],
+            source_domains=["math", "code", "qa"],
+            target_domain="narrative",
+            support_size=2,
+            query_size=2,
+            sampling_policy="uniform_examples",
+        )
+        sampler = EpisodeSampler(
+            grouped,
+            source_domains=["math", "code", "qa"],
+            support_size=2,
+            query_size=2,
+            seed=23,
+            sampling_policy="uniform_examples",
+        )
+        episode = sampler.sample_episode()
+        self.assertIn(episode.domain, {"math", "code", "qa"})
+        self.assertEqual(len(episode.support_examples), 2)
+        self.assertEqual(len(episode.query_examples), 2)
+        self.assertTrue(all(row["benchmark_id"] == "story_cloze" for row in grouped["narrative"]))
+        manifest = build_meta_manifest(
+            dataset_sources=task_cfg["meta"]["dataset_sources"],
+            grouped_examples=grouped,
+            general_domains=["math", "code", "qa", "narrative"],
+            source_domains=["math", "code", "qa"],
+            target_domain="narrative",
+            support_size=2,
+            query_size=2,
+            sampling_policy="uniform_examples",
+        )
+        self.assertEqual(manifest["sampling_policy"], "uniform_examples")
+        self.assertEqual(manifest["benchmarks_by_domain"]["math"], "gsm8k")
+        self.assertIn("dataset_sources", manifest)
+        self.assertIn("math:gsm8k", manifest["dataset_sha256s"])
+
+    def test_continuation_retrieval_loss_supports_exact_match_and_multiple_choice(self) -> None:
+        config = load_config(ROOT / "configs/exp/m3_stage_b_core4_qwen25_smoke.yaml")
+        runtime = MemoryRuntime(config=config, seed=29)
+        grouped = load_meta_grouped_examples(config["task"])
+        for domain in ("math", "narrative"):
+            example = grouped[domain][0]
+            loss, accuracy = _continuation_retrieval_loss(
+                runtime,
+                example,
+                candidate_pool=grouped[domain],
+                negative_count=7,
+            )
+            self.assertTrue(loss.requires_grad)
+            self.assertGreaterEqual(accuracy, 0.0)
+            self.assertLessEqual(accuracy, 1.0)
 
     def test_m3_stage_sequence_writes_expected_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -277,6 +383,79 @@ class M3TrainingTest(unittest.TestCase):
                 self.assertEqual({row["query_learning_mode"] for row in rows}, {"meta_trained"})
                 self.assertEqual({row["adaptation_target"] for row in rows}, {adaptation_target})
                 self.assertEqual({row["trainable_module"] for row in rows}, {trainable_module})
+
+    def test_core4_stage_sequence_writes_task_score_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            stage_a_dir = root / "core4_stage_a"
+            stage_b_dir = root / "core4_stage_b"
+            stage_c_dir = root / "core4_stage_c"
+
+            self.assertEqual(
+                train_main(
+                    [
+                        "--config",
+                        str(ROOT / "configs/exp/m3_stage_a_core4_qwen25_smoke.yaml"),
+                        "--seed",
+                        "71",
+                        "--output_dir",
+                        str(stage_a_dir),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                train_main(
+                    [
+                        "--config",
+                        str(ROOT / "configs/exp/m3_stage_b_core4_qwen25_smoke.yaml"),
+                        "--seed",
+                        "73",
+                        "--output_dir",
+                        str(stage_b_dir),
+                        "--resume",
+                        str(stage_a_dir),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                train_main(
+                    [
+                        "--config",
+                        str(ROOT / "configs/exp/m3_stage_c_core4_qwen25_smoke.yaml"),
+                        "--seed",
+                        "79",
+                        "--output_dir",
+                        str(stage_c_dir),
+                        "--resume",
+                        str(stage_b_dir),
+                    ]
+                ),
+                0,
+            )
+
+            stage_b_manifest = json.loads(stage_b_dir.joinpath("meta_data_manifest.json").read_text())
+            self.assertEqual(stage_b_manifest["sampling_policy"], "uniform_examples")
+            self.assertEqual(stage_b_manifest["benchmarks_by_domain"]["narrative"], "story_cloze")
+
+            stage_b_metrics = json.loads(stage_b_dir.joinpath("metrics.json").read_text())
+            self.assertEqual(stage_b_metrics["query_objective"], "continuation_retrieval")
+            self.assertIn("source_eval_task_score", stage_b_metrics)
+            self.assertEqual(stage_b_metrics["source_eval_metric_name"], "mean_score")
+
+            stage_c_metrics = json.loads(stage_c_dir.joinpath("metrics.json").read_text())
+            self.assertEqual(stage_c_metrics["query_objective"], "continuation_retrieval")
+            self.assertIn("zero_shot_task_score", stage_c_metrics)
+            self.assertIn("best_adapt_task_score", stage_c_metrics)
+            self.assertEqual(stage_c_metrics["task_metric_name"], "accuracy")
+
+            with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertGreaterEqual(len(rows), 2)
+            self.assertIn("task_score", rows[0])
+            self.assertIn("objective_loss", rows[0])
+            self.assertEqual({row["query_objective"] for row in rows}, {"continuation_retrieval"})
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
 - 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
 - 当前 `toy_meta_smoke` 的 canonical Stage B run 已能体现正的 `mean_adaptation_gain`，但该信号对 seed 仍敏感；后续需要更稳的 toy 任务或更多 seeds，避免把单个正向 smoke 误当成稳定规律。
+- benchmark-native `core4_transfer_smoke` 现已打通真实 benchmark 子集上的 `Stage A/B/C` 协议，但当前 `runs/verify/m3-core4-qwen25/stage-b/metrics.json` 与 `runs/verify/m3-core4-qwen3/stage-b/metrics.json` 的 `mean_adaptation_gain` 仍分别为 `-0.4028587341308594` 与 `-0.3529513080914815`；这说明 retrieval-style Stage B 还没有在 mixed-source smoke 上形成稳定正收益。
 - Stage C 适配对象消融现已完成，但在 canonical toy smoke 上仍表现为 `Q-only` 基本不动、`W-only/W+Q` 只降低 loss 而不提升 accuracy；后续需要更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
 - Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
@@ -53,6 +54,7 @@
 - `memory_bank` 现已作为更完整的 memory-agent 风格 scaffold 接入 `story_cloze` real-source smoke、protocol-smoke grid 与 budget audit；但它当前仍是“结构化 memory entries + 有限容量 bank”的最小实现，不是官方 `MemoryBank` 论文级系统复现。
 - `M5` 的 `adapter` baseline family 现已接入最小 `Prompt Tuning / LoRA / IA3 / Prefix Tuning` 闭环，并补到了两档固定 backbone 和 `story_cloze` real-source smoke；但当前仍只支持 candidate-selection 任务，后续还需要补到更多任务和更正式的 few-shot/step 网格。
 - `Prefix Tuning` 现已补进同一套 adapter harness、budget audit 与 protocol-smoke grid；当前 `trainable_parameter_count=4416` 已进入统一预算口径，但 adapter 侧仍缺少更接近 ensemble-style meta-learning 的 `prompt ensembling` 一类变体。
+- benchmark-native `core4` meta-split 现已固化到 `configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml`，并新增 `scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh` 三段 runbook；当前 `summary.csv` 已能把 Stage C 的 `best_adapt_task_score` 当作主指标，而不是继续退回 toy-only 的 `best_adapt_query_accuracy`。
 - `M5` 的 `MetaPrompting` 现已接入最小 `planner_critic` scaffold，但当前仍是单次 prompt protocol，而不是正式多轮/多-agent MetaPrompting 复现；后续若要进入主表，需要补更接近原方法的交互与预算口径。
 - `MetaPrompting` 当前已补到 `story_cloze` real-source smoke，但还没有进 `gsm8k / narrativeqa / gpqa` 等更强任务，也没有与 Prompt Tuning / LoRA 对齐到正式 shot/step 网格。
 - `M5 / P1` 的最小 `LightThinker` 路线现已接入 `story_cloze` real-source smoke、budget audit 与 baseline grid；但当前只是一条 `compress -> answer` prompt scaffold，不是正式 `LightThinker` 论文级复现。

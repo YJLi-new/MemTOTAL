@@ -4,6 +4,7 @@ import copy
 import csv
 import shutil
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -11,11 +12,12 @@ import torch.nn.functional as F
 from memtotal.data import (
     EpisodeSampler,
     build_meta_manifest,
-    load_domain_dataset,
+    load_meta_grouped_examples,
     split_target_domain_examples,
     validate_meta_split,
 )
 from memtotal.pipeline import MemoryRuntime
+from memtotal.tasks import TaskEvaluator, get_task_spec
 from memtotal.utils.io import write_json
 from memtotal.utils.profiling import ProfileTracker
 
@@ -28,6 +30,7 @@ def _load_meta_config(config: dict) -> dict:
         "target_domain": str(meta_cfg["target_domain"]),
         "support_size": int(meta_cfg["support_size"]),
         "query_size": int(meta_cfg["query_size"]),
+        "sampling_policy": str(meta_cfg.get("sampling_policy", "stratified_labels")),
     }
 
 
@@ -50,6 +53,20 @@ def _build_label_prototypes(
     for label in labels:
         states.append(runtime.backbone.summarize_texts(grouped[label]).mean(dim=0))
     return torch.stack(states, dim=0), labels
+
+
+def _resolve_query_objective(config: dict) -> str:
+    query_objective = str(config["runtime"].get("query_objective", "label_prototype"))
+    if query_objective not in {"label_prototype", "continuation_retrieval"}:
+        raise ValueError(
+            f"Unsupported runtime.query_objective={query_objective}. "
+            "Expected one of label_prototype, continuation_retrieval."
+        )
+    return query_objective
+
+
+def _resolve_retrieval_negative_count(config: dict) -> int:
+    return int(config["runtime"].get("retrieval_negative_count", 7))
 
 
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
@@ -225,10 +242,132 @@ def _compute_accuracy_by_domain(
     return correct / len(examples)
 
 
+def _build_task_evaluator_for_example(example: dict[str, Any]) -> TaskEvaluator:
+    benchmark_id = str(example["benchmark_id"])
+    spec = get_task_spec(benchmark_id)
+    return TaskEvaluator(
+        evaluator_type=str(example.get("evaluator_type", spec.evaluator_type)),
+        metric_name=str(example.get("metric_name", spec.metric_name)),
+        normalizer=str(example.get("normalizer", spec.normalizer)),
+        benchmark_id=benchmark_id,
+    )
+
+
+def _evaluate_task_example(
+    runtime: MemoryRuntime,
+    example: dict[str, Any],
+) -> tuple[float, str]:
+    evaluator = _build_task_evaluator_for_example(example)
+    if evaluator.evaluator_type == "multiple_choice":
+        choices = example.get("choices", [])
+        if not choices:
+            raise ValueError("multiple_choice task examples require per-example choices.")
+        candidate_labels = [str(choice["label"]) for choice in choices]
+        candidate_texts = [str(choice["text"]) for choice in choices]
+        candidate_states = runtime.backbone.summarize_texts(candidate_texts)
+        predicted_label, _, _ = runtime.predict_label(
+            example,
+            candidate_states=candidate_states,
+            candidate_labels=candidate_labels,
+        )
+        predicted_text = next(
+            str(choice["text"]) for choice in choices if str(choice["label"]) == predicted_label
+        )
+        score_payload = evaluator.evaluate_prediction(
+            {"label": predicted_label, "text": predicted_text},
+            example,
+        )
+        return float(score_payload["score"]), evaluator.metric_name
+
+    forward = runtime.forward_example(example)
+    generated_text = runtime.backbone.generate(
+        [forward.next_prompt],
+        memory_tokens=forward.generation_memory,
+    )[0]
+    score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
+    return float(score_payload["score"]), evaluator.metric_name
+
+
+def _mean_task_score(
+    runtime: MemoryRuntime,
+    examples: list[dict[str, Any]],
+) -> tuple[float, str]:
+    scores: list[float] = []
+    metric_names: list[str] = []
+    for example in examples:
+        score, metric_name = _evaluate_task_example(runtime, example)
+        scores.append(score)
+        metric_names.append(metric_name)
+    if not scores:
+        return 0.0, "none"
+    unique_metric_names = sorted(set(metric_names))
+    resolved_metric_name = unique_metric_names[0] if len(unique_metric_names) == 1 else "mean_score"
+    return sum(scores) / len(scores), resolved_metric_name
+
+
+def _resolve_retrieval_candidates(
+    example: dict[str, Any],
+    candidate_pool: list[dict[str, Any]],
+    *,
+    negative_count: int,
+) -> list[dict[str, Any]]:
+    negatives = [
+        row
+        for row in sorted(candidate_pool, key=lambda item: str(item["id"]))
+        if str(row["id"]) != str(example["id"])
+    ]
+    selected_negatives = negatives[: min(negative_count, len(negatives))]
+    return [example, *selected_negatives]
+
+
+def _continuation_retrieval_loss(
+    runtime: MemoryRuntime,
+    example: dict[str, Any],
+    *,
+    candidate_pool: list[dict[str, Any]],
+    negative_count: int,
+) -> tuple[torch.Tensor, float]:
+    candidate_examples = _resolve_retrieval_candidates(
+        example,
+        candidate_pool,
+        negative_count=negative_count,
+    )
+    forward = runtime.forward_example(example)
+    memory_summary = runtime.summarize_memory_short(forward.memory_short)
+    candidate_states = runtime.backbone.summarize_texts(
+        [str(row["continuation"]) for row in candidate_examples]
+    )
+    scores = runtime.score_candidates(memory_summary, candidate_states)
+    loss = F.cross_entropy(scores.unsqueeze(0), torch.tensor([0], dtype=torch.long))
+    accuracy = float(int(torch.argmax(scores).item()) == 0)
+    return loss, accuracy
+
+
+def _mean_continuation_retrieval_metrics(
+    runtime: MemoryRuntime,
+    examples: list[dict[str, Any]],
+    *,
+    candidate_pool_resolver,
+    negative_count: int,
+) -> tuple[float, float]:
+    losses: list[torch.Tensor] = []
+    accuracies: list[float] = []
+    for example in examples:
+        loss, accuracy = _continuation_retrieval_loss(
+            runtime,
+            example,
+            candidate_pool=candidate_pool_resolver(example),
+            negative_count=negative_count,
+        )
+        losses.append(loss)
+        accuracies.append(accuracy)
+    return float(torch.stack(losses).mean().item()), sum(accuracies) / len(accuracies)
+
+
 def _stage_c_row_key(row: dict[str, object]) -> tuple[float, float, int, int]:
     return (
-        float(row["query_accuracy"]),
-        -float(row["query_loss"]),
+        float(row.get("task_score", row.get("query_accuracy", 0.0))),
+        -float(row.get("objective_loss", row.get("query_loss", 0.0))),
         int(row["shot"]),
         int(row["step"]),
     )
@@ -241,6 +380,7 @@ def _save_stage_b_state(
     seed: int,
     source_domains: list[str],
     query_learning_mode: str,
+    query_objective: str,
     writer_checkpoint: Path,
 ) -> Path:
     queries_path = output_dir / "queries_meta_init.pt"
@@ -252,6 +392,7 @@ def _save_stage_b_state(
             "writer_checkpoint": str(writer_checkpoint.resolve()),
             "source_domains": source_domains,
             "query_learning_mode": query_learning_mode,
+            "query_objective": query_objective,
         },
         queries_path,
     )
@@ -260,13 +401,24 @@ def _save_stage_b_state(
 
 def _build_meta_context(config: dict) -> tuple[dict[str, list[dict[str, str]]], dict[str, object]]:
     meta_cfg = _load_meta_config(config)
-    grouped_examples = load_domain_dataset(config["task"]["dataset_path"])
+    task_cfg = config["task"]
+    grouped_examples = load_meta_grouped_examples(task_cfg)
     validate_meta_split(grouped_examples, **meta_cfg)
-    manifest = build_meta_manifest(
-        dataset_path=config["task"]["dataset_path"],
-        grouped_examples=grouped_examples,
+    manifest_kwargs = {
+        "grouped_examples": grouped_examples,
         **meta_cfg,
-    )
+    }
+    dataset_sources = task_cfg.get("meta", {}).get("dataset_sources")
+    if dataset_sources:
+        manifest = build_meta_manifest(
+            dataset_sources=dataset_sources,
+            **manifest_kwargs,
+        )
+    else:
+        manifest = build_meta_manifest(
+            dataset_path=task_cfg["dataset_path"],
+            **manifest_kwargs,
+        )
     return grouped_examples, manifest
 
 
@@ -339,14 +491,24 @@ def run_stage_b(
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     query_learning_mode = _resolve_stage_b_query_learning_mode(config)
+    query_objective = _resolve_query_objective(config)
+    retrieval_negative_count = _resolve_retrieval_negative_count(config)
     trainable_parameters, trainable_module = _stage_b_trainable_parameters(runtime)
     shutil.copy2(writer_path, output_dir / "writer.ckpt")
     source_examples = _flatten_domains(grouped_examples, manifest["source_domains"])
-    domain_candidate_bank = {
-        domain: _build_label_prototypes(runtime, grouped_examples[domain])
-        for domain in manifest["source_domains"]
-    }
     source_eval_label_space = "per_domain"
+    source_eval_candidate_pool = "per_domain"
+    domain_candidate_bank: dict[str, tuple[torch.Tensor, list[str]]] = {}
+    if query_objective == "label_prototype":
+        domain_candidate_bank = {
+            domain: _build_label_prototypes(runtime, grouped_examples[domain])
+            for domain in manifest["source_domains"]
+        }
+
+    def _source_pool_resolver(example: dict[str, Any]) -> list[dict[str, Any]]:
+        if query_learning_mode == "meta_trained":
+            return list(grouped_examples[str(example["domain"])])
+        return source_examples
 
     if query_learning_mode == "random":
         profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
@@ -354,35 +516,52 @@ def run_stage_b(
             profiler.add_example()
             profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
             profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
-        source_zero_shot_query_loss = _mean_classification_loss_by_domain(
-            runtime,
-            source_examples,
-            candidate_bank=domain_candidate_bank,
-        )
-        source_zero_shot_query_accuracy = _compute_accuracy_by_domain(
-            runtime,
-            source_examples,
-            candidate_bank=domain_candidate_bank,
-        )
+        if query_objective == "label_prototype":
+            source_zero_shot_query_loss = _mean_classification_loss_by_domain(
+                runtime,
+                source_examples,
+                candidate_bank=domain_candidate_bank,
+            )
+            source_zero_shot_query_accuracy = _compute_accuracy_by_domain(
+                runtime,
+                source_examples,
+                candidate_bank=domain_candidate_bank,
+            )
+            source_eval_task_score = source_zero_shot_query_accuracy
+            source_eval_metric_name = "accuracy"
+        else:
+            source_eval_candidate_pool = "global_source"
+            source_zero_shot_query_loss, source_zero_shot_query_accuracy = _mean_continuation_retrieval_metrics(
+                runtime,
+                source_examples,
+                candidate_pool_resolver=lambda _: source_examples,
+                negative_count=retrieval_negative_count,
+            )
+            source_eval_task_score, source_eval_metric_name = _mean_task_score(runtime, source_examples)
         queries_path = _save_stage_b_state(
             output_dir=output_dir,
             runtime=runtime,
             seed=seed,
             source_domains=manifest["source_domains"],
             query_learning_mode=query_learning_mode,
+            query_objective=query_objective,
             writer_checkpoint=output_dir / "writer.ckpt",
         )
         metrics = {
             "mode": "train",
             "training_stage": "stage_b",
             "query_learning_mode": query_learning_mode,
+            "query_objective": query_objective,
             "episodes_completed": 0,
             "steps_completed": 0,
             "examples_seen": 0,
             "trainable_module": trainable_module,
             "source_eval_label_space": source_eval_label_space,
+            "source_eval_candidate_pool": source_eval_candidate_pool,
             "source_eval_query_loss": source_zero_shot_query_loss,
             "source_eval_query_accuracy": source_zero_shot_query_accuracy,
+            "source_eval_task_score": source_eval_task_score,
+            "source_eval_metric_name": source_eval_metric_name,
             "queries_meta_init": str(queries_path.resolve()),
             "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
             "source_domains": manifest["source_domains"],
@@ -404,6 +583,7 @@ def run_stage_b(
             support_size=int(manifest["support_size"]),
             query_size=int(manifest["query_size"]),
             seed=seed,
+            sampling_policy=str(manifest["sampling_policy"]),
         )
         inner_lr = float(config["runtime"]["inner_learning_rate"])
         meta_lr = float(config["runtime"]["meta_learning_rate"])
@@ -419,35 +599,75 @@ def run_stage_b(
                 lr=inner_lr,
             )
             domain_examples = list(grouped_examples[episode.domain])
-            candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
-
-            zero_shot_query_loss = _mean_classification_loss(
-                runtime,
-                episode.query_examples,
-                candidate_states=candidate_states,
-                candidate_labels=candidate_labels,
-            )
+            if query_objective == "label_prototype":
+                candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
+                zero_shot_query_loss = _mean_classification_loss(
+                    runtime,
+                    episode.query_examples,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+                zero_shot_query_accuracy = _compute_accuracy(
+                    runtime,
+                    episode.query_examples,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+            else:
+                zero_shot_query_loss, zero_shot_query_accuracy = _mean_continuation_retrieval_metrics(
+                    runtime,
+                    episode.query_examples,
+                    candidate_pool_resolver=lambda _: domain_examples,
+                    negative_count=retrieval_negative_count,
+                )
             for _ in range(inner_steps):
-                support_loss = torch.stack(
-                    [
-                        _classification_loss(
-                            fast_runtime,
-                            example,
-                            candidate_states=candidate_states,
-                            candidate_labels=candidate_labels,
-                        )
-                        for example in episode.support_examples
-                    ]
-                ).mean()
+                if query_objective == "label_prototype":
+                    support_loss = torch.stack(
+                        [
+                            _classification_loss(
+                                fast_runtime,
+                                example,
+                                candidate_states=candidate_states,
+                                candidate_labels=candidate_labels,
+                            )
+                            for example in episode.support_examples
+                        ]
+                    ).mean()
+                else:
+                    support_loss = torch.stack(
+                        [
+                            _continuation_retrieval_loss(
+                                fast_runtime,
+                                example,
+                                candidate_pool=domain_examples,
+                                negative_count=retrieval_negative_count,
+                            )[0]
+                            for example in episode.support_examples
+                        ]
+                    ).mean()
                 inner_optimizer.zero_grad()
                 support_loss.backward()
                 inner_optimizer.step()
-            adapted_query_loss = _mean_classification_loss(
-                fast_runtime,
-                episode.query_examples,
-                candidate_states=candidate_states,
-                candidate_labels=candidate_labels,
-            )
+            if query_objective == "label_prototype":
+                adapted_query_loss = _mean_classification_loss(
+                    fast_runtime,
+                    episode.query_examples,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+                adapted_query_accuracy = _compute_accuracy(
+                    fast_runtime,
+                    episode.query_examples,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+            else:
+                adapted_query_loss, adapted_query_accuracy = _mean_continuation_retrieval_metrics(
+                    fast_runtime,
+                    episode.query_examples,
+                    candidate_pool_resolver=lambda _: domain_examples,
+                    negative_count=retrieval_negative_count,
+                )
 
             with torch.no_grad():
                 runtime.reader.queries.add_(meta_lr * (fast_runtime.reader.queries - runtime.reader.queries))
@@ -461,14 +681,19 @@ def run_stage_b(
                 {
                     "episode": episode_index,
                     "domain": episode.domain,
+                    "query_objective": query_objective,
                     "zero_shot_query_loss": zero_shot_query_loss,
+                    "zero_shot_query_accuracy": zero_shot_query_accuracy,
                     "adapted_query_loss": adapted_query_loss,
+                    "adapted_query_accuracy": adapted_query_accuracy,
                     "adaptation_gain": zero_shot_query_loss - adapted_query_loss,
                 }
             )
     else:
         source_eval_label_space = "global_multitask"
-        global_candidate_states, global_candidate_labels = _build_label_prototypes(runtime, source_examples)
+        source_eval_candidate_pool = "global_source"
+        if query_objective == "label_prototype":
+            global_candidate_states, global_candidate_labels = _build_label_prototypes(runtime, source_examples)
         multitask_steps = 2 if dry_run else int(config["runtime"].get("multitask_steps", episodes))
         multitask_learning_rate = float(
             config["runtime"].get("multitask_learning_rate", config["runtime"]["meta_learning_rate"])
@@ -479,12 +704,20 @@ def run_stage_b(
             profiler.add_example()
             example = source_examples[step % len(source_examples)]
             optimizer.zero_grad()
-            loss = _classification_loss(
-                runtime,
-                example,
-                candidate_states=global_candidate_states,
-                candidate_labels=global_candidate_labels,
-            )
+            if query_objective == "label_prototype":
+                loss = _classification_loss(
+                    runtime,
+                    example,
+                    candidate_states=global_candidate_states,
+                    candidate_labels=global_candidate_labels,
+                )
+            else:
+                loss, _ = _continuation_retrieval_loss(
+                    runtime,
+                    example,
+                    candidate_pool=source_examples,
+                    negative_count=retrieval_negative_count,
+                )
             loss.backward()
             optimizer.step()
             profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
@@ -493,6 +726,7 @@ def run_stage_b(
                 {
                     "step": step,
                     "domain": example["domain"],
+                    "query_objective": query_objective,
                     "query_loss": float(loss.item()),
                 }
             )
@@ -503,29 +737,45 @@ def run_stage_b(
         seed=seed,
         source_domains=manifest["source_domains"],
         query_learning_mode=query_learning_mode,
+        query_objective=query_objective,
         writer_checkpoint=output_dir / "writer.ckpt",
     )
-    source_zero_shot_query_loss = _mean_classification_loss_by_domain(
-        runtime,
-        source_examples,
-        candidate_bank=domain_candidate_bank,
-    )
-    source_zero_shot_query_accuracy = _compute_accuracy_by_domain(
-        runtime,
-        source_examples,
-        candidate_bank=domain_candidate_bank,
-    )
+    if query_objective == "label_prototype":
+        source_zero_shot_query_loss = _mean_classification_loss_by_domain(
+            runtime,
+            source_examples,
+            candidate_bank=domain_candidate_bank,
+        )
+        source_zero_shot_query_accuracy = _compute_accuracy_by_domain(
+            runtime,
+            source_examples,
+            candidate_bank=domain_candidate_bank,
+        )
+        source_eval_task_score = source_zero_shot_query_accuracy
+        source_eval_metric_name = "accuracy"
+    else:
+        source_zero_shot_query_loss, source_zero_shot_query_accuracy = _mean_continuation_retrieval_metrics(
+            runtime,
+            source_examples,
+            candidate_pool_resolver=_source_pool_resolver,
+            negative_count=retrieval_negative_count,
+        )
+        source_eval_task_score, source_eval_metric_name = _mean_task_score(runtime, source_examples)
     metrics = {
         "mode": "train",
         "training_stage": "stage_b",
         "query_learning_mode": query_learning_mode,
+        "query_objective": query_objective,
         "episodes_completed": episodes if query_learning_mode == "meta_trained" else 0,
         "steps_completed": len(events) if query_learning_mode == "non_meta_multitask" else 0,
         "examples_seen": len(events),
         "trainable_module": trainable_module,
         "source_eval_label_space": source_eval_label_space,
+        "source_eval_candidate_pool": source_eval_candidate_pool,
         "source_eval_query_loss": source_zero_shot_query_loss,
         "source_eval_query_accuracy": source_zero_shot_query_accuracy,
+        "source_eval_task_score": source_eval_task_score,
+        "source_eval_metric_name": source_eval_metric_name,
         "queries_meta_init": str(queries_path.resolve()),
         "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
         "source_domains": manifest["source_domains"],
@@ -558,14 +808,22 @@ def run_stage_c(
     queries_path = _resolve_artifact_path(resume, "queries_meta_init.pt")
     adaptation_target = _resolve_stage_c_adaptation_target(config)
     expected_query_learning_mode = _resolve_expected_stage_c_query_learning_mode(config)
+    query_objective = _resolve_query_objective(config)
+    retrieval_negative_count = _resolve_retrieval_negative_count(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
     query_learning_mode = str(state.get("query_learning_mode", "meta_trained"))
+    resumed_query_objective = str(state.get("query_objective", query_objective))
     if expected_query_learning_mode is not None and query_learning_mode != expected_query_learning_mode:
         raise ValueError(
             f"Stage C expected query_learning_mode={expected_query_learning_mode}, "
             f"but resume artifact provides {query_learning_mode}."
+        )
+    if resumed_query_objective != query_objective:
+        raise ValueError(
+            f"Stage C expected query_objective={query_objective}, "
+            f"but resume artifact provides {resumed_query_objective}."
         )
     runtime.reader.load_state_dict(state["reader_state"])
     if "fuser_state" in state:
@@ -579,9 +837,13 @@ def run_stage_c(
         support_size=int(manifest["support_size"]),
         query_size=int(manifest["query_size"]),
         seed=seed,
+        sampling_policy=str(manifest["sampling_policy"]),
     )
     domain_examples = list(grouped_examples[manifest["target_domain"]])
-    candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
+    candidate_states: torch.Tensor | None = None
+    candidate_labels: list[str] | None = None
+    if query_objective == "label_prototype":
+        candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
     shots_list = [int(shot) for shot in config["runtime"]["adapt_shots"]]
     max_steps = 1 if dry_run else int(config["runtime"]["adapt_steps"])
     adapt_lr = float(config["runtime"]["adapt_learning_rate"])
@@ -603,28 +865,47 @@ def run_stage_c(
                 profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
                 profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
                 query_examples_touched += 1
-            query_loss = _mean_classification_loss(
-                current_runtime,
-                target_episode.query_examples,
-                candidate_states=candidate_states,
-                candidate_labels=candidate_labels,
-            )
-            query_accuracy = _compute_accuracy(
-                current_runtime,
-                target_episode.query_examples,
-                candidate_states=candidate_states,
-                candidate_labels=candidate_labels,
-            )
+            if query_objective == "label_prototype":
+                objective_loss = _mean_classification_loss(
+                    current_runtime,
+                    target_episode.query_examples,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+                objective_accuracy = _compute_accuracy(
+                    current_runtime,
+                    target_episode.query_examples,
+                    candidate_states=candidate_states,
+                    candidate_labels=candidate_labels,
+                )
+                task_score = objective_accuracy
+                task_metric_name = "accuracy"
+            else:
+                objective_loss, objective_accuracy = _mean_continuation_retrieval_metrics(
+                    current_runtime,
+                    target_episode.query_examples,
+                    candidate_pool_resolver=lambda _: domain_examples,
+                    negative_count=retrieval_negative_count,
+                )
+                task_score, task_metric_name = _mean_task_score(
+                    current_runtime,
+                    target_episode.query_examples,
+                )
             curve_rows.append(
                 {
                     "query_learning_mode": query_learning_mode,
+                    "query_objective": query_objective,
                     "adaptation_target": adaptation_target,
                     "trainable_module": trainable_module,
                     "trainable_parameter_count": trainable_parameter_count,
                     "shot": shot,
                     "step": step,
-                    "query_loss": query_loss,
-                    "query_accuracy": query_accuracy,
+                    "objective_loss": objective_loss,
+                    "objective_accuracy": objective_accuracy,
+                    "task_score": task_score,
+                    "task_metric_name": task_metric_name,
+                    "query_loss": objective_loss,
+                    "query_accuracy": objective_accuracy,
                 }
             )
             if shot > 0:
@@ -636,17 +917,30 @@ def run_stage_c(
                 continue
             current_adapt_parameters, _ = _configure_stage_c_trainables(current_runtime, adaptation_target)
             optimizer = torch.optim.SGD(current_adapt_parameters, lr=adapt_lr)
-            support_loss = torch.stack(
-                [
-                    _classification_loss(
-                        current_runtime,
-                        example,
-                        candidate_states=candidate_states,
-                        candidate_labels=candidate_labels,
-                    )
-                    for example in support_examples
-                ]
-            ).mean()
+            if query_objective == "label_prototype":
+                support_loss = torch.stack(
+                    [
+                        _classification_loss(
+                            current_runtime,
+                            example,
+                            candidate_states=candidate_states,
+                            candidate_labels=candidate_labels,
+                        )
+                        for example in support_examples
+                    ]
+                ).mean()
+            else:
+                support_loss = torch.stack(
+                    [
+                        _continuation_retrieval_loss(
+                            current_runtime,
+                            example,
+                            candidate_pool=domain_examples,
+                            negative_count=retrieval_negative_count,
+                        )[0]
+                        for example in support_examples
+                    ]
+                ).mean()
             optimizer.zero_grad()
             support_loss.backward()
             optimizer.step()
@@ -662,11 +956,16 @@ def run_stage_c(
             handle,
             fieldnames=[
                 "query_learning_mode",
+                "query_objective",
                 "adaptation_target",
                 "trainable_module",
                 "trainable_parameter_count",
                 "shot",
                 "step",
+                "objective_loss",
+                "objective_accuracy",
+                "task_score",
+                "task_metric_name",
                 "query_loss",
                 "query_accuracy",
             ],
@@ -684,6 +983,7 @@ def run_stage_c(
             "seed": seed,
             "target_domain": manifest["target_domain"],
             "query_learning_mode": query_learning_mode,
+            "query_objective": query_objective,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -695,6 +995,7 @@ def run_stage_c(
     profile_metrics = profiler.finalize()
     adapt_cost = {
         "query_learning_mode": query_learning_mode,
+        "query_objective": query_objective,
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
@@ -714,13 +1015,19 @@ def run_stage_c(
         "training_stage": "stage_c",
         "target_domain": manifest["target_domain"],
         "query_learning_mode": query_learning_mode,
+        "query_objective": query_objective,
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
         "zero_shot_query_loss": zero_shot_row["query_loss"],
         "zero_shot_query_accuracy": zero_shot_row["query_accuracy"],
+        "zero_shot_objective_loss": zero_shot_row["objective_loss"],
+        "zero_shot_task_score": zero_shot_row["task_score"],
+        "task_metric_name": best_row["task_metric_name"],
         "best_adapt_query_accuracy": best_row["query_accuracy"],
         "best_adapt_query_loss": best_row["query_loss"],
+        "best_adapt_objective_loss": best_row["objective_loss"],
+        "best_adapt_task_score": best_row["task_score"],
         "best_adapt_shot": best_row["shot"],
         "best_adapt_step": best_row["step"],
         "adapt_curve_path": str(adapt_curve_path.resolve()),

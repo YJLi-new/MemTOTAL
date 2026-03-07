@@ -4,6 +4,7 @@ from memtotal.data.meta_data import (
     build_meta_manifest,
     compute_dataset_sha256,
     load_domain_dataset,
+    load_meta_grouped_examples,
     split_target_domain_examples,
     validate_meta_split,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "compute_dataset_sha256",
     "load_domain_dataset",
     "load_jsonl_dataset",
+    "load_meta_grouped_examples",
     "load_toy_dataset",
     "split_target_domain_examples",
     "validate_meta_split",
