@@ -448,7 +448,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_b_metrics["query_candidate_pool_policy"], "exclude_support_for_query_eval")
             self.assertEqual(stage_b_metrics["support_candidate_pool_policy"], "support_only_for_inner_loop")
             self.assertEqual(stage_b_metrics["retrieval_negative_count"], 7)
-            self.assertEqual(stage_b_metrics["meta_episodes"], 6)
+            self.assertEqual(stage_b_metrics["meta_episodes"], 16)
             self.assertEqual(stage_b_metrics["inner_steps"], 1)
             self.assertEqual(stage_b_metrics["meta_learning_rate"], 0.05)
 

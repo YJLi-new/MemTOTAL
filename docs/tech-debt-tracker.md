@@ -11,7 +11,8 @@
 - 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
 - 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
 - 当前 `toy_meta_smoke` 的 canonical Stage B run 已能体现正的 `mean_adaptation_gain`，但该信号对 seed 仍敏感；后续需要更稳的 toy 任务或更多 seeds，避免把单个正向 smoke 误当成稳定规律。
-- benchmark-native `core4_transfer_smoke` 现已打通真实 benchmark 子集上的 `Stage A/B/C` 协议，并已做两轮 retrieval follow-up：先把 query/val 侧候选池改成排除 support continuations、inner-loop 只在 support pool 内做 retrieval，再把 canonical 结构提升到 `smoke8/3x3`。当前 `Stage B` 的 `mean_adaptation_gain` 已翻成正值：qwen25 为 `1.903374989827474e-05`，qwen3 为 `0.0007965167363484701`；但 margin 仍然偏小，还没有达到“稳定 source-domain meta gain”的强证据。
+- benchmark-native `core4_transfer_smoke` 现已打通真实 benchmark 子集上的 `Stage A/B/C` 协议，并已做三轮 retrieval follow-up：先把 query/val 侧候选池改成排除 support continuations、inner-loop 只在 support pool 内做 retrieval，再把 canonical 结构提升到 `smoke8/3x3`，最后补上 backbone-specific Stage B probe harness。当前 canonical `Stage B` 的 `mean_adaptation_gain` 已保持正值：qwen25 当前 canonical 为 `meta_episodes=16`、`mean_adaptation_gain=6.527453660964966e-05`，qwen3 当前 canonical 为 `meta_episodes=6`、`mean_adaptation_gain=0.0007965167363484701`；但 margin 仍然偏小，还没有达到“稳定 source-domain meta gain”的强证据。
+- `scripts/run_m3_core4_stage_b_probe_suite.sh` 现已具备 `config.snapshot + seed` 的最小安全复用，不会把错配置的旧 probe 静默混进 summary；但当前 probe harness 还只覆盖 Stage B，不覆盖 Stage C 的 target-domain curve 选择。
 - Stage C 适配对象消融现已完成，但在 canonical toy smoke 上仍表现为 `Q-only` 基本不动、`W-only/W+Q` 只降低 loss 而不提升 accuracy；后续需要更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
 - Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。

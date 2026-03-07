@@ -8,6 +8,7 @@
 
 - `train.py` / `eval.py` / `analysis.py`: 根入口，满足 `python -m train|eval|analysis`
 - `scripts/run_memgen.sh`: MemGen baseline 的统一 adapter 入口，先支持 dry-run launch 计划与后续真实执行桥接
+- `scripts/run_m3_core4_stage_b_probe_suite.sh`: benchmark-native `core4` 的 Stage B probe suite，会在数据盘跑 probe variants，并把 `probe_summary.csv/.svg` 写回仓库
 - `scripts/move_hf_cache_to_data_disk.sh`: 将 `~/.cache/huggingface` 迁到数据盘并回接符号链接，避免系统盘被模型/数据缓存打满
 - `scripts/cleanup_hf_cache.sh`: 清理 Hugging Face datasets cache 与未完成的模型下载碎片，用于 real-source benchmark / MemGen 的磁盘治理
 - `src/memtotal/models/`: backbone wrapper、Writer/Reader/Fuser/Injector、Segmenter
@@ -86,6 +87,8 @@
   - benchmark-native `core4` 当前进一步固定为 episode-aware pool 协议：query/val 侧候选池显式排除 support continuations，inner-loop support update 只在 support pool 内做 retrieval
   - `metrics.json` 现已同时记录 `source_eval_query_loss/source_eval_query_accuracy` 与 `source_eval_task_score/source_eval_metric_name`
   - `metrics.json` 现也显式记录 `retrieval_negative_count / meta_episodes / inner_steps / inner_learning_rate / meta_learning_rate`，便于直接对照 Stage B probe 而不必回看 `config.snapshot`
+  - 当前 canonical Stage B 已变成 backbone-specific 口径：qwen25 使用 `meta_episodes=16`，qwen3 保持 `meta_episodes=6`
+  - 新增 `src/memtotal/analysis/m3_probe.py` 与 `configs/exp/m3_stage_b_probe_summary.yaml`；probe suite 会产出 `best_by_backbone`，并用 `config.snapshot + seed` 校验复用，避免把旧 probe 误当成新结果
 - Stage C：
   - 默认按 `adaptation_target=q_only` 对齐 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的 Stage C 契约，只更新 `reader.queries`
   - 支持 `adaptation_target in {q_only, w_only, w_plus_q}`
@@ -96,7 +99,7 @@
   - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / query_objective / adaptation_target / trainable_module / trainable_parameter_count / objective_loss / task_score / task_metric_name`
   - `metrics.json` 现也显式记录 `retrieval_negative_count / adapt_learning_rate / adapt_steps / adapt_shots`，便于直接复核 Stage C few-shot 口径
 
-当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；但 canonical 配置现已从早期 `smoke4/2x2` 升级为 `smoke8/3x3`，并在 episode-aware retrieval 协议下首次把 Stage B 的 mixed-source `mean_adaptation_gain` 翻到正值：qwen25 为 `1.903374989827474e-05`，qwen3 为 `0.0007965167363484701`。这说明协议方向已经成立，但当前增益仍很小，后续仍需继续扩大 margin 并验证稳定性。
+当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；但 canonical 配置现已从早期 `smoke4/2x2` 升级为 `smoke8/3x3`，并进一步通过 Stage B probe suite 收口到 backbone-specific episode budget：qwen25 当前 canonical `meta_episodes=16`，`runs/verify/m3-core4-qwen25/stage-b/metrics.json` 记录 `mean_adaptation_gain=6.527453660964966e-05`；qwen3 当前 canonical 仍为 `meta_episodes=6`，`runs/verify/m3-core4-qwen3/stage-b/metrics.json` 记录 `mean_adaptation_gain=0.0007965167363484701`。正式 probe suite `results/generated/m3-core4-stage-b-probe-suite-v2/metrics.json` 当前也显示两档 backbone 的最佳变体都回到各自 canonical。这说明协议方向已经成立，但当前增益仍很小，后续仍需继续扩大 margin 并验证稳定性。
 
 ## M4 Benchmark Scaffold
 
