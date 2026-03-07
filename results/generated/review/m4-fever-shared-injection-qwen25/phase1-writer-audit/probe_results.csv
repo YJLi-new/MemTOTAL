@@ -1,5 +1,5 @@
 accuracy,auroc,balanced_accuracy,feature_mode,macro_f1,model_kind,primary_metric,probe_name
-0.45967741310596466,nan,nan,real,0.4192720595117444,linear,macro_f1,label_probe_3way
+0.4556451588869095,nan,nan,real,0.42970136288459615,linear,macro_f1,label_probe_3way
 0.47983870655298233,nan,nan,real,0.44342590479034744,mlp,macro_f1,label_probe_3way
 0.36693548411130905,nan,nan,shuffle,0.3498548270044403,linear,macro_f1,label_probe_3way
 0.314516119658947,nan,nan,shuffle,0.28332844362228066,mlp,macro_f1,label_probe_3way

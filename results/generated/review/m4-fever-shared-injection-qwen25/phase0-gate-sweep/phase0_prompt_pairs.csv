@@ -1,0 +1,4 @@
+a_accuracy,a_dominant_label_fraction,a_macro_f1,a_valid_prompt_surface,accuracy_gain,macro_f1_gain,pair_gate_passed,prompt_variant,selected_support_serialization_variant,t_accuracy,t_dominant_label_fraction,t_macro_f1,t_valid_support_surface
+0.29435483870967744,1.0,0.15160955347871236,False,0.0,0.0,False,inline_short_labels,flat_raw8,0.29435483870967744,1.0,0.15160955347871236,False
+0.29435483870967744,1.0,0.15160955347871236,False,0.4274193548387097,0.5351999379825547,True,answer_slot_labels,example_blocks_raw8,0.7217741935483871,0.5241935483870968,0.6868094914612671,True
+0.29435483870967744,1.0,0.15160955347871236,False,0.008064516129032251,0.01682354598886987,False,verbalized_decisions,triad_curated6,0.3024193548387097,0.9919354838709677,0.16843309946758223,False

@@ -8,23 +8,29 @@
 
 ## 最新进展
 
-- 已完成 `M4.1` 的 `FEVER Gate Recovery`：上游 gate 现在明确拆成 `screen248` 上的 `Phase 0 prompt/support gate`、`Phase 1 writer information audit`，以及只有前两者通过后才会启动的 `fixed64` shared injection。
-- 当前最新真实结果不是“writer 没信息”，而是：
-  - `Phase 0` 失败：`A_winner` 和 `T_winner` 都塌缩成全预测 `SUPPORTS`
-  - `screen248` 上两者相同：`accuracy=0.29435483870967744`、`macro_f1=0.15160955347871236`、`dominant_label_fraction=1.0`
-  - 因而当前 immediate blocker 已经收敛到 `FEVER` 的 prompt / support serialization，而不是注入训练本身
-- `Phase 1 writer information audit` 已按更稳的判因口径给出正信号：
-  - `label_probe_3way`: `real macro_f1=0.4434`，高于 `shuffle=0.3499`
-  - `verifiability_probe`: `real auroc=0.7724`，高于 `shuffle=0.5568`
-  - `polarity_probe`: `real auroc=0.5534`，高于 `shuffle=0.4863`
-  - 当前 `phase1_probe_passed=true`，但由于 `phase0_gate_passed=false`，整体 `phase1_gate_passed=false`
-- `Phase 2` 这轮没有在真实 run 中启动，但 shared injection harness 已经技术上打通：
-  - `BackboneWrapper.score_continuations(prefix_embeddings=...)` 现在允许 prefix 路径回传梯度
-  - `LatentPrefixProjector` + writer warmup / joint-training 链路都能在 dry-run 下完整跑通
-- 因而，当前最值得继续的方向非常明确：
-  - 先修 `FEVER` 的 label verbalization、support serialization、teacher-text prompt，让 `T > A`
-  - 再重新进入 `I-real / I-shuffle / I-zero`
-  - 现在不该回到旧的 score-side residual family，也不该直接扩到 `Story Cloze` 或 `Qwen3-8B`
+- 已完成 `M4.1` 的 `FEVER Gate Recovery` 和第一轮真实 `shared generative injection` gate。
+- 当前最新真实结果已经把 blocker 上移到更硬的一层：
+  - `Phase 0` 已真实通过：`A_winner=answer_slot_labels`，`T_winner=answer_slot_labels + example_blocks_raw8`
+  - `A_winner`：`accuracy=0.29435483870967744`、`macro_f1=0.15160955347871236`、`dominant_label_fraction=1.0`
+  - `T_winner`：`accuracy=0.7217741935483871`、`macro_f1=0.6868094914612671`、`dominant_label_fraction=0.5241935483870968`
+  - `selected_pair_accuracy_gain=0.4274`、`selected_pair_macro_f1_gain=0.5352`
+- `Phase 1 writer information audit` 也已真实通过：
+  - `label_probe_3way`: `real macro_f1=0.4434`，高于控制 `0.3499`
+  - `verifiability_probe`: `real auroc=0.7724`，高于控制 `0.5568`
+  - `polarity_probe`: `real auroc=0.5534`，高于控制 `0.4863`
+  - `phase1_gate_passed=true`
+- 但 `Phase 2` 的真实 shared injection 仍然失败：
+  - `A = 0.25 / macro_f1=0.2`
+  - `T = 0.53125 / macro_f1=0.5294`
+  - `I-real = I-shuffle = I-zero = 0.25 / macro_f1=0.2`
+  - `gate_passed=false`
+- 也就是说，当前不再适合把问题归因成：
+  - `FEVER` prompt/support surface 没修好
+  - 或 writer 完全没信息
+- 当前更准确的结论是：
+  - `teacher-text` 明确有用
+  - writer latent 也已有可读任务信息
+  - 但这版 `writer + latent prefix projector + shallow input-prefix injection` 仍没有把 real memory 内容变成 frozen Qwen 会消费的上下文
 - benchmark-native `M3 core4` 主链已经打通：`gsm8k + kodcode + gpqa + story_cloze` 的 `Stage A/B/C`、统一产物、统一分析都可运行。
 - 真实 `Qwen2.5-1.5B-Instruct` 的最小闭环已经打通：`BackboneWrapper(load_mode=hf_causal_lm)` 现支持真实 `summarize_texts`、`score_continuations` 与本地 staged model 目录加载。
 - 最新判别实验已经完成三步：
@@ -106,16 +112,15 @@
   - 当前这条 `candidate-conditioned residual family` 在 repair objective 下依然没有 real-memory 内容效应
   - `R-real` 同时没有优于 `R-shuffle`，也没有优于 `R-zero`
   - 因而现在不该继续修 current candidate-conditioned family；如果后续还要做 candidate-specific `Stage C`，应直接换 residual family，而不是继续在这一条上加 router / sign selector
-- `M4.1 shared injection recovery` 这轮又把 blocker 更精确地上移了一层：
-  - `Phase 0` 在 `screen248` 上仍然失败：所有 12 条 `A/T` prompt-support 组合都塌缩到全预测 `SUPPORTS`
-  - 但 `Phase 1 writer audit` 已经通过了语义 probe，本轮不再支持“writer 完全没信息”这个解释
-  - 所以这轮没有进入真实 `I-real / I-shuffle / I-zero`，但这并不意味着 shared injection 已失败
-  - 当前最合理的结论是：`support serialization / prompt / teacher-text surface` 还没把 frozen Qwen 带到可利用 support 的决策面上
+- `M4.1 shared injection recovery` 这轮已经把 blocker 上移到真正的主链路注入：
+  - `Phase 0` 已通过，显式 support 文本确实能帮助 frozen Qwen
+  - `Phase 1 writer audit` 也已通过，当前 writer family 里确实已有可读任务信息
+  - 但 `Phase 2` 真实 shared injection 仍然给出 `I-real = I-shuffle = I-zero`
+  - 当前最合理的解释已变成：这版浅层 input-prefix 注入并没有把 writer latent 转成 frozen Qwen 真正会消费的上下文
 - 因而，当前最重要的下一步已改成：
-  - 先修 `FEVER` 的 `teacher-text` 构造、support serialization 与 label verbalization，让 `T > A`
-  - `writer information audit` 这轮已经给出正信号，所以当前不是“writer 先天没信息”，而是“Qwen 还没被 prompt/support surface 正确带到这些信息上”
-  - 只有在 `Phase 0` 先通过后，才重新启动真实 `shared injected memory` 训练
-  - `Story Cloze` 继续只保留为后续 stress test，不参与当前 capability gate
+  - 优先检查和升级 `writer -> prefix -> frozen Qwen` 这条主链路
+  - 现在不该回到旧的 score-side residual family
+  - 也不该直接扩到 `Story Cloze` 或 `Qwen3-8B`
 
 ## 关键结果路径
 
@@ -152,9 +157,13 @@
   - `results/generated/review/m4-fever-shared-injection-qwen25/`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/report.md`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/phase0_summary.csv`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/phase0_prompt_pairs.csv`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/summary.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-dryrun-compare/metrics.json`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/report.md`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/arm_summary.csv`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/real_vs_shuffle_gap.csv`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/real_vs_zero_gap.csv`
 
 ## 现在最重要的下一步
 
@@ -164,6 +173,8 @@
   - 先保留 `FEVER` 作为正 control，不再继续扩 story sweep
   - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
   - 也不继续修 current `candidate-conditioned residual family`，因为 repair objective 下它仍然 `R-real = R-shuffle = R-zero`
-  - 当前更上游的任务是先修 `teacher-text` / support serialization 与 writer information audit，让 shared injection 至少能真正进入 `I-real / I-shuffle / I-zero` 阶段
+  - 当前更上游的任务已经不再是“先修到能启动 `I-real / I-shuffle / I-zero`”，因为这一步已经跑完
+  - 当前新的核心问题是：为什么在 `T > A` 且 writer audit 通过的前提下，`I-real` 仍然与 `I-shuffle / I-zero` 完全重合
+  - 因而下一步应优先检查和升级 main-chain injection：prefix 投影、prefix 幅度/层级、以及 frozen Qwen 是否实际注意到这些 latent
   - 只有 shared injection 先证明 `real > shuffle > zero`，才值得回到 candidate-specific / Story / Qwen3
   - `Story Cloze` 只保留为后续 stress test，不再作为当前 candidate 分支的主开发面

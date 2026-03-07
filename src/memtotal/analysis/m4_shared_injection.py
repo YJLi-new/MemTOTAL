@@ -269,6 +269,13 @@ def _label_recall_count(metrics: dict[str, Any]) -> int:
     return sum(int(float(value) >= 0.10) for value in recalls.values())
 
 
+def _valid_prompt_surface(metrics: dict[str, Any]) -> bool:
+    return bool(
+        float(metrics["dominant_label_fraction"]) <= 0.85
+        and _label_recall_count(metrics) >= 2
+    )
+
+
 def run_m4_phase0_gate_sweep(
     *,
     config: dict[str, Any],
@@ -357,38 +364,68 @@ def run_m4_phase0_gate_sweep(
                 t_case_rows,
             )
 
-    a_rows = [row for row in arm_summary_rows if row["arm_type"] == "A"]
-    a_rows_sorted = sorted(
-        a_rows,
+    a_rows_by_prompt = {
+        str(row["prompt_variant"]): dict(row)
+        for row in arm_summary_rows
+        if row["arm_type"] == "A"
+    }
+    prompt_pair_rows: list[dict[str, Any]] = []
+    for prompt_variant in FEVER_PROMPT_VARIANTS:
+        a_row = dict(a_rows_by_prompt[prompt_variant])
+        a_row["valid_prompt_surface"] = _valid_prompt_surface(a_row)
+        t_rows = [
+            dict(row)
+            for row in arm_summary_rows
+            if row["arm_type"] == "T" and row["prompt_variant"] == prompt_variant
+        ]
+        t_rows_sorted = sorted(
+            t_rows,
+            key=lambda row: (
+                float(row["macro_f1"]),
+                float(row["accuracy"]),
+                -float(row["dominant_label_fraction"]),
+            ),
+            reverse=True,
+        )
+        t_row = dict(t_rows_sorted[0])
+        t_row["valid_support_surface"] = _valid_prompt_surface(t_row)
+        accuracy_gain = float(t_row["accuracy"]) - float(a_row["accuracy"])
+        macro_f1_gain = float(t_row["macro_f1"]) - float(a_row["macro_f1"])
+        prompt_pair_rows.append(
+            {
+                "prompt_variant": prompt_variant,
+                "a_row": a_row,
+                "t_row": t_row,
+                "a_valid_prompt_surface": bool(a_row["valid_prompt_surface"]),
+                "t_valid_support_surface": bool(t_row["valid_support_surface"]),
+                "accuracy_gain": accuracy_gain,
+                "macro_f1_gain": macro_f1_gain,
+                "pair_gate_passed": bool(
+                    t_row["valid_support_surface"]
+                    and accuracy_gain >= (2.0 / max(1, len(eval_examples)))
+                    and macro_f1_gain >= 0.05
+                    and float(t_row["dominant_label_fraction"]) <= float(a_row["dominant_label_fraction"])
+                ),
+            }
+        )
+
+    prompt_pair_rows_sorted = sorted(
+        prompt_pair_rows,
         key=lambda row: (
-            float(row["macro_f1"]),
-            float(row["accuracy"]),
-            -float(row["dominant_label_fraction"]),
+            int(bool(row["pair_gate_passed"])),
+            int(bool(row["t_valid_support_surface"])),
+            float(row["macro_f1_gain"]),
+            float(row["accuracy_gain"]),
+            float(row["t_row"]["macro_f1"]),
+            float(row["t_row"]["accuracy"]),
+            -float(row["t_row"]["dominant_label_fraction"]),
         ),
         reverse=True,
     )
-    a_winner = dict(a_rows_sorted[0])
-    a_winner["valid_prompt_surface"] = bool(
-        float(a_winner["dominant_label_fraction"]) <= 0.85
-        and _label_recall_count(a_winner) >= 2
-    )
-    t_rows = [
-        row
-        for row in arm_summary_rows
-        if row["arm_type"] == "T" and row["prompt_variant"] == a_winner["prompt_variant"]
-    ]
-    t_rows_sorted = sorted(
-        t_rows,
-        key=lambda row: (float(row["macro_f1"]), float(row["accuracy"])),
-        reverse=True,
-    )
-    t_winner = dict(t_rows_sorted[0])
-    phase0_gate_passed = bool(
-        a_winner["valid_prompt_surface"]
-        and (float(t_winner["accuracy"]) - float(a_winner["accuracy"])) >= (2.0 / max(1, len(eval_examples)))
-        and (float(t_winner["macro_f1"]) - float(a_winner["macro_f1"])) >= 0.05
-        and float(t_winner["dominant_label_fraction"]) <= float(a_winner["dominant_label_fraction"])
-    )
+    prompt_pair_winner = prompt_pair_rows_sorted[0]
+    a_winner = dict(prompt_pair_winner["a_row"])
+    t_winner = dict(prompt_pair_winner["t_row"])
+    phase0_gate_passed = bool(prompt_pair_winner["pair_gate_passed"])
     summary_csv = output_dir / "phase0_summary.csv"
     summary_plot = output_dir / "phase0_summary.svg"
     write_summary_csv(
@@ -418,12 +455,37 @@ def run_m4_phase0_gate_sweep(
         ],
     )
     _write_csv(output_dir / "phase0_arm_summary.csv", arm_summary_rows)
+    _write_csv(
+        output_dir / "phase0_prompt_pairs.csv",
+        [
+            {
+                "prompt_variant": row["prompt_variant"],
+                "selected_support_serialization_variant": row["t_row"]["support_serialization_variant"],
+                "a_accuracy": float(row["a_row"]["accuracy"]),
+                "a_macro_f1": float(row["a_row"]["macro_f1"]),
+                "a_dominant_label_fraction": float(row["a_row"]["dominant_label_fraction"]),
+                "a_valid_prompt_surface": bool(row["a_valid_prompt_surface"]),
+                "t_accuracy": float(row["t_row"]["accuracy"]),
+                "t_macro_f1": float(row["t_row"]["macro_f1"]),
+                "t_dominant_label_fraction": float(row["t_row"]["dominant_label_fraction"]),
+                "t_valid_support_surface": bool(row["t_valid_support_surface"]),
+                "accuracy_gain": float(row["accuracy_gain"]),
+                "macro_f1_gain": float(row["macro_f1_gain"]),
+                "pair_gate_passed": bool(row["pair_gate_passed"]),
+            }
+            for row in prompt_pair_rows
+        ],
+    )
     report_lines = [
         "# M4 Phase 0 Gate Sweep",
         "",
         f"- phase0_gate_passed: {phase0_gate_passed}",
         f"- a_winner_prompt_variant: {a_winner['prompt_variant']}",
         f"- t_winner_support_serialization: {t_winner['support_serialization_variant']}",
+        (
+            f"- selected_pair_accuracy_gain={float(prompt_pair_winner['accuracy_gain']):.4f}, "
+            f"selected_pair_macro_f1_gain={float(prompt_pair_winner['macro_f1_gain']):.4f}"
+        ),
         "",
         "## A Winner",
         (
@@ -447,6 +509,13 @@ def run_m4_phase0_gate_sweep(
             "phase0_gate_passed": phase0_gate_passed,
             "a_winner": a_winner,
             "t_winner": t_winner,
+            "selected_pair": {
+                "prompt_variant": str(prompt_pair_winner["prompt_variant"]),
+                "support_serialization_variant": str(t_winner["support_serialization_variant"]),
+                "accuracy_gain": float(prompt_pair_winner["accuracy_gain"]),
+                "macro_f1_gain": float(prompt_pair_winner["macro_f1_gain"]),
+                "pair_gate_passed": bool(prompt_pair_winner["pair_gate_passed"]),
+            },
             "selected_prompt_variant": str(a_winner["prompt_variant"]),
             "selected_support_serialization": str(t_winner["support_serialization_variant"]),
             "summary_csv": str(summary_csv.resolve()),

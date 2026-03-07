@@ -8,7 +8,7 @@
 
 > 如果把 shared latent memory 直接作为 continuous prefix 注入 `Qwen2.5-1.5B-Instruct`，真实 memory 会不会第一次显著优于 `shuffle / zero`？
 
-但这轮没有直接烧真实 injection 训练，而是先做更上游的恢复：
+这轮最开始确实先做了更上游恢复：
 
 1. `Phase 0`: `FEVER screen248` 上的 prompt / support gate
 2. `Phase 1`: writer information audit
@@ -25,7 +25,8 @@
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/summary.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-dryrun-compare/metrics.json`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/report.md`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/arm_summary.csv`
 
 ## 这轮实际实现了什么
 
@@ -81,35 +82,40 @@
 
 ## 这轮结果
 
-### Phase 0：当前 prompt/support surface 还没把 frozen Qwen带到正确决策面
+### Phase 0：prompt/support gate 已通过
 
-`screen248` 上的真实结果是：
+`screen248` 上的真实结果已不再是 collapse 到同一条错误 surface。
 
-- `phase0_gate_passed = false`
-- `A_winner = inline_short_labels`
-- `T_winner = flat_raw8`
-- 但两者完全打平，而且都塌缩成全预测 `SUPPORTS`
+- `phase0_gate_passed = true`
+- `A_winner = answer_slot_labels`
+- `T_winner = answer_slot_labels + example_blocks_raw8`
+- `selected_pair_accuracy_gain = 0.4274`
+- `selected_pair_macro_f1_gain = 0.5352`
 
 对应数字：
 
-- `accuracy = 0.29435483870967744`
-- `macro_f1 = 0.15160955347871236`
-- `dominant_label_fraction = 1.0`
-- `label_recall_by_class = {SUPPORTS: 1.0, REFUTES: 0.0, NOT_ENOUGH_INFO: 0.0}`
+- `A_winner`
+  - `accuracy = 0.29435483870967744`
+  - `macro_f1 = 0.15160955347871236`
+  - `dominant_label_fraction = 1.0`
+- `T_winner`
+  - `accuracy = 0.7217741935483871`
+  - `macro_f1 = 0.6868094914612671`
+  - `dominant_label_fraction = 0.5241935483870968`
 
 也就是说：
 
-- 当前 support bank 显式拼进 prompt 还没有帮 frozen Qwen
-- 当前 immediate blocker 首先是 `teacher-text / support serialization / label verbalization`
+- 当前 support bank 显式拼进 prompt 已经能明显帮助 frozen Qwen
+- `teacher-text / support serialization / label verbalization` 不再是当前第一 blocker
 
-### Phase 1：writer latent 已经显出语义信息，但整体 gate 仍被 Phase 0 卡住
+### Phase 1：writer latent 的任务语义信号也已通过 gate
 
 当前审计结果：
 
 - `label_probe_passed = true`
 - `semantic_probe_passed = true`
 - `phase1_probe_passed = true`
-- `phase1_gate_passed = false`
+- `phase1_gate_passed = true`
 
 最佳 probe 数字：
 
@@ -123,37 +129,53 @@
   - `real auroc = 0.5534`
   - `best control = 0.4863`
 
-这里最关键的是：
+这轮的关键变化是：
 
-- 这轮已经不再支持“writer 完全没信息”这个解释
-- 真正没过的是上游 `Phase 0` prompt/support gate
+- 现在已经不能再把 shared injection 失败归因成“writer 完全没信息”
+- prompt/support surface 和 writer 信息这两道上游 gate 都已经通过
 
-### Phase 2：真实 injection 这轮没有启动，但 dry-run harness 已打通
+### Phase 2：真实 shared injection 已启动，但 real/shuffle/zero 完全重合
 
-由于 `Phase 0` 没过，这轮没有启动真实 `I-real / I-shuffle / I-zero`。
+这轮已经真实跑完：
 
-但技术上：
+- `A = base_only`
+- `T = teacher-text upper bound`
+- `I-real`
+- `I-shuffle`
+- `I-zero`
 
-- prefix 梯度链路已经打通
-- `I-real / I-shuffle / I-zero` 的 dry-run compare 已能端到端产出 `metrics.json`
+真实结果是：
 
-所以当前不是“注入训练代码还没准备好”，而是“没有理由在一个还没过上游 gate 的 FEVER surface 上继续烧真实 injection 算力”。
+- `A = 0.25 / macro_f1 = 0.2`
+- `T = 0.53125 / macro_f1 = 0.5294`
+- `I-real = 0.25 / macro_f1 = 0.2`
+- `I-shuffle = 0.25 / macro_f1 = 0.2`
+- `I-zero = 0.25 / macro_f1 = 0.2`
+- `gate_passed = false`
+
+pairwise compare 里最关键的三条是：
+
+- `A -> T: flip_delta = 18`
+- `A -> I_real: flip_delta = 0`
+- `I_shuffle -> I_real: flip_delta = 0`
+- `I_zero -> I_real: flip_delta = 0`
 
 ## 现在能下的结论
 
-这轮最重要的结论不是“shared injection 已经失败”，而是：
+这轮最重要的结论已经变了，不再是“还没到公平评判 shared injection 的时候”，而是：
 
-> 当前还没到能公平评判 shared injection 的那一步。
+> 现在已经到了能公平评判 shared injection 的时候，而且当前这版 shared latent prefix injection 仍然没有让 frozen Qwen 消费 real memory 内容。
 
 更准确地说，当前卡住的是：
 
-1. `FEVER` 的 prompt / support serialization 还没让 frozen Qwen 从显式 support bank 中受益
-2. 当前 writer family 的 latent 已经有可读语义信息，但这些信息还没被 frozen Qwen 的上游输入表面正确解锁
+1. `teacher-text` 明确有用，说明 support bank 本身不是空的
+2. writer latent 也已有可读任务信息
+3. 但 `writer -> latent prefix -> frozen Qwen` 这条主链路，当前仍没有形成 `real > shuffle > zero` 的内容效应
 
 所以：
 
-- 这轮没有启动真实 `I-real / I-shuffle / I-zero`
-- 也不该据此得出“主链路注入不行”的结论
+- 这轮不能再把问题归因成上游 gate 没过
+- 也不能继续把 shared injection 说成“尚未开始”
 
 ## 这轮之后最合理的下一步
 
@@ -163,15 +185,15 @@
 - 也不是直接上 `Story Cloze`
 - 更不是直接上 `Qwen3-8B` 或 KL
 
-而是先把上游 gate 修通：
+而是直接检查和升级主链路注入本身：
 
-1. 先修 `teacher-text` / support serialization / label verbalization，让 `T > A`
-2. 在同一套 surface 下保持 writer information audit 的 `real > shuffle / zero`
-3. 只有这两步先成立，shared injection 才值得真正启动
+1. 检查 prefix 投影后的幅度、范数和层间可见性
+2. 检查 frozen Qwen 是否真的对 prefix token 产生注意力消费
+3. 在不回退到 score-side family 的前提下，优先尝试更强的 main-chain injection 方案
 
 ## 当前最稳妥的口径
 
 - `candidate-conditioned residual family` 已经停止继续修补
 - `M4` 的新主线仍然是对的：把 memory 放回 frozen Qwen 的主链路
-- 但现在 immediate blocker 还在 injection 之前
-- 因而下一轮的主要任务不是“训练更强 injection”，而是“先让 support bank 和 prompt surface 过 gate”
+- 但现在 immediate blocker 已经不在 injection 之前，而在 injection 本身
+- 因而下一轮的主要任务不是“继续修 gate”，而是“让 frozen Qwen 真正消费 prefix latent”

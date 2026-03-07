@@ -454,25 +454,29 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 即便换成更对题的 repair objective，这条 current `candidate-conditioned residual family` 也仍然不 load-bearing
   - 下一步不该继续修 current family，也不该直接上 `Qwen3-8B` / routing / sign selection
   - 如果还要继续 candidate-specific `Stage C`，应直接换 residual family，并继续先拿 `FEVER` 做 capability gate
-- 已完成 `M4` 的 `FEVER-first shared generative injection` 前两道 gate：
+- 已完成 `M4` 的 `FEVER-first shared generative injection` 三段式 gate：
   - 已新增 `teacher-text upper bound`、`writer information audit`、`shared latent prefix injection` 的真实 qwen25 scaffold
-  - `writer information audit` 当前不是单一线性 probe；已同时包含 `linear + shallow MLP` 两档 probe，并显式比较 `real / shuffle / zero`
-  - `LatentPrefixProjector` 与 `score_continuations(prefix_embeddings=...)` 的梯度链路也已经打通，`Phase 2` dry-run 现在可完整运行
+  - `writer information audit` 不是单一线性 probe；已同时包含 `linear + shallow MLP` 两档 probe，并显式比较 `real / shuffle / zero`
+  - `LatentPrefixProjector` 与 `score_continuations(prefix_embeddings=...)` 的梯度链路已经真实跑通
   - fresh `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前记录：
-    - `phase0_gate_passed=false`
-    - `A_winner` 与 `T_winner` 都塌缩为全预测 `SUPPORTS`
-    - `accuracy=0.29435483870967744`
-    - `macro_f1=0.15160955347871236`
-    - `dominant_label_fraction=1.0`
+    - `phase0_gate_passed=true`
+    - `selected_prompt_variant=answer_slot_labels`
+    - `selected_support_serialization=example_blocks_raw8`
+    - `selected_pair_accuracy_gain=0.4274193548387097`
+    - `selected_pair_macro_f1_gain=0.5351999379825547`
   - fresh `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/metrics.json` 当前记录：
     - `label_probe_passed=true`
     - `semantic_probe_passed=true`
     - `phase1_probe_passed=true`
-    - `phase1_gate_passed=false`
-  - 也就是，这轮没有继续启动真实 `I-real / I-shuffle / I-zero`，但当前 immediate blocker 已更精确地上移到：
-    - `teacher-text / support serialization / label verbalization` 还没让 frozen Qwen 从显式 support 中受益
-    - 当前 writer family 已开始显露可读任务信息，不再适合继续归因成“writer 完全没信息”
-  - 下一步不该直接跳到 `Story Cloze / candidate-conditioned injection / Qwen3 / KL`；应先把 `screen248` 上的 `T > A` 这道 gate 修通
+    - `phase1_gate_passed=true`
+  - fresh `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/metrics.json` 当前记录：
+    - `gate_passed=false`
+    - `A=0.25 / macro_f1=0.2`
+    - `T=0.53125 / macro_f1=0.5294117647058824`
+    - `I-real=I-shuffle=I-zero=0.25 / macro_f1=0.2`
+  - 也就是，这轮已经不再支持“prompt/support 没修好”或“writer 完全没信息”这两个解释；当前 immediate blocker 已经上移到：
+    - 这版 `writer -> latent prefix -> frozen Qwen` 的 shared injection 主链路还没有形成 `real > shuffle > zero` 的内容效应
+  - 下一步不该直接跳到 `Story Cloze / candidate-conditioned injection / Qwen3 / KL`；应先继续做更强的 main-chain injection 诊断与升级
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

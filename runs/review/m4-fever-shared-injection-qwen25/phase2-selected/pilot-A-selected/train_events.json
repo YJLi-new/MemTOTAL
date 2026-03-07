@@ -1,0 +1,12 @@
+{
+  "events": [],
+  "snapshots": [
+    {
+      "accuracy": 0.25,
+      "dominant_label_fraction": 1.0,
+      "macro_f1": 0.2,
+      "mean_margin": -2.557648926973343,
+      "step": 0
+    }
+  ]
+}

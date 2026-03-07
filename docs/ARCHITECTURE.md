@@ -216,7 +216,8 @@
 - 这条线的目标不是再做一个外部 residual scorer，而是先回答：
   - frozen Qwen 是否会从显式 support bank 文本中受益
   - 当前 writer family 产出的 latent 是否已经携带可读的任务信息
-  - 只有前两者成立后，shared latent prefix injection 才值得启动
+  - 当前这两条都已被验证为 `yes`
+  - 最新 blocker 已继续上移到：当前 shared latent prefix injection 本身为什么仍然给出 `I-real = I-shuffle = I-zero`
 - 这条线当前固定分三段：
   - `A = base_only`
   - `T = teacher-text upper bound`
@@ -239,12 +240,11 @@
   - 不上 KL
   - 不做 candidate-conditioned / pair-conditioned injection
 - 当前 fresh `FEVER` 结果显示这条线还没走到真正 injection 训练：
-  - `Phase 0` 在 `screen248` 上失败，`A_winner` 与 `T_winner` 都塌缩到全预测 `SUPPORTS`
-  - `Phase 1 writer audit` 已给出正信号：`label_probe_passed=true`、`semantic_probe_passed=true`
-  - `Phase 2` 真实 injection 因 `phase0_gate_passed=false` 被有意跳过，但 dry-run 技术链路已打通
-- 因而，当前 immediate blocker 不是“如何继续调 injected prefix”，而是：
-  - support bank 显式序列化 / prompt 还没让 frozen qwen 受益
-  - 当前 writer family 已经开始显露可读任务信息，但这些信息还没被 prompt/support surface 正确解锁
+  - `Phase 0` 现在已经通过：`T_winner=answer_slot_labels + example_blocks_raw8` 相对 `A_winner` 带来 `accuracy_gain=0.4274`、`macro_f1_gain=0.5352`
+  - `Phase 1 writer audit` 也已经通过：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_gate_passed=true`
+  - `Phase 2` 真实 injection 已完整跑完，但 `I-real = I-shuffle = I-zero = 0.25`
+- 因而，当前 immediate blocker 已经不再是 prompt/support surface 或 writer 是否有信息，而是：
+  - 这版 `MemoryWriter + LatentPrefixProjector + shallow input-prefix` 还没有把 latent memory 转成 frozen qwen 会真正消费的上下文
 
 ## M3 Failure Checks
 

@@ -1,10 +1,10 @@
 # M4 Writer Information Audit
 
-- phase0_gate_passed: False
+- phase0_gate_passed: True
 - label_probe_passed: True
 - semantic_probe_passed: True
 - phase1_probe_passed: True
-- phase1_gate_passed: False
+- phase1_gate_passed: True
 
 - label_real_macro_f1: 0.4434
 - label_control_macro_f1: 0.3499

@@ -189,9 +189,9 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             if arm_alias.startswith("A::inline_short_labels"):
                 predicted = ["SUPPORTS"] * 6
             elif arm_alias.startswith("A::answer_slot_labels"):
-                predicted = ["SUPPORTS", "REFUTES", "REFUTES", "SUPPORTS", "SUPPORTS", "NOT_ENOUGH_INFO"]
+                predicted = ["SUPPORTS"] * 6
             elif arm_alias.startswith("A::verbalized_decisions"):
-                predicted = ["SUPPORTS", "SUPPORTS", "NOT_ENOUGH_INFO", "SUPPORTS", "SUPPORTS", "NOT_ENOUGH_INFO"]
+                predicted = ["SUPPORTS"] * 6
             elif prompt_variant == "answer_slot_labels" and support_serialization_variant == "example_blocks_raw8":
                 predicted = ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"]
             elif prompt_variant == "answer_slot_labels" and support_serialization_variant == "triad_curated6":
@@ -224,6 +224,7 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertTrue(metrics["phase0_gate_passed"])
             self.assertEqual(metrics["selected_prompt_variant"], "answer_slot_labels")
             self.assertEqual(metrics["selected_support_serialization"], "example_blocks_raw8")
+            self.assertGreater(metrics["selected_pair"]["macro_f1_gain"], 0.05)
 
     @mock.patch("memtotal.analysis.m4_shared_injection._build_writer", return_value=(object(), object()))
     @mock.patch("memtotal.analysis.m4_shared_injection.load_task_dataset")
