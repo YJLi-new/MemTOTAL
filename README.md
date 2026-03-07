@@ -14,4 +14,5 @@
 - 最新补充结论：再把 `margin audit` 拆成 `negative_only` 之后，当前更清楚了。两档 backbone 各只有 `2` 个负 margin seeds；qwen25 只有 `1/2` 在缩小 gap，平均只关掉 `1.88e-5`，qwen3 也是 `1/2`，而且平均 gap 还略微变差。也就是说，当前 canonical gain 还没有稳定集中到真正错的 seeds 上。
 - 最新补充结论：继续做 `negative-seed shot/step curve audit` 后，当前负 margin seeds 上 `shot` 本身几乎没有纯作用，`shot=0/1/2/3` 的 `gap-to-flip` 完全一样；真正有变化的是 inner-loop `step`。而且两档 backbone 方向相反：qwen25 会极弱地缩小 gap，qwen3 反而会继续放大 gap。
 - 最新补充进展：`Stage C` 现在会额外写出 `episode_trace.json`，把每个 target episode 实际使用的 `support/query/eval_holdout` 组成落盘。基于这份 trace，qwen3 当前两个负 seed 已能明确看到双峰行为：一个 seed 会随着 step 单调变差，另一个会随着 step 单调变好，说明下一步应直接检查 support 组成，而不是再做全局盲扫。
+- 最新补充结论：顺着这条线继续往下查后，真正需要保留的是另一条 harness 修复，而不是新的 canonical 策略。现在 `Stage C` 的 eval holdout 已与 support bank 解耦；fresh `target_support_selection_policy={plain,label_diverse_if_possible}` sweep 也表明，`label_diverse_if_possible` 在 fair holdout 下不是当前主杠杆。qwen25 两档 policy 的 `mean_task_gain` 都是 `0.0222`，qwen3 都是 `0.0`；而 qwen3 的 `mean_proxy_gain` 还是 `plain=1.144e-05 > label_diverse=9.725e-06`。也就是说，之前那种“support 全是 A 导致 qwen3 负 seed 变坏”的现象，主要是旧版 holdout/support 耦合带出来的伪信号。
 - 当前只支持两个 backbone：`Qwen2.5-1.5B-Instruct`、`Qwen3-8B`。

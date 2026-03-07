@@ -77,6 +77,7 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
                 "target_support_bank_size": metrics.get("target_support_bank_size"),
                 "target_support_negative_pool": metrics.get("target_support_negative_pool"),
                 "target_support_negative_sampler": metrics.get("target_support_negative_sampler"),
+                "target_support_selection_policy": metrics.get("target_support_selection_policy"),
                 "support_updates": metrics.get("support_updates", adapt_cost.get("support_updates")),
                 "support_examples_touched": metrics.get(
                     "support_examples_touched",
@@ -124,6 +125,7 @@ def write_stage_c_seed_sweep_csv(output_path: str | Path, rows: list[dict[str, o
         "target_support_bank_size",
         "target_support_negative_pool",
         "target_support_negative_sampler",
+        "target_support_selection_policy",
         "support_updates",
         "support_examples_touched",
         "zero_shot_task_score",
@@ -184,7 +186,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
         bar_x = center_x if value >= 0 else center_x - bar_width
         backbone = str(row["backbone"])
         parts.append(
-            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} {row.get('target_split_policy') or 'random'} {row.get('target_support_weighting') or 'uniform'} seed={row['seed']}</text>"
+            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} {row.get('target_split_policy') or 'random'} {row.get('target_support_weighting') or 'uniform'} {row.get('target_support_selection_policy') or 'plain'} seed={row['seed']}</text>"
         )
         parts.append(
             f"<rect x='{center_x - half_bar}' y='{top}' width='{half_bar * 2}' height='24' fill='#efe6d0' rx='4' />"
@@ -203,7 +205,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
             f"<text x='{center_x + half_bar + 16}' y='{top + 16}' font-size='12' font-family='monospace'>{value:.3f} score={score_label}</text>"
         )
         parts.append(
-            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1} split={row.get('target_split_policy') or 'random'}</text>"
+            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1} split={row.get('target_split_policy') or 'random'} select={row.get('target_support_selection_policy') or 'plain'}</text>"
         )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -257,6 +259,9 @@ def run_m3_stage_c_seed_sweep_summary(
             ),
             "target_support_bank_sizes": sorted(
                 {str(row.get("target_support_bank_size") or "auto") for row in group_rows}
+            ),
+            "target_support_selection_policies": sorted(
+                {str(row.get("target_support_selection_policy") or "plain") for row in group_rows}
             ),
             "target_support_negative_pools": sorted(
                 {str(row.get("target_support_negative_pool") or "support_bank") for row in group_rows}

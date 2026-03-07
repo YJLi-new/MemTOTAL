@@ -26,9 +26,11 @@ from memtotal.data import (
 )
 from memtotal.pipeline import MemoryRuntime
 from memtotal.training.m3 import (
+    _build_stage_c_episode_states,
     _continuation_retrieval_loss,
     _resolve_episode_support_weights,
     _resolve_retrieval_candidates,
+    _select_label_diverse_examples,
 )
 from memtotal.training.run_train import main as train_main
 from memtotal.utils.config import load_config
@@ -276,6 +278,63 @@ class M3TrainingTest(unittest.TestCase):
         self.assertAlmostEqual(sum(softmax_weights), 1.0)
         self.assertGreater(softmax_weights[2], softmax_weights[1])
         self.assertGreater(softmax_weights[1], softmax_weights[0])
+
+    def test_select_label_diverse_examples_prefers_multiple_labels_when_available(self) -> None:
+        candidate_examples = [
+            {"id": "a1", "label": "A"},
+            {"id": "a2", "label": "A"},
+            {"id": "b1", "label": "B"},
+            {"id": "a3", "label": "A"},
+        ]
+        selected = _select_label_diverse_examples(candidate_examples, 3)
+        self.assertEqual(len(selected), 3)
+        self.assertEqual({row["label"] for row in selected[:2]}, {"A", "B"})
+        single_label_selected = _select_label_diverse_examples(candidate_examples[:2], 2)
+        self.assertEqual([row["id"] for row in single_label_selected], ["a1", "a2"])
+
+    def test_stage_c_eval_holdout_is_invariant_to_support_selection_policy(self) -> None:
+        config = load_config(ROOT / "configs/exp/m3_stage_c_core4_qwen25_smoke.yaml")
+        runtime = MemoryRuntime(config=config, seed=83)
+        grouped = load_meta_grouped_examples(config["task"])
+        manifest = build_meta_manifest(
+            dataset_sources=config["task"]["meta"]["dataset_sources"],
+            grouped_examples=grouped,
+            general_domains=["math", "code", "qa", "narrative"],
+            source_domains=["math", "code", "qa"],
+            target_domain="narrative",
+            support_size=3,
+            query_size=3,
+            sampling_policy="uniform_examples",
+        )
+        domain_examples = list(grouped["narrative"])
+        shared_kwargs = {
+            "runtime": runtime,
+            "grouped_examples": grouped,
+            "manifest": manifest,
+            "domain_examples": domain_examples,
+            "shot": 3,
+            "seed": 40301,
+            "max_shot": 3,
+            "target_episode_repeats": 3,
+            "target_eval_repeats": 3,
+            "target_split_policy": "random",
+            "target_support_bank_size_spec": "auto",
+            "retrieval_negative_count": 7,
+            "target_support_negative_pool": "source_plus_support_bank",
+            "target_support_negative_sampler": "hard_by_current_model",
+        }
+        plain_states = _build_stage_c_episode_states(
+            **shared_kwargs,
+            target_support_selection_policy="plain",
+        )
+        diverse_states = _build_stage_c_episode_states(
+            **shared_kwargs,
+            target_support_selection_policy="label_diverse_if_possible",
+        )
+        self.assertEqual(
+            [[row["id"] for row in state["query_candidate_pool"]] for state in plain_states],
+            [[row["id"] for row in state["query_candidate_pool"]] for state in diverse_states],
+        )
 
     def test_m3_stage_sequence_writes_expected_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -552,6 +611,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_c_metrics["target_support_bank_size"], "auto")
             self.assertEqual(stage_c_metrics["target_support_negative_pool"], "source_plus_support_bank")
             self.assertEqual(stage_c_metrics["target_support_negative_sampler"], "hard_by_current_model")
+            self.assertEqual(stage_c_metrics["target_support_selection_policy"], "plain")
             self.assertEqual(stage_c_metrics["checkpoint_target_episode_policy"], "shared_aggregate")
             self.assertIn("mean_support_grad_norm", stage_c_metrics)
             self.assertIn("max_support_update_max_abs", stage_c_metrics)
@@ -561,6 +621,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertTrue(episode_trace["rows"])
             self.assertIn("support_ids", episode_trace["rows"][0])
             self.assertIn("eval_query_set_ids", episode_trace["rows"][0])
+            self.assertIn("target_support_selection_policy", episode_trace["rows"][0])
 
             with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
                 rows = list(csv.DictReader(handle))
@@ -578,6 +639,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("target_support_bank_size", rows[0])
             self.assertIn("target_support_negative_pool", rows[0])
             self.assertIn("target_support_negative_sampler", rows[0])
+            self.assertIn("target_support_selection_policy", rows[0])
             self.assertIn("evaluated_target_episodes", rows[0])
             self.assertIn("evaluated_query_examples", rows[0])
             self.assertIn("query_candidate_pool_size", rows[0])

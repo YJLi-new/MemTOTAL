@@ -281,6 +281,8 @@
 - 2026-03-07 05:25 UTC: 因此，当前 support-weighting 也已经从 blocker 列表中拿掉。新的下一步是直接检查 target split / support-query 抽样结构，而不是继续调 aggregation 权重。
 - 2026-03-07 07:08 UTC: 已将 `episode_trace.json` 接进 benchmark-native `Stage C` artifact contract。`src/memtotal/training/m3.py` 现在会把每个 target episode 的 `support_ids / support_candidate_ids / support_negative_pool_ids / query_candidate_ids / eval_query_set_ids` 直接落盘，`tests/test_m3_training.py` 也已补充对应断言。
 - 2026-03-07 07:08 UTC: 基于 fresh diagnose run `runs/diagnose/m3-qwen3-negative-seed-{40301,40304}/episode_trace.json`，当前已明确看到 qwen3 两个负 seed 是 support 组成下的双峰行为，而不是单纯噪声：`40301` 会随着 step 单调变差，`40304` 会随着 step 单调变好。下一步应直接做 support 组成的条件化分析或采样策略，而不是再做全局盲扫。
+- 2026-03-07 07:21 UTC: 已将 benchmark-native `Stage C` 的 eval holdout 与 support bank 彻底解耦。`src/memtotal/training/m3.py` 现在会先固定 `query_size` 大小的 target holdout，再从剩余 target examples 中采样 support bank；因此 `target_support_selection_policy` 变化不再污染 `shot=0` 的 zero-shot 评测。
+- 2026-03-07 07:21 UTC: 已新增 `runtime.target_support_selection_policy in {plain, label_diverse_if_possible}`、`scripts/run_m3_core4_stage_c_qonly_support_selection_policy_sweep.sh`，并完成 fair-holdout real sweep 到 `results/generated/m3-core4-stage-c-qonly-support-selection-policy-sweep-v2/`。当前结论是：这不是新的 canonical 杠杆。qwen25 两档 policy 的 `mean_task_gain` 都为 `0.02222222222222221`，qwen3 两档 policy 的 `mean_task_gain` 都为 `0.0`；而 qwen3 的 `plain mean_proxy_gain=1.1439455880069006e-05` 还略高于 `label_diverse_if_possible=9.725491205858638e-06`。下一步应回到 inner-loop objective / negative curriculum，而不是继续调 support label 覆盖。
 
 ## Surprises & Discoveries
 

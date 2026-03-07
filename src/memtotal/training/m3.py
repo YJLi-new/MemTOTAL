@@ -145,6 +145,16 @@ def _resolve_target_support_negative_sampler(config: dict) -> str:
     return sampler
 
 
+def _resolve_target_support_selection_policy(config: dict) -> str:
+    policy = str(config["runtime"].get("target_support_selection_policy", "plain"))
+    if policy not in {"plain", "label_diverse_if_possible"}:
+        raise ValueError(
+            f"Unsupported runtime.target_support_selection_policy={policy}. "
+            "Expected one of plain, label_diverse_if_possible."
+        )
+    return policy
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -559,11 +569,26 @@ def _sample_target_support_bank(
     *,
     support_bank_size: int,
     seed: int,
+    selection_policy: str,
 ) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     shuffled = list(domain_examples)
     rng.shuffle(shuffled)
+    if selection_policy == "label_diverse_if_possible":
+        return _select_label_diverse_examples(shuffled, support_bank_size)
     return shuffled[:support_bank_size]
+
+
+def _sample_target_eval_holdout_pool(
+    domain_examples: list[dict[str, Any]],
+    *,
+    query_size: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    shuffled = list(domain_examples)
+    rng.shuffle(shuffled)
+    return shuffled[: min(query_size, len(shuffled))]
 
 
 def _compute_target_support_bank_size(
@@ -602,6 +627,7 @@ def _build_stage_c_episode_states(
     retrieval_negative_count: int,
     target_support_negative_pool: str,
     target_support_negative_sampler: str,
+    target_support_selection_policy: str,
 ) -> list[dict[str, object]]:
     episode_states: list[dict[str, object]] = []
     source_negative_examples = _flatten_domains(grouped_examples, list(manifest["source_domains"]))
@@ -614,22 +640,30 @@ def _build_stage_c_episode_states(
             query_size=int(manifest["query_size"]),
             retrieval_negative_count=retrieval_negative_count,
         )
-        candidate_support_examples = _sample_target_support_bank(
+        eval_candidate_pool = _sample_target_eval_holdout_pool(
             domain_examples,
+            query_size=int(manifest["query_size"]),
+            seed=episode_seed + 4001,
+        )
+        eval_holdout_ids = {str(row["id"]) for row in eval_candidate_pool}
+        support_source_examples = [
+            row for row in domain_examples if str(row["id"]) not in eval_holdout_ids
+        ]
+        if not support_source_examples:
+            support_source_examples = list(domain_examples)
+        candidate_support_examples = _sample_target_support_bank(
+            support_source_examples,
             support_bank_size=support_bank_size,
             seed=episode_seed,
+            selection_policy=target_support_selection_policy,
         )
         support_examples = _select_target_support_examples(
             runtime,
             candidate_support_examples,
             shot=shot,
             split_policy=target_split_policy,
+            selection_policy=target_support_selection_policy,
         )
-        eval_candidate_pool = [
-            row for row in domain_examples if str(row["id"]) not in {str(item["id"]) for item in candidate_support_examples}
-        ]
-        if len(eval_candidate_pool) < int(manifest["query_size"]):
-            eval_candidate_pool = list(domain_examples)
         eval_query_sets, query_candidate_pool = _sample_target_eval_query_sets(
             eval_candidate_pool,
             query_size=int(manifest["query_size"]),
@@ -649,9 +683,48 @@ def _build_stage_c_episode_states(
                 "support_candidate_pool": support_candidate_pool,
                 "target_support_bank_size": support_bank_size,
                 "target_support_negative_sampler": target_support_negative_sampler,
+                "target_support_selection_policy": target_support_selection_policy,
             }
         )
     return episode_states
+
+
+def _select_label_diverse_examples(
+    candidate_examples: list[dict[str, Any]],
+    count: int,
+) -> list[dict[str, Any]]:
+    if count <= 0:
+        return []
+    labeled_examples = [example for example in candidate_examples if example.get("label") is not None]
+    unique_labels = {str(example["label"]) for example in labeled_examples}
+    if len(unique_labels) <= 1:
+        return list(candidate_examples[:count])
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    selected_labels: set[str] = set()
+    for example in candidate_examples:
+        label = example.get("label")
+        if label is None:
+            continue
+        label_text = str(label)
+        example_id = str(example["id"])
+        if label_text in selected_labels or example_id in selected_ids:
+            continue
+        selected.append(example)
+        selected_ids.add(example_id)
+        selected_labels.add(label_text)
+        if len(selected) >= count:
+            return selected
+    for example in candidate_examples:
+        example_id = str(example["id"])
+        if example_id in selected_ids:
+            continue
+        selected.append(example)
+        selected_ids.add(example_id)
+        if len(selected) >= count:
+            break
+    return selected
 
 
 def _resolve_episode_support_weights(
@@ -686,22 +759,27 @@ def _select_target_support_examples(
     *,
     shot: int,
     split_policy: str,
+    selection_policy: str,
 ) -> list[dict[str, Any]]:
     if shot <= 0:
         return []
     if split_policy == "random":
-        return list(candidate_examples[:shot])
-    scored_examples = [
-        (
-            _score_target_support_candidate(runtime, example),
-            str(example["id"]),
-            example,
-        )
-        for example in candidate_examples
-    ]
-    reverse = split_policy == "proxy_topk_support"
-    scored_examples.sort(key=lambda item: (item[0], item[1]), reverse=reverse)
-    return [item[2] for item in scored_examples[:shot]]
+        ordered_examples = list(candidate_examples)
+    else:
+        scored_examples = [
+            (
+                _score_target_support_candidate(runtime, example),
+                str(example["id"]),
+                example,
+            )
+            for example in candidate_examples
+        ]
+        reverse = split_policy == "proxy_topk_support"
+        scored_examples.sort(key=lambda item: (item[0], item[1]), reverse=reverse)
+        ordered_examples = [item[2] for item in scored_examples]
+    if selection_policy == "label_diverse_if_possible":
+        return _select_label_diverse_examples(ordered_examples, shot)
+    return ordered_examples[:shot]
 
 
 def _continuation_retrieval_loss(
@@ -1276,6 +1354,7 @@ def run_stage_c(
     target_support_bank_size_spec = _resolve_target_support_bank_size_spec(config)
     target_support_negative_pool = _resolve_target_support_negative_pool(config)
     target_support_negative_sampler = _resolve_target_support_negative_sampler(config)
+    target_support_selection_policy = _resolve_target_support_selection_policy(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1340,6 +1419,7 @@ def run_stage_c(
             retrieval_negative_count=retrieval_negative_count,
             target_support_negative_pool=target_support_negative_pool,
             target_support_negative_sampler=target_support_negative_sampler,
+            target_support_selection_policy=target_support_selection_policy,
         )
         for episode_index, episode_state in enumerate(episode_states):
             episode_trace_rows.append(
@@ -1348,6 +1428,7 @@ def run_stage_c(
                     "episode_index": episode_index,
                     "episode_seed": int(episode_state["episode_seed"]),
                     "target_support_bank_size": int(episode_state["target_support_bank_size"]),
+                    "target_support_selection_policy": str(episode_state["target_support_selection_policy"]),
                     "support_ids": [str(example["id"]) for example in episode_state["support_examples"]],
                     "support_candidate_ids": [
                         str(example["id"]) for example in episode_state["support_candidate_examples"]
@@ -1472,6 +1553,7 @@ def run_stage_c(
                     ),
                     "target_support_negative_pool": target_support_negative_pool,
                     "target_support_negative_sampler": target_support_negative_sampler,
+                    "target_support_selection_policy": target_support_selection_policy,
                     "evaluated_target_episodes": len(episode_states),
                     "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": (
@@ -1643,6 +1725,7 @@ def run_stage_c(
                 "target_support_bank_size",
                 "target_support_negative_pool",
                 "target_support_negative_sampler",
+                "target_support_selection_policy",
                 "evaluated_target_episodes",
                 "evaluated_query_examples",
                 "query_candidate_pool_size",
@@ -1681,6 +1764,7 @@ def run_stage_c(
             "target_support_bank_size": target_support_bank_size_spec,
             "target_support_negative_pool": target_support_negative_pool,
             "target_support_negative_sampler": target_support_negative_sampler,
+            "target_support_selection_policy": target_support_selection_policy,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -1713,6 +1797,7 @@ def run_stage_c(
         "target_support_bank_size": target_support_bank_size_spec,
         "target_support_negative_pool": target_support_negative_pool,
         "target_support_negative_sampler": target_support_negative_sampler,
+        "target_support_selection_policy": target_support_selection_policy,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1765,6 +1850,7 @@ def run_stage_c(
         "target_support_bank_size": target_support_bank_size_spec,
         "target_support_negative_pool": target_support_negative_pool,
         "target_support_negative_sampler": target_support_negative_sampler,
+        "target_support_selection_policy": target_support_selection_policy,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],
