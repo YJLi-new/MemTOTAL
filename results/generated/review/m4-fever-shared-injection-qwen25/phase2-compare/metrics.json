@@ -1,14 +1,14 @@
 {
   "analysis_mode": "m4_shared_injection_compare",
   "gate_passed": false,
-  "macro_f1_gap_to_T": -0.32941176470588235,
-  "mean_margin_gap_to_T": -0.10450554033741355,
-  "pairwise_compare_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase2-compare/arm_pairwise_compare.csv",
-  "real_vs_shuffle_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase2-compare/real_vs_shuffle_gap.csv",
-  "real_vs_zero_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase2-compare/real_vs_zero_gap.csv",
-  "regressions_vs_base": 0,
-  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase2-compare/report.md",
-  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase2-compare/arm_summary.csv",
-  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase2-compare/summary.svg",
-  "task_score_gap_to_T": -0.28125
+  "macro_f1_gap_to_T": -0.12327744424052012,
+  "mean_margin_gap_to_T": -0.6131008281372488,
+  "pairwise_compare_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare/arm_pairwise_compare.csv",
+  "real_vs_shuffle_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare/real_vs_shuffle_gap.csv",
+  "real_vs_zero_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare/real_vs_zero_gap.csv",
+  "regressions_vs_base": 2,
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare/report.md",
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare/arm_summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare/summary.svg",
+  "task_score_gap_to_T": -0.140625
 }

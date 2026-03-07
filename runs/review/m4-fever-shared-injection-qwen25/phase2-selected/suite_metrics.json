@@ -19,17 +19,17 @@
     {
       "alias": "I_real",
       "arm": "injected",
-      "macro_f1": 0.2,
+      "macro_f1": 0.40613432046536224,
       "subdir": "pilot-I-real",
-      "task_score": 0.25,
+      "task_score": 0.390625,
       "writer_memory_control": "real"
     },
     {
       "alias": "I_shuffle",
       "arm": "injected",
-      "macro_f1": 0.2,
+      "macro_f1": 0.503078982597055,
       "subdir": "pilot-I-shuffle",
-      "task_score": 0.25,
+      "task_score": 0.546875,
       "writer_memory_control": "shuffled"
     },
     {

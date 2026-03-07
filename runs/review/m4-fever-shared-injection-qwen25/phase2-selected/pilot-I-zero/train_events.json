@@ -5,7 +5,7 @@
       "accuracy": 0.25,
       "dominant_label_fraction": 1.0,
       "macro_f1": 0.2,
-      "mean_margin": 0.0,
+      "mean_margin": -7.536952942609787,
       "step": 0
     }
   ]

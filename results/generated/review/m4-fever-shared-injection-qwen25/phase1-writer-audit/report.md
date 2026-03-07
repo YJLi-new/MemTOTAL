@@ -6,7 +6,7 @@
 - phase1_probe_passed: True
 - phase1_gate_passed: True
 
-- label_real_macro_f1: 0.4434
+- label_real_macro_f1: 0.4513
 - label_control_macro_f1: 0.3499
 - verifiability_real_auroc: 0.7724
 - verifiability_control_auroc: 0.5568

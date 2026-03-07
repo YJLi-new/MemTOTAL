@@ -1,6 +1,6 @@
 case_rows,dominant_label_fraction,macro_f1,mean_margin,mode,primary_metric,primary_score,run_dir
-64,1.0,0.2,-2.557648926973343,A,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v4/phase2-selected/pilot-A-selected
-64,1.0,0.2,0.0,I_real,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v4/phase2-selected/pilot-I-real
-64,1.0,0.2,0.0,I_shuffle,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v4/phase2-selected/pilot-I-shuffle
-64,1.0,0.2,0.0,I_zero,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v4/phase2-selected/pilot-I-zero
-64,0.6875,0.5294117647058824,0.10450554033741355,T,accuracy,0.53125,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v4/phase2-selected/pilot-T-selected
+64,1.0,0.2,-2.557648926973343,A,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v5/phase2-selected/pilot-A-selected
+64,0.71875,0.40613432046536224,-0.5085952877998352,I_real,accuracy,0.390625,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v5/phase2-selected/pilot-I-real
+64,0.546875,0.503078982597055,0.5708485543727875,I_shuffle,accuracy,0.546875,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v5/phase2-selected/pilot-I-shuffle
+64,1.0,0.2,-7.536952942609787,I_zero,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v5/phase2-selected/pilot-I-zero
+64,0.6875,0.5294117647058824,0.10450554033741355,T,accuracy,0.53125,/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25-v5/phase2-selected/pilot-T-selected

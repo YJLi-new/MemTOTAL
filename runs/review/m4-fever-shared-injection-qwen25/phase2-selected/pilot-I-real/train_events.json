@@ -1,385 +1,385 @@
 {
   "events": [
     {
-      "loss": 1.1986123323440552,
+      "loss": 86.60090637207031,
       "step": 1,
       "support_example_id": "126173",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.00020346954988781363,
       "step": 2,
       "support_example_id": "15542",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 91.29939270019531,
       "step": 3,
       "support_example_id": "164502",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 3.075552376685664e-05,
       "step": 4,
       "support_example_id": "182701",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 23.05313491821289,
       "step": 5,
       "support_example_id": "224140",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 20.16254425048828,
       "step": 6,
       "support_example_id": "47848",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 14.038440704345703,
       "step": 7,
       "support_example_id": "96401",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 81.09512329101562,
       "step": 8,
       "support_example_id": "99521",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 77.71246337890625,
       "step": 9,
       "support_example_id": "126173",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.08631781488656998,
       "step": 10,
       "support_example_id": "15542",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 70.51829528808594,
       "step": 11,
       "support_example_id": "164502",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.03262723237276077,
       "step": 12,
       "support_example_id": "182701",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 4.256328105926514,
       "step": 13,
       "support_example_id": "224140",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.7697402238845825,
       "step": 14,
       "support_example_id": "47848",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 1.4480440616607666,
       "step": 15,
       "support_example_id": "96401",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 57.88323211669922,
       "step": 16,
       "support_example_id": "99521",
       "writer_frozen": true
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 58.347557067871094,
       "step": 17,
       "support_example_id": "126173",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 22.026775360107422,
       "step": 18,
       "support_example_id": "15542",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 55.200408935546875,
       "step": 19,
       "support_example_id": "164502",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 17.734790802001953,
       "step": 20,
       "support_example_id": "182701",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.020541900768876076,
       "step": 21,
       "support_example_id": "224140",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.10633727163076401,
       "step": 22,
       "support_example_id": "47848",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.46239328384399414,
       "step": 23,
       "support_example_id": "96401",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 56.00408935546875,
       "step": 24,
       "support_example_id": "99521",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 59.34217834472656,
       "step": 25,
       "support_example_id": "126173",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.887385368347168,
       "step": 26,
       "support_example_id": "15542",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 55.42078399658203,
       "step": 27,
       "support_example_id": "164502",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.3304581940174103,
       "step": 28,
       "support_example_id": "182701",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 4.344679832458496,
       "step": 29,
       "support_example_id": "224140",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 1.0065546035766602,
       "step": 30,
       "support_example_id": "47848",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 4.080317497253418,
       "step": 31,
       "support_example_id": "96401",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 41.387229919433594,
       "step": 32,
       "support_example_id": "99521",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 41.33509063720703,
       "step": 33,
       "support_example_id": "126173",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.3769513666629791,
       "step": 34,
       "support_example_id": "15542",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 33.71875762939453,
       "step": 35,
       "support_example_id": "164502",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 2.796473503112793,
       "step": 36,
       "support_example_id": "182701",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.028848126530647278,
       "step": 37,
       "support_example_id": "224140",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.10480400919914246,
       "step": 38,
       "support_example_id": "47848",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 2.6311590671539307,
       "step": 39,
       "support_example_id": "96401",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 8.427471160888672,
       "step": 40,
       "support_example_id": "99521",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 5.560056686401367,
       "step": 41,
       "support_example_id": "126173",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.7697460651397705,
       "step": 42,
       "support_example_id": "15542",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.0014865073608234525,
       "step": 43,
       "support_example_id": "164502",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 1.0685135126113892,
       "step": 44,
       "support_example_id": "182701",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 3.3080506324768066,
       "step": 45,
       "support_example_id": "224140",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 9.498132705688477,
       "step": 46,
       "support_example_id": "47848",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 12.41642951965332,
       "step": 47,
       "support_example_id": "96401",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.024418195709586143,
       "step": 48,
       "support_example_id": "99521",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 5.373133659362793,
       "step": 49,
       "support_example_id": "126173",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.5359705686569214,
       "step": 50,
       "support_example_id": "15542",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.3669999837875366,
       "step": 51,
       "support_example_id": "164502",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 2.1453895568847656,
       "step": 52,
       "support_example_id": "182701",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.0050766137428581715,
       "step": 53,
       "support_example_id": "224140",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.2665382921695709,
       "step": 54,
       "support_example_id": "47848",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.10710194706916809,
       "step": 55,
       "support_example_id": "96401",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 2.388883113861084,
       "step": 56,
       "support_example_id": "99521",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.025185123085975647,
       "step": 57,
       "support_example_id": "126173",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.11928585171699524,
       "step": 58,
       "support_example_id": "15542",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.02130270190536976,
       "step": 59,
       "support_example_id": "164502",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.136307492852211,
       "step": 60,
       "support_example_id": "182701",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.14593291282653809,
       "step": 61,
       "support_example_id": "224140",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.5871008038520813,
       "step": 62,
       "support_example_id": "47848",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 0.13729768991470337,
       "step": 63,
       "support_example_id": "96401",
       "writer_frozen": false
     },
     {
-      "loss": 1.1986123323440552,
+      "loss": 1.0490362910786644e-05,
       "step": 64,
       "support_example_id": "99521",
       "writer_frozen": false
@@ -390,28 +390,28 @@
       "accuracy": 0.25,
       "dominant_label_fraction": 1.0,
       "macro_f1": 0.2,
-      "mean_margin": 0.0,
+      "mean_margin": -7.3037958443164825,
       "step": 0
     },
     {
-      "accuracy": 0.25,
-      "dominant_label_fraction": 1.0,
-      "macro_f1": 0.2,
-      "mean_margin": 0.0,
+      "accuracy": 0.765625,
+      "dominant_label_fraction": 0.921875,
+      "macro_f1": 0.5727636849132176,
+      "mean_margin": 2.3559528589248657,
       "step": 16
     },
     {
-      "accuracy": 0.25,
-      "dominant_label_fraction": 1.0,
-      "macro_f1": 0.2,
-      "mean_margin": 0.0,
+      "accuracy": 0.640625,
+      "dominant_label_fraction": 0.515625,
+      "macro_f1": 0.619736502195815,
+      "mean_margin": 0.14227294921875,
       "step": 32
     },
     {
-      "accuracy": 0.25,
-      "dominant_label_fraction": 1.0,
-      "macro_f1": 0.2,
-      "mean_margin": 0.0,
+      "accuracy": 0.390625,
+      "dominant_label_fraction": 0.71875,
+      "macro_f1": 0.40613432046536224,
+      "mean_margin": -0.5085952877998352,
       "step": 64
     }
   ]

@@ -117,6 +117,8 @@ class BackboneRealModeTest(unittest.TestCase):
         prefix = torch.ones(1, 3, 8, dtype=torch.float32)
         prefixed_scores = backbone.score_continuations("Prompt", ["good ending", "bad"], prefix_embeddings=prefix)
         self.assertEqual(list(prefixed_scores.shape), [2])
+        self.assertNotEqual(float(prefixed_scores.abs().sum().item()), 0.0)
+        self.assertNotEqual(float(prefixed_scores[0].item()), float(prefixed_scores[1].item()))
         generations = backbone.generate(["Prompt"])
         self.assertEqual(len(generations), 1)
         self.assertTrue(generations[0])

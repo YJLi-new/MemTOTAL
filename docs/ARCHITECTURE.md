@@ -239,12 +239,12 @@
   - `choice CE + strongest-competitor hinge`
   - 不上 KL
   - 不做 candidate-conditioned / pair-conditioned injection
-- 当前 fresh `FEVER` 结果显示这条线还没走到真正 injection 训练：
+- 当前 fresh `FEVER` 结果已把这条线推进到真正 injection 训练：
   - `Phase 0` 现在已经通过：`T_winner=answer_slot_labels + example_blocks_raw8` 相对 `A_winner` 带来 `accuracy_gain=0.4274`、`macro_f1_gain=0.5352`
   - `Phase 1 writer audit` 也已经通过：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_gate_passed=true`
-  - `Phase 2` 真实 injection 已完整跑完，但 `I-real = I-shuffle = I-zero = 0.25`
+  - `Phase 2` 真实 injection 已完整跑完，并且不再是零效应：`I-real=0.390625`、`I-shuffle=0.546875`、`I-zero=0.25`
 - 因而，当前 immediate blocker 已经不再是 prompt/support surface 或 writer 是否有信息，而是：
-  - 这版 `MemoryWriter + LatentPrefixProjector + shallow input-prefix` 还没有把 latent memory 转成 frozen qwen 会真正消费的上下文
+  - 这版 `MemoryWriter + LatentPrefixProjector + shallow input-prefix` 已经让 frozen qwen 开始消费 prefix，但 current real support / writer family 产生的方向仍然劣于 shuffled baseline
 
 ## M3 Failure Checks
 

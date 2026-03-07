@@ -4,8 +4,8 @@
   "examples": 128,
   "peak_device_memory_bytes": 9172293632,
   "peak_device_memory_mib": 8747.380859,
-  "peak_rss_kb": 7137056,
+  "peak_rss_kb": 7112156,
   "token_count": 11179,
-  "tokens_per_sec": 921.430167,
-  "wall_time_sec": 12.132227
+  "tokens_per_sec": 927.722369,
+  "wall_time_sec": 12.049941
 }

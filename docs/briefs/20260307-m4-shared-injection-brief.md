@@ -134,7 +134,7 @@
 - 现在已经不能再把 shared injection 失败归因成“writer 完全没信息”
 - prompt/support surface 和 writer 信息这两道上游 gate 都已经通过
 
-### Phase 2：真实 shared injection 已启动，但 real/shuffle/zero 完全重合
+### Phase 2：真实 shared injection 已启动，而且 prefix 主链路已经真正动起来了
 
 这轮已经真实跑完：
 
@@ -144,38 +144,39 @@
 - `I-shuffle`
 - `I-zero`
 
-真实结果是：
+最新真实结果是：
 
 - `A = 0.25 / macro_f1 = 0.2`
 - `T = 0.53125 / macro_f1 = 0.5294`
-- `I-real = 0.25 / macro_f1 = 0.2`
-- `I-shuffle = 0.25 / macro_f1 = 0.2`
+- `I-real = 0.390625 / macro_f1 = 0.4061`
+- `I-shuffle = 0.546875 / macro_f1 = 0.5031`
 - `I-zero = 0.25 / macro_f1 = 0.2`
 - `gate_passed = false`
 
-pairwise compare 里最关键的三条是：
+pairwise compare 里最关键的四条是：
 
 - `A -> T: flip_delta = 18`
-- `A -> I_real: flip_delta = 0`
-- `I_shuffle -> I_real: flip_delta = 0`
-- `I_zero -> I_real: flip_delta = 0`
+- `A -> I_real: flip_delta = 9`
+- `I_zero -> I_real: flip_delta = 9`
+- `I_shuffle -> I_real: flip_delta = -10`
 
 ## 现在能下的结论
 
-这轮最重要的结论已经变了，不再是“还没到公平评判 shared injection 的时候”，而是：
+这轮最重要的结论已经进一步推进了，不再是“shared injection 完全没动”，而是：
 
-> 现在已经到了能公平评判 shared injection 的时候，而且当前这版 shared latent prefix injection 仍然没有让 frozen Qwen 消费 real memory 内容。
+> 现在已经到了能公平评判 shared injection 的时候，而且当前这版 shared latent prefix injection 已经让 frozen Qwen 开始消费 prefix；但 current real support latent 的方向仍然是错的，因为 `I-real > I-zero` 却被 `I-shuffle` 反超。
 
 更准确地说，当前卡住的是：
 
 1. `teacher-text` 明确有用，说明 support bank 本身不是空的
 2. writer latent 也已有可读任务信息
-3. 但 `writer -> latent prefix -> frozen Qwen` 这条主链路，当前仍没有形成 `real > shuffle > zero` 的内容效应
+3. `writer -> latent prefix -> frozen Qwen` 这条主链路已经不再是零效应，因为 `I-real > I-zero`
+4. 但 current real support latent 还没有形成正确方向的内容效应，因为 `I-shuffle > I-real`
 
 所以：
 
 - 这轮不能再把问题归因成上游 gate 没过
-- 也不能继续把 shared injection 说成“尚未开始”
+- 也不能继续把 shared injection 说成“尚未开始”或“完全没动”
 
 ## 这轮之后最合理的下一步
 
@@ -189,11 +190,12 @@ pairwise compare 里最关键的三条是：
 
 1. 检查 prefix 投影后的幅度、范数和层间可见性
 2. 检查 frozen Qwen 是否真的对 prefix token 产生注意力消费
-3. 在不回退到 score-side family 的前提下，优先尝试更强的 main-chain injection 方案
+3. 直接解释为什么 `I-shuffle` 会反超 `I-real`
+4. 在不回退到 score-side family 的前提下，优先尝试更强的 main-chain injection 方案
 
 ## 当前最稳妥的口径
 
 - `candidate-conditioned residual family` 已经停止继续修补
 - `M4` 的新主线仍然是对的：把 memory 放回 frozen Qwen 的主链路
-- 但现在 immediate blocker 已经不在 injection 之前，而在 injection 本身
-- 因而下一轮的主要任务不是“继续修 gate”，而是“让 frozen Qwen 真正消费 prefix latent”
+- 但现在 immediate blocker 已经不在 injection 之前，而在 injection 本身的内容方向
+- 因而下一轮的主要任务不是“继续修 gate”，而是“解释并修正 `real` 为何比 `shuffle` 更差”

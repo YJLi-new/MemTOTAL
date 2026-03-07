@@ -246,16 +246,21 @@ class BackboneWrapper(nn.Module):
             logits = self.model(**encoded, use_cache=False).logits
         log_probs = torch.log_softmax(logits[:, :-1, :].to(dtype=torch.float32), dim=-1)
         labels_source = encoded.get("input_ids")
+        # When prefix embeddings are injected, encoded no longer carries input_ids.
+        # In that case token_log_probs is gathered against the original unprefixed
+        # label sequence, so subsequent span indices must stay in that same frame.
+        label_position_offset = prefix_length
         if labels_source is None:
             labels_source = self._prepare_hf_inputs(full_texts)["input_ids"]
+            label_position_offset = 0
         labels = labels_source[:, 1:]
         token_log_probs = log_probs.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
         scores: list[torch.Tensor] = []
         sequence_lengths = encoded["attention_mask"].sum(dim=1).tolist()
         for row_index, sequence_length_value in enumerate(sequence_lengths):
             sequence_length = int(sequence_length_value) - prefix_length
-            start_index = max(0, prefix_length + prompt_length - 1)
-            end_index = max(start_index, prefix_length + sequence_length - 1)
+            start_index = max(0, label_position_offset + prompt_length - 1)
+            end_index = max(start_index, label_position_offset + sequence_length - 1)
             scores.append(token_log_probs[row_index, start_index:end_index].sum())
         return torch.stack(scores)
 

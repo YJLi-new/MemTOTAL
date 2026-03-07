@@ -473,10 +473,13 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
     - `gate_passed=false`
     - `A=0.25 / macro_f1=0.2`
     - `T=0.53125 / macro_f1=0.5294117647058824`
-    - `I-real=I-shuffle=I-zero=0.25 / macro_f1=0.2`
-  - 也就是，这轮已经不再支持“prompt/support 没修好”或“writer 完全没信息”这两个解释；当前 immediate blocker 已经上移到：
-    - 这版 `writer -> latent prefix -> frozen Qwen` 的 shared injection 主链路还没有形成 `real > shuffle > zero` 的内容效应
-  - 下一步不该直接跳到 `Story Cloze / candidate-conditioned injection / Qwen3 / KL`；应先继续做更强的 main-chain injection 诊断与升级
+    - `I-real=0.390625 / macro_f1=0.40613432046536224`
+    - `I-shuffle=0.546875 / macro_f1=0.503078982597055`
+    - `I-zero=0.25 / macro_f1=0.2`
+  - 也就是，这轮已经不再支持“prefix 主链路完全没动”这个解释；当前 immediate blocker 已继续收缩成：
+    - frozen Qwen 已经开始消费 prefix，因为 `I-real > I-zero`
+    - 但 current real support / writer family 给出的方向仍然错于 `shuffle`，因为 `I-shuffle > I-real`
+  - 下一步不该直接跳到 `Story Cloze / candidate-conditioned injection / Qwen3 / KL`；应先继续做 main-chain injection 的内容方向诊断与升级
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

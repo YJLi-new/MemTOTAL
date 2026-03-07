@@ -4,9 +4,9 @@
   "phase0_gate_passed": true,
   "phase1_gate_passed": true,
   "phase1_probe_passed": true,
-  "probe_results_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase1-writer-audit/probe_results.csv",
-  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase1-writer-audit/report.md",
+  "probe_results_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase1-writer-audit/probe_results.csv",
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase1-writer-audit/report.md",
   "semantic_probe_passed": true,
-  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase1-writer-audit/summary.csv",
-  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v4/phase1-writer-audit/summary.svg"
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase1-writer-audit/summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase1-writer-audit/summary.svg"
 }
