@@ -80,31 +80,33 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
 
 当前已验证：
 
-- `cell_count = 32`
-- `variant_count = 16`
-- `train_run_count = 12`
-- `eval_run_count = 32`
+- `cell_count = 42`
+- `variant_count = 18`
+- `train_run_count = 18`
+- `eval_run_count = 42`
 - `imported_eval_count = 0`
 - import variant:
   - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json` 当前仍是 `imported_eval_count = 1`
 - protocol-smoke:
   - `shots = {0, 1, 2, 4}`
   - `steps = {0, 1, 3, 5}`
-  - `cell_count = 100`
-  - `variant_count = 16`
-  - `train_run_count = 0`
-  - `eval_run_count = 8`
+  - `cell_count = 126`
+  - `variant_count = 18`
+  - `train_run_count = 26`
+  - `eval_run_count = 26`
   - `reused_train_run_count = 52`
-  - `reused_eval_run_count = 92`
+  - `reused_eval_run_count = 100`
   - `imported_eval_count = 1`
-  - 当前新增的是 `memory_bank` 的 `8` 个 eval cell，其余 cell 已直接复用
+  - 当前新增的是 `ia3` 的 `26` 个 train/eval cell，其余 cell 已直接复用
 - dual-import protocol:
   - `imported_eval_count = 2`
   - `skipped_import_count = 0`
-  - `cell_count = 100`
-  - `variant_count = 16`
+  - `cell_count = 126`
+  - `variant_count = 18`
+  - `train_run_count = 26`
+  - `eval_run_count = 26`
   - `reused_train_run_count = 52`
-  - `reused_eval_run_count = 92`
+  - `reused_eval_run_count = 100`
   - 当前已同时导入 `MemGen / Qwen2.5-1.5B-Instruct` 与 `MemGen / Qwen3-8B`
   - `watcher_state.json` 当前为 `status=refreshed`
   - watcher 已在 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后自动刷新同目录汇总
@@ -126,11 +128,13 @@ ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
   - `qwen25 / meta_prompting`: `0-shot=0.5`，`4-shot=0.625`
   - `qwen25 / rag`: `0~4-shot` 当前都在 `0.625` 量级
   - `qwen25 / memory_bank`: `0-shot=0.5`，`1-shot=0.75`
+  - `qwen25 / ia3`: `0-shot=0.625`，`1-shot 0-step=0.625`，`1-shot 1~5-step=0.5`
   - `qwen25 / lightthinker`: `0-shot=0.625`，`1~4-shot=0.625`
   - `qwen3 / prompt_tuning`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / lora`: `0-shot=0.5`，`4-shot 5-step=0.75`
   - `qwen3 / rag`: 当前 best cell 是 `1-shot / 0-step = 0.75`
   - `qwen3 / memory_bank`: 当前 `1~4-shot / 0-step = 0.75`
+  - `qwen3 / ia3`: `0-shot=0.75`，`1-shot 0-step=0.75`
   - `qwen3 / lightthinker`: `0-shot=0.375`，`1~4-shot=0.5`
 
 这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：

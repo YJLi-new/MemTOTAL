@@ -59,8 +59,10 @@ class AdapterBaselineTest(unittest.TestCase):
         }
         if mode == "prompt_tuning":
             baseline["prompt_tuning"] = {"prompt_tokens": 4}
-        else:
+        elif mode == "lora":
             baseline["lora"] = {"rank": 4, "alpha": 8.0}
+        else:
+            baseline["ia3"] = {"init_scale": 1.0}
         config = {
             "experiment": {
                 "name": f"baseline_{mode}_story_cloze_test",
@@ -169,6 +171,49 @@ class AdapterBaselineTest(unittest.TestCase):
             self.assertIn("candidate_scores", predictions[0])
             self.assertEqual(predictions[0]["baseline_mode"], "lora")
             self.assertIn("Story:", predictions[0]["baseline_prompt"])
+
+    def test_ia3_adapter_eval_loads_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            config_path = self._write_story_cloze_config(tmp, "ia3")
+            train_output_dir = tmp / "ia3_train"
+            eval_output_dir = tmp / "ia3_eval"
+            self.assertEqual(
+                train_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "905",
+                        "--output_dir",
+                        str(train_output_dir),
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                eval_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--seed",
+                        "905",
+                        "--output_dir",
+                        str(eval_output_dir),
+                        "--checkpoint",
+                        str(train_output_dir / "checkpoint.pt"),
+                    ]
+                ),
+                0,
+            )
+            metrics = json.loads((eval_output_dir / "metrics.json").read_text())
+            predictions = [json.loads(line) for line in (eval_output_dir / "predictions.jsonl").read_text().splitlines()]
+            self.assertEqual(metrics["baseline_mode"], "ia3")
+            self.assertEqual(metrics["support_examples"], 1)
+            self.assertEqual(metrics["train_steps"], 3)
+            self.assertEqual(metrics["budget_scope"], "few_shot_adapter")
+            self.assertEqual(metrics["trainable_parameter_count"], 64)
+            self.assertEqual(predictions[0]["baseline_mode"], "ia3")
 
 
 if __name__ == "__main__":

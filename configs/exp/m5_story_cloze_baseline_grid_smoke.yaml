@@ -45,6 +45,10 @@ grid:
       mode: lora
       backbone: Qwen2.5-1.5B-Instruct
       template_config: baseline_lora_story_cloze_qwen25_real_smoke.yaml
+    - family: adapter
+      mode: ia3
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_ia3_story_cloze_qwen25_real_smoke.yaml
     - family: prompting
       mode: vanilla
       backbone: Qwen3-8B
@@ -77,3 +81,7 @@ grid:
       mode: lora
       backbone: Qwen3-8B
       template_config: baseline_lora_story_cloze_qwen3_real_smoke.yaml
+    - family: adapter
+      mode: ia3
+      backbone: Qwen3-8B
+      template_config: baseline_ia3_story_cloze_qwen3_real_smoke.yaml

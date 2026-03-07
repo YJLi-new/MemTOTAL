@@ -47,6 +47,15 @@ class LoRAAdapter(nn.Module):
         return prompt_state + self.scale * self.up(self.down(prompt_state))
 
 
+class IA3Adapter(nn.Module):
+    def __init__(self, hidden_size: int, init_scale: float) -> None:
+        super().__init__()
+        self.gates = nn.Parameter(torch.full((hidden_size,), float(init_scale - 1.0)))
+
+    def forward(self, prompt_state: torch.Tensor) -> torch.Tensor:
+        return prompt_state * (1.0 + self.gates.unsqueeze(0))
+
+
 class AdapterBaselineRuntime(nn.Module):
     def __init__(self, config: dict[str, Any], seed: int) -> None:
         super().__init__()
@@ -55,7 +64,7 @@ class AdapterBaselineRuntime(nn.Module):
         if family != "adapter":
             raise ValueError(f"Unsupported baseline family: {family}")
         mode = str(baseline_cfg.get("mode", "prompt_tuning"))
-        if mode not in {"prompt_tuning", "lora"}:
+        if mode not in {"prompt_tuning", "lora", "ia3"}:
             raise ValueError(f"Unsupported adapter baseline mode: {mode}")
         backbone_cfg = config["backbone"]
         self.backbone = BackboneWrapper(
@@ -69,12 +78,18 @@ class AdapterBaselineRuntime(nn.Module):
         if mode == "prompt_tuning":
             prompt_tokens = int(baseline_cfg.get("prompt_tuning", {}).get("prompt_tokens", 4))
             self.adapter = PromptTuningAdapter(self.backbone.hidden_size, prompt_tokens)
-        else:
+        elif mode == "lora":
             lora_cfg = baseline_cfg.get("lora", {})
             self.adapter = LoRAAdapter(
                 hidden_size=self.backbone.hidden_size,
                 rank=int(lora_cfg.get("rank", 4)),
                 alpha=float(lora_cfg.get("alpha", 8.0)),
+            )
+        else:
+            ia3_cfg = baseline_cfg.get("ia3", {})
+            self.adapter = IA3Adapter(
+                hidden_size=self.backbone.hidden_size,
+                init_scale=float(ia3_cfg.get("init_scale", 1.0)),
             )
 
     def build_prompt(self, example: dict[str, Any]) -> str:

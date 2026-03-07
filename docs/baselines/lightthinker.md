@@ -64,7 +64,7 @@ python -m analysis --config configs/exp/m5_baseline_budget_audit.yaml --seed 961
   - qwen25: `0-shot=0.625`，`1~4-shot=0.625`
   - qwen3: `0-shot=0.375`，`1~4-shot=0.5`
 - `baseline_budget_audit` 当前已把 `lightthinker` 纳入自动检查：
-  - `rows_collected = 52`
+  - `rows_collected = 56`
   - `checks_pass_rate = 1.0`
 
 说明：

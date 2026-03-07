@@ -17,6 +17,8 @@ def _infer_adapter_trainable_parameter_count(config: dict[str, Any]) -> int:
     if mode == "lora":
         rank = int(baseline_cfg.get("lora", {}).get("rank", 0))
         return 2 * hidden_size * rank
+    if mode == "ia3":
+        return hidden_size
     return 0
 
 

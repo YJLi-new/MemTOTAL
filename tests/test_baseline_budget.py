@@ -261,6 +261,49 @@ class BaselineBudgetAuditTest(unittest.TestCase):
             rows = collect_baseline_budget_rows(temp_root)
             self.assertEqual(rows[0]["trainable_parameter_count"], 512)
 
+    def test_collect_baseline_budget_rows_infers_ia3_parameter_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            run_dir = temp_root / "adapter-ia3-eval"
+            run_dir.mkdir()
+            (run_dir / "run_info.json").write_text(
+                json.dumps(
+                    {
+                        "backbone": "Qwen2.5-1.5B-Instruct",
+                        "task_name": "story_cloze_smoke",
+                        "smoke_subset": "local_contract_v1",
+                    }
+                )
+            )
+            (run_dir / "metrics.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "eval_baseline",
+                        "baseline_family": "adapter",
+                        "baseline_mode": "ia3",
+                        "support_examples": 1,
+                        "train_steps": 4,
+                    }
+                )
+            )
+            (run_dir / "config.snapshot.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "backbone": {"stub_hidden_size": 64},
+                        "baseline": {
+                            "family": "adapter",
+                            "mode": "ia3",
+                            "support_examples": 1,
+                            "ia3": {"init_scale": 1.0},
+                        },
+                        "runtime": {"train_steps": 4},
+                    },
+                    sort_keys=False,
+                )
+            )
+            rows = collect_baseline_budget_rows(temp_root)
+            self.assertEqual(rows[0]["trainable_parameter_count"], 64)
+
     def test_analysis_mode_writes_budget_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

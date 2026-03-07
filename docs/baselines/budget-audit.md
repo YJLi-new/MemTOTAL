@@ -64,7 +64,7 @@
 
 最新已验证结果：
 
-- `rows_collected = 52`
+- `rows_collected = 56`
 - `checks_pass_rate = 1.0`
 - `issues_found = 0`
 
