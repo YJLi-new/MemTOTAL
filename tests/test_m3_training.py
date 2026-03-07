@@ -557,6 +557,10 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("max_support_update_max_abs", stage_c_metrics)
             self.assertIn("adaptation_effective_threshold", stage_c_metrics)
             self.assertIn("adaptation_effective", stage_c_metrics)
+            episode_trace = json.loads(stage_c_dir.joinpath("episode_trace.json").read_text())
+            self.assertTrue(episode_trace["rows"])
+            self.assertIn("support_ids", episode_trace["rows"][0])
+            self.assertIn("eval_query_set_ids", episode_trace["rows"][0])
 
             with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
                 rows = list(csv.DictReader(handle))

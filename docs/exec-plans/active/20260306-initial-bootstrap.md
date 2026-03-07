@@ -279,6 +279,8 @@
 - 2026-03-07 05:25 UTC: 已把 `runtime.target_support_weighting in {uniform, proxy_softmax, proxy_top1}` 接进 `src/memtotal/training/m3.py`、`adapt_curve.csv`、`metrics.json` 和 `src/memtotal/analysis/m3_stage_c_seed_sweep.py`。当前 canonical `m3_stage_c_core4_{qwen25,qwen3}_smoke.yaml` 显式固定为 `target_support_weighting=uniform`。
 - 2026-03-07 05:25 UTC: 已新增 `scripts/run_m3_core4_stage_c_qonly_support_weight_sweep.sh`。fresh `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 当前记录：在固定 `aggregate_support + ep3` 的 5-seed 口径下，`uniform / proxy_softmax / proxy_top1` 的 official `mean_task_gain` 基本完全一致，qwen25 三档都约为 `-0.11111111111111112`，qwen3 三档都为 `-0.022222222222222233`。
 - 2026-03-07 05:25 UTC: 因此，当前 support-weighting 也已经从 blocker 列表中拿掉。新的下一步是直接检查 target split / support-query 抽样结构，而不是继续调 aggregation 权重。
+- 2026-03-07 07:08 UTC: 已将 `episode_trace.json` 接进 benchmark-native `Stage C` artifact contract。`src/memtotal/training/m3.py` 现在会把每个 target episode 的 `support_ids / support_candidate_ids / support_negative_pool_ids / query_candidate_ids / eval_query_set_ids` 直接落盘，`tests/test_m3_training.py` 也已补充对应断言。
+- 2026-03-07 07:08 UTC: 基于 fresh diagnose run `runs/diagnose/m3-qwen3-negative-seed-{40301,40304}/episode_trace.json`，当前已明确看到 qwen3 两个负 seed 是 support 组成下的双峰行为，而不是单纯噪声：`40301` 会随着 step 单调变差，`40304` 会随着 step 单调变好。下一步应直接做 support 组成的条件化分析或采样策略，而不是再做全局盲扫。
 
 ## Surprises & Discoveries
 

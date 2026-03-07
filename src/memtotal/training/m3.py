@@ -1308,6 +1308,7 @@ def run_stage_c(
     adaptation_effective_threshold = float(config["runtime"].get("adaptation_effective_threshold", 1e-7))
     profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
     curve_rows: list[dict[str, object]] = []
+    episode_trace_rows: list[dict[str, object]] = []
     best_runtime = copy.deepcopy(runtime)
     best_adapt_row: dict[str, object] | None = None
     support_updates = 0
@@ -1340,6 +1341,29 @@ def run_stage_c(
             target_support_negative_pool=target_support_negative_pool,
             target_support_negative_sampler=target_support_negative_sampler,
         )
+        for episode_index, episode_state in enumerate(episode_states):
+            episode_trace_rows.append(
+                {
+                    "shot": shot,
+                    "episode_index": episode_index,
+                    "episode_seed": int(episode_state["episode_seed"]),
+                    "target_support_bank_size": int(episode_state["target_support_bank_size"]),
+                    "support_ids": [str(example["id"]) for example in episode_state["support_examples"]],
+                    "support_candidate_ids": [
+                        str(example["id"]) for example in episode_state["support_candidate_examples"]
+                    ],
+                    "support_negative_pool_ids": [
+                        str(example["id"]) for example in episode_state["support_candidate_pool"]
+                    ],
+                    "query_candidate_ids": [
+                        str(example["id"]) for example in episode_state["query_candidate_pool"]
+                    ],
+                    "eval_query_set_ids": [
+                        [str(example["id"]) for example in query_set]
+                        for query_set in episode_state["eval_query_sets"]
+                    ],
+                }
+            )
         if target_episode_policy == "aggregate_support":
             shared_runtime = copy.deepcopy(runtime)
             for episode_state in episode_states:
@@ -1779,4 +1803,5 @@ def run_stage_c(
     }
     write_json(output_dir / "metrics.json", metrics)
     write_json(output_dir / "adapt_curve.json", {"rows": curve_rows})
+    write_json(output_dir / "episode_trace.json", {"rows": episode_trace_rows})
     return metrics
