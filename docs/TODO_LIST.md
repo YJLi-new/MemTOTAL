@@ -408,6 +408,12 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 公平 fixed-holdout 重扫 `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v2-fixed-eval/metrics.json` 现显示：三档 split 在两档 backbone 上的 official `mean_task_gain` 全部为 `0.0`
   - qwen25 三档 `mean_proxy_gain` 仅在 `2.416e-6 ~ 2.419e-6` 间波动；qwen3 三档仅在 `2.554e-6 ~ 2.560e-6` 间波动
   - 因此 `target_split_policy` 现已从 canonical blocker 列表中拿掉，默认配置回收为最朴素的 `random`
+- 已新增 benchmark-native `Stage C q-only support-bank sweep` harness：`scripts/run_m3_core4_stage_c_qonly_support_bank_sweep.sh`
+  - 固定公平 fixed-holdout eval 与 `target_split_policy=random`，对比 `target_support_bank_size in {max_shot, auto}`
+  - fresh `results/generated/m3-core4-stage-c-qonly-support-bank-sweep-v1/metrics.json` 当前显示：两档 backbone 的 official `mean_task_gain` 仍全部为 `0.0`
+  - 但 qwen3 的 `mean_proxy_gain` 已从 `7.294e-7` 提升到 `9.086e-6`，并且 5 个 seeds 里有 4 个从 `best_step=0` 推到 `best_step=3`
+  - qwen25 这条线上暂时只看到极弱 proxy 波动，`auto` 与 `max_shot` 仍基本打平
+  - 因此 canonical `target_support_bank_size` 现保留为 `auto`，但新的 blocker 也更明确：bank 变大本身还不够，下一步要直接扩 support negative pool
 - 已新增 benchmark-native `Stage C curve suite` harness：`scripts/run_m3_core4_stage_c_curve_suite.sh`
   - 单个 seed/run 直接产出更接近正式协议的 `adapt_shots={0,1,2,3}`、`adapt_steps=5` 曲线
   - 分析层会自动汇总 `curve_rows.csv`、`shot_curve.csv/.svg`、`step_curve.csv/.svg`
@@ -469,7 +475,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-qonly-policy-sweep-v1/metrics.json` 现进一步把 policy 本身从 blocker 列表里拿掉：在同一组 5 seeds 上，`aggregate_support` 与 `independent` 给出的 `mean_task_gain` 完全一致，qwen25 都是 `-0.059259259259259255`，qwen3 都是 `0.0962962962962963`；但 `aggregate_support` 的 `mean_support_updates` 从 `9.0` 降到 `3.0`
   - `results/generated/m3-core4-stage-c-qonly-episode-budget-sweep-v1/metrics.json` 现进一步显示：在固定 `aggregate_support` 与同一组 5 seeds 的口径下，`target_episode_repeats=1` 的均值反而是两档 backbone 最优。当前 qwen25 是 `ep1=0.08888888888888889 > ep3=0.02222222222222222 > ep5=-0.013333333333333336`；qwen3 是 `ep1=0.022222222222222233 > ep5=0.013333333333333358 > ep3=0.007407407407407407`
   - `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 现进一步显示：在固定 `aggregate_support + ep3` 与同一组 5 seeds 的口径下，`target_support_weighting in {uniform, proxy_softmax, proxy_top1}` 的 official `mean_task_gain` 基本完全一致。当前 qwen25 三档都为 `-0.11111111111111112` 左右，qwen3 三档都为 `-0.022222222222222233`
-  - 这一步之后，`target split` 这条线也已在公平协议下正式排掉；当前新的 blocker 更基础，是“在 fixed-holdout fair eval 下，为什么 canonical `Stage C` 的 official gain 完全为 0”
+  - 这一步之后，`target split` 这条线也已在公平协议下正式排掉；当前新的 blocker 更基础，是“在 fixed-holdout fair eval 下，为什么 canonical `Stage C` 的 official gain 完全为 0，以及如何把 support-side proxy 改善继续传到 official score”
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
@@ -492,7 +498,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 follow-up 进一步修掉了 Stage C 里 `shot`-耦合 target episode / query pool / support pool 的协议泄漏，并把 `target_split_policy={random, proxy_topk_support, proxy_bottomk_support}` 在公平 fixed-holdout 口径下重新 sweep 了一遍。现在还额外有七套正式 probe/curve harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证不同 `lr/steps` 下的 q-only 行为，Stage C sensitivity audit 用于直接比较 query path 和 memory path 的函数影响量级，Stage C q-only target-split sweep 用于直接比较 target support/query 抽样结构，Stage C curve suite 用于直接产出更接近正式协议的 `shot_curve / step_curve`，Stage C step saturation audit 用于把 `zero->step0` 与 `step0->final` 两段收益拆开。同时，Stage C 现在已有并行的 `task_proxy_score` 观测层：当 official `task_score` 因为样本太少或指标太粗而打平时，仍能继续观测 `gold_choice_probability` 这种更平滑的 target-side 变化。当前最新证据已经说明：benchmark-native Stage C 的主 blocker 已不再是 `q_only` 参数化无效，也不再是 `target_split_policy` 选择，而是“在 fixed-holdout fair eval 下，official few-shot gain 仍然为 0，只有极小 proxy 变化”；因此下一步应该优先增强 support-side retrieval 信号，再重跑 few-shot grid。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 follow-up 进一步修掉了 Stage C 里 `shot`-耦合 target episode / query pool / support pool 的协议泄漏，并把 `target_split_policy={random, proxy_topk_support, proxy_bottomk_support}` 在公平 fixed-holdout 口径下重新 sweep 了一遍。现在还额外有八套正式 probe/curve harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证不同 `lr/steps` 下的 q-only 行为，Stage C sensitivity audit 用于直接比较 query path 和 memory path 的函数影响量级，Stage C q-only target-split sweep 用于直接比较 target support/query 抽样结构，Stage C q-only support-bank sweep 用于直接比较 support bank 规模，Stage C curve suite 用于直接产出更接近正式协议的 `shot_curve / step_curve`，Stage C step saturation audit 用于把 `zero->step0` 与 `step0->final` 两段收益拆开。同时，Stage C 现在已有并行的 `task_proxy_score` 观测层：当 official `task_score` 因为样本太少或指标太粗而打平时，仍能继续观测 `gold_choice_probability` 这种更平滑的 target-side 变化。当前最新证据已经说明：benchmark-native Stage C 的主 blocker 已不再是 `q_only` 参数化无效，也不再是 `target_split_policy` 选择；`target_support_bank_size=auto` 现在至少能在 qwen3 上更稳定地把 `best_step` 推到 `3`，但 official few-shot gain 仍然为 `0.0`。因此下一步应该直接扩 support negative pool，而不是继续只调 split 或 bank size。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

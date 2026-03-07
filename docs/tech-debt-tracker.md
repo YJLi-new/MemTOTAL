@@ -93,4 +93,5 @@
 - 修正协议后的 fresh `results/generated/m3-core4-stage-c-step-saturation-audit-v2-fixed-eval/metrics.json` 也明确显示：qwen25 与 qwen3 的 `mean_zero_to_step0_task_gain` 和 `mean_step0_to_final_task_gain` 都是 `0.0`。因此，旧版“收益全部发生在 `zero->step0`”这条判断本身也已经失效。
 - 现在真正剩下的 tech debt 不再是 target split / support weighting / target episode policy 的口径选择，而是更底层的“在公平 fixed-holdout eval 下，为什么 Stage C official task score 完全不动”。
 - 公平 `target_split_policy` 重扫 `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v2-fixed-eval/metrics.json` 现已把第二条线正式排掉：`random / proxy_topk_support / proxy_bottomk_support` 在两档 backbone 上的 official `mean_task_gain` 都是 `0.0`，proxy 也只剩 `1e-6` 级差异。
-- 因此，当前最值得继续拆的只剩 support-side retrieval 信号本身，优先看 `support_bank_size`、support negative pool 和 inner-loop retrieval 目标强度，而不是继续调 split policy。
+- `support_bank_size={max_shot, auto}` 的 fresh 对照 `results/generated/m3-core4-stage-c-qonly-support-bank-sweep-v1/metrics.json` 现在又进一步缩小了范围：`auto` 仍未把 official `mean_task_gain` 拉出 `0.0`，但 qwen3 的 `mean_proxy_gain` 已从 `7.294e-7` 提升到 `9.086e-6`，并在多数 seeds 上把 `best_step` 从 `0` 推到 `3`。这说明 support bank 变大确实在恢复 inner-loop 信号，只是还没强到能改 official score。
+- 因此，当前最值得继续拆的只剩 support-side retrieval signal 本身，优先扩 support negative pool 和 retrieval 目标强度，而不是继续调 split policy；`support_bank_size` 现在已经从“怀疑点”变成“已证实有帮助但单独不够”的次级杠杆。

@@ -26,6 +26,7 @@ runtime:
   target_episode_policy: aggregate_support
   target_support_weighting: uniform
   target_split_policy: random
+  target_support_bank_size: auto
   adapt_shots:
     - 0
     - 3
