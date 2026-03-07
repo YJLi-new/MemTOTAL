@@ -21,6 +21,7 @@ runtime:
   expected_query_learning_mode: meta_trained
   adapt_steps: 3
   adapt_learning_rate: 0.2
+  target_eval_repeats: 3
   adapt_shots:
     - 0
     - 3

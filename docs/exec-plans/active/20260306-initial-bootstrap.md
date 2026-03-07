@@ -231,6 +231,11 @@
 - 2026-03-07 04:37 UTC: fresh Stage C probe suite 已再次重跑到 `results/generated/m3-core4-stage-c-probe-suite-v3/`。当前 qwen25 在这组 target seed 上 official `accuracy` 三条线都停在 `0.0`，但 `best_adapt_task_proxy_score` 已能把 `q_only / w_only / w_plus_q` 分到 `0.4828866 / 0.4830253 / 0.4830246`；qwen3 的 fresh best row 也已因 proxy tie-break 回到 `q_only`。
 - 2026-03-07 04:37 UTC: fresh q-only budget probe 已再次重跑到 `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v3/`。当前两档 backbone 在 official `task_score=0.6666666666666666` 完全打平时，proxy 仍能继续比较预算；最新 `best_by_backbone` 都落在 `lr=5.0, steps=10`。这说明当前下一步应继续攻 official target metric 的稳定性，而不是重复扫 reader/optimizer 是否有效。
 
+- 2026-03-07 04:43 UTC: 已将 benchmark-native canonical `Stage C` target 评测升级为 `runtime.target_eval_repeats=3`，并在 `adapt_curve.csv` 中新增 `target_eval_repeats / evaluated_query_examples` 两列。对应回归 `python -m unittest discover -s tests -v` 当前已重新通过，总数为 `105`。
+- 2026-03-07 04:43 UTC: fresh `results/generated/m3-core4-stage-c-probe-suite-v4/metrics.json` 现显示 official `task_score` 已不再冻结：qwen25 三条线当前都从 `0.6666666666666666 -> 0.8888888888888888`，qwen3 三条线当前都从 `0.5555555555555555 -> 0.7777777777777778`；`q_only` 仍保持 `adaptation_effective=True`。
+- 2026-03-07 04:43 UTC: fresh `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v4/metrics.json` 进一步表明 metric 过粗已不是首要矛盾。qwen25 的 q-only official `accuracy` 现在能从 `0.3333333333333333 -> 0.5555555555555555`，但 qwen3 在当前 target seed 上所有 budget 都仍为 `0.4444444444444444 -> 0.2222222222222222`。下一步应优先补 target-side 多 episode 聚合或 seed sweep，而不是继续盲扫更大的 q-only 预算。
+- 2026-03-07 04:43 UTC: 对 benchmark-native canonical `Stage C`，当前优先采用固定 `target_eval_repeats=3` 的 query-set 聚合来稳定 official metric，而不是继续依赖单一 target query 子集。这一步先解决“official score 是否会动”的问题；若后续仍存在明显 backbone/seed 不对称，再升级到 target support/query 多 episode 聚合。
+
 ## Surprises & Discoveries
 
 - 当前顶层没有 `.git/`，不能假定能直接读取 commit hash。

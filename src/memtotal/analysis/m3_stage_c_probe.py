@@ -87,6 +87,7 @@ def collect_stage_c_probe_rows(
             "trainable_parameter_count": metrics.get("trainable_parameter_count"),
             "adapt_learning_rate": metrics.get("adapt_learning_rate"),
             "adapt_steps": metrics.get("adapt_steps"),
+            "target_eval_repeats": metrics.get("target_eval_repeats"),
             "zero_shot_task_score": zero_shot_task_score,
             "best_adapt_task_score": best_adapt_task_score,
             "task_gain": best_adapt_task_score - zero_shot_task_score,
@@ -140,6 +141,7 @@ def write_stage_c_probe_csv(output_path: str | Path, rows: list[dict[str, object
         "trainable_parameter_count",
         "adapt_learning_rate",
         "adapt_steps",
+        "target_eval_repeats",
         "zero_shot_task_score",
         "best_adapt_task_score",
         "task_gain",
@@ -272,6 +274,7 @@ def run_m3_stage_c_probe_summary(
                 "best_adapt_query_loss": row["best_adapt_query_loss"],
                 "adapt_learning_rate": row["adapt_learning_rate"],
                 "adapt_steps": row["adapt_steps"],
+                "target_eval_repeats": row.get("target_eval_repeats"),
                 "trainable_parameter_count": row["trainable_parameter_count"],
             }
 
@@ -287,6 +290,7 @@ def run_m3_stage_c_probe_summary(
             "task_gain": row["task_gain"],
             "adapt_learning_rate": row["adapt_learning_rate"],
             "adapt_steps": row["adapt_steps"],
+            "target_eval_repeats": row.get("target_eval_repeats"),
             "adaptation_effective": row["adaptation_effective"],
             "best_adapt_task_score": row["best_adapt_task_score"],
             "best_adapt_task_proxy_score": row.get("best_adapt_task_proxy_score"),

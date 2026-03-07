@@ -381,6 +381,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - Stage C 现支持 `expected_query_learning_mode` 校验，避免把 `random / non-meta / meta-trained` 的 reader init resume 混到错误 run 里
 - Stage C 的 `adapt_curve.csv` 现已同时写出 `objective_loss / task_score / task_metric_name`，并把 `best_adapt_task_score` 作为 benchmark-native 主曲线字段
 - Stage C 的 `adapt_curve.csv` 现还会额外写出 `task_proxy_score / task_proxy_name / task_margin`；当前 multiple-choice 任务的默认 proxy 是 `gold_choice_probability`
+- Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`
 - 已新增 benchmark-native `Stage B probe` harness：`scripts/run_m3_core4_stage_b_probe_suite.sh` + `configs/exp/m3_stage_b_probe_summary.yaml`
@@ -432,7 +433,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-probe-suite-v3/metrics.json` 现进一步显示：在某些 target seed 上 official `task_score` 会粗到三条线全打平，例如 qwen25 当前是 `0.0 -> 0.0`；但新的 `best_adapt_task_proxy_score` 已能把 `q_only / w_only / w_plus_q` 分到 `0.4828866223494212 / 0.48302534222602844 / 0.48302459716796875`
   - 同一份 Stage C probe v3 当前记录：qwen3 的三条线 official `task_score` 也仍然打平在 `0.6666666666666666`，但 probe summary 现在会在平手时用 `best_adapt_task_proxy_score` 作为二级比较键，因此 fresh best row 回到了 `q_only`
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v3/metrics.json` 现进一步说明：两档 backbone 在 official `task_score=0.6666666666666666` 完全打平时，proxy 仍能分出预算差异；当前 qwen25 与 qwen3 的 fresh best budget 都落在 `lr=5.0, steps=10`
-  - 当前剩余 blocker 已从“q-only 几乎不承载更新”进一步收缩成“如何把 proxy-level 的改善稳定转成 official target metric 的提升”；现在已经不是观测不到变化，而是 official metric 本身过粗
+  - `results/generated/m3-core4-stage-c-probe-suite-v4/metrics.json` 现进一步显示：将 canonical `Stage C` target 评测改成 `target_eval_repeats=3` 后，official `task_score` 已不再冻结。qwen25 的三条线当前都从 `0.6666666666666666 -> 0.8888888888888888`；qwen3 的三条线当前都从 `0.5555555555555555 -> 0.7777777777777778`
+  - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v4/metrics.json` 同时说明：多 query-set 聚合确实能让 qwen25 的 q-only official `accuracy` 从 `0.3333333333333333 -> 0.5555555555555555`；但 qwen3 在这一组 target seed 上仍是 `0.4444444444444444 -> 0.2222222222222222`，即 target-side不稳定性还没真正消失
+  - 当前剩余 blocker 已从“official metric 本身过粗”进一步收缩成“target episode / support seed 的稳定性与 backbone 间不对称”，而不是继续怀疑 q-only 路径是否有效
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`

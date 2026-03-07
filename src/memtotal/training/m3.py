@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import random
 import shutil
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,10 @@ def _resolve_query_objective(config: dict) -> str:
 
 def _resolve_retrieval_negative_count(config: dict) -> int:
     return int(config["runtime"].get("retrieval_negative_count", 7))
+
+
+def _resolve_target_eval_repeats(config: dict) -> int:
+    return max(1, int(config["runtime"].get("target_eval_repeats", 1)))
 
 
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
@@ -426,6 +431,24 @@ def _exclude_support_from_query_pool(
     support_ids = {str(row["id"]) for row in support_examples}
     filtered = [row for row in domain_examples if str(row["id"]) not in support_ids]
     return filtered or list(domain_examples)
+
+
+def _sample_target_eval_query_sets(
+    domain_examples: list[dict[str, Any]],
+    *,
+    support_examples: list[dict[str, Any]],
+    query_size: int,
+    repeats: int,
+    seed: int,
+) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]]]:
+    candidate_pool = _exclude_support_from_query_pool(domain_examples, support_examples)
+    query_sets: list[list[dict[str, Any]]] = []
+    for repeat_index in range(repeats):
+        rng = random.Random(seed + (7919 * repeat_index))
+        shuffled = list(candidate_pool)
+        rng.shuffle(shuffled)
+        query_sets.append(shuffled[: min(query_size, len(shuffled))])
+    return query_sets, candidate_pool
 
 
 def _continuation_retrieval_loss(
@@ -989,6 +1012,7 @@ def run_stage_c(
     expected_query_learning_mode = _resolve_expected_stage_c_query_learning_mode(config)
     query_objective = _resolve_query_objective(config)
     retrieval_negative_count = _resolve_retrieval_negative_count(config)
+    target_eval_repeats = _resolve_target_eval_repeats(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1044,49 +1068,84 @@ def run_stage_c(
     for shot in shots_list:
         current_runtime = copy.deepcopy(runtime)
         support_examples = target_episode.support_examples[:shot]
-        query_candidate_pool = _exclude_support_from_query_pool(
+        eval_query_sets, query_candidate_pool = _sample_target_eval_query_sets(
             domain_examples,
-            support_examples,
+            support_examples=support_examples,
+            query_size=int(manifest["query_size"]),
+            repeats=target_eval_repeats,
+            seed=seed + (shot * 104729),
         )
         support_candidate_pool = list(support_examples) or list(domain_examples)
         max_recorded_steps = 0 if shot == 0 else max_steps
         for step in range(max_recorded_steps + 1):
             profiler.add_example()
-            for example in target_episode.query_examples:
-                profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
-                profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
-                query_examples_touched += 1
-            if query_objective == "label_prototype":
-                objective_loss = _mean_classification_loss(
-                    current_runtime,
-                    target_episode.query_examples,
-                    candidate_states=candidate_states,
-                    candidate_labels=candidate_labels,
-                )
-                objective_accuracy = _compute_accuracy(
-                    current_runtime,
-                    target_episode.query_examples,
-                    candidate_states=candidate_states,
-                    candidate_labels=candidate_labels,
-                )
-                task_score = objective_accuracy
-                task_metric_name = "accuracy"
-                task_proxy_score = task_score
-                task_proxy_name = task_metric_name
-                task_margin = 0.0
-            else:
-                objective_loss, objective_accuracy = _mean_continuation_retrieval_metrics(
-                    current_runtime,
-                    target_episode.query_examples,
-                    candidate_pool_resolver=lambda _: query_candidate_pool,
-                    negative_count=retrieval_negative_count,
-                )
-                task_metrics = _mean_task_score(current_runtime, target_episode.query_examples)
-                task_score = float(task_metrics["task_score"])
-                task_metric_name = str(task_metrics["task_metric_name"])
-                task_proxy_score = float(task_metrics["task_proxy_score"])
-                task_proxy_name = str(task_metrics["task_proxy_name"])
-                task_margin = float(task_metrics["task_margin"])
+            eval_objective_losses: list[float] = []
+            eval_objective_accuracies: list[float] = []
+            eval_task_scores: list[float] = []
+            eval_task_metric_names: list[str] = []
+            eval_task_proxy_scores: list[float] = []
+            eval_task_proxy_names: list[str] = []
+            eval_task_margins: list[float] = []
+            evaluated_query_examples = 0
+            for query_examples in eval_query_sets:
+                for example in query_examples:
+                    profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+                    profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+                    query_examples_touched += 1
+                    evaluated_query_examples += 1
+                if query_objective == "label_prototype":
+                    objective_loss = _mean_classification_loss(
+                        current_runtime,
+                        query_examples,
+                        candidate_states=candidate_states,
+                        candidate_labels=candidate_labels,
+                    )
+                    objective_accuracy = _compute_accuracy(
+                        current_runtime,
+                        query_examples,
+                        candidate_states=candidate_states,
+                        candidate_labels=candidate_labels,
+                    )
+                    task_score = objective_accuracy
+                    task_metric_name = "accuracy"
+                    task_proxy_score = task_score
+                    task_proxy_name = task_metric_name
+                    task_margin = 0.0
+                else:
+                    objective_loss, objective_accuracy = _mean_continuation_retrieval_metrics(
+                        current_runtime,
+                        query_examples,
+                        candidate_pool_resolver=lambda _: query_candidate_pool,
+                        negative_count=retrieval_negative_count,
+                    )
+                    task_metrics = _mean_task_score(current_runtime, query_examples)
+                    task_score = float(task_metrics["task_score"])
+                    task_metric_name = str(task_metrics["task_metric_name"])
+                    task_proxy_score = float(task_metrics["task_proxy_score"])
+                    task_proxy_name = str(task_metrics["task_proxy_name"])
+                    task_margin = float(task_metrics["task_margin"])
+                eval_objective_losses.append(objective_loss)
+                eval_objective_accuracies.append(objective_accuracy)
+                eval_task_scores.append(task_score)
+                eval_task_metric_names.append(task_metric_name)
+                eval_task_proxy_scores.append(task_proxy_score)
+                eval_task_proxy_names.append(task_proxy_name)
+                eval_task_margins.append(task_margin)
+            objective_loss = sum(eval_objective_losses) / len(eval_objective_losses)
+            objective_accuracy = sum(eval_objective_accuracies) / len(eval_objective_accuracies)
+            task_score = sum(eval_task_scores) / len(eval_task_scores)
+            task_metric_name = (
+                sorted(set(eval_task_metric_names))[0]
+                if len(set(eval_task_metric_names)) == 1
+                else "mean_score"
+            )
+            task_proxy_score = sum(eval_task_proxy_scores) / len(eval_task_proxy_scores)
+            task_proxy_name = (
+                sorted(set(eval_task_proxy_names))[0]
+                if len(set(eval_task_proxy_names)) == 1
+                else "mean_proxy_score"
+            )
+            task_margin = sum(eval_task_margins) / len(eval_task_margins)
             curve_rows.append(
                 {
                     "query_learning_mode": query_learning_mode,
@@ -1096,6 +1155,8 @@ def run_stage_c(
                     "trainable_parameter_count": trainable_parameter_count,
                     "shot": shot,
                     "step": step,
+                    "target_eval_repeats": target_eval_repeats,
+                    "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": len(query_candidate_pool),
                     "support_candidate_pool_size": len(support_candidate_pool),
                     "objective_loss": objective_loss,
@@ -1175,6 +1236,8 @@ def run_stage_c(
                 "trainable_parameter_count",
                 "shot",
                 "step",
+                "target_eval_repeats",
+                "evaluated_query_examples",
                 "query_candidate_pool_size",
                 "support_candidate_pool_size",
                 "objective_loss",
@@ -1229,6 +1292,7 @@ def run_stage_c(
         "adapt_learning_rate": adapt_lr,
         "adapt_steps": max_steps,
         "adapt_shots": shots_list,
+        "target_eval_repeats": target_eval_repeats,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1272,6 +1336,7 @@ def run_stage_c(
         "adapt_learning_rate": adapt_lr,
         "adapt_steps": max_steps,
         "adapt_shots": shots_list,
+        "target_eval_repeats": target_eval_repeats,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],
