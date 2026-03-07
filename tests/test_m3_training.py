@@ -443,6 +443,10 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_b_metrics["query_objective"], "continuation_retrieval")
             self.assertIn("source_eval_task_score", stage_b_metrics)
             self.assertEqual(stage_b_metrics["source_eval_metric_name"], "mean_score")
+            self.assertEqual(stage_b_metrics["stage_b_trainable_target"], "queries_plus_fuser")
+            self.assertEqual(stage_b_metrics["trainable_module"], "reader.queries+fuser")
+            self.assertEqual(stage_b_metrics["query_candidate_pool_policy"], "exclude_support_for_query_eval")
+            self.assertEqual(stage_b_metrics["support_candidate_pool_policy"], "support_only_for_inner_loop")
 
             stage_c_metrics = json.loads(stage_c_dir.joinpath("metrics.json").read_text())
             self.assertEqual(stage_c_metrics["query_objective"], "continuation_retrieval")
@@ -455,6 +459,8 @@ class M3TrainingTest(unittest.TestCase):
             self.assertGreaterEqual(len(rows), 2)
             self.assertIn("task_score", rows[0])
             self.assertIn("objective_loss", rows[0])
+            self.assertIn("query_candidate_pool_size", rows[0])
+            self.assertIn("support_candidate_pool_size", rows[0])
             self.assertEqual({row["query_objective"] for row in rows}, {"continuation_retrieval"})
 
 

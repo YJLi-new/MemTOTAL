@@ -398,9 +398,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - Stage B：`runs/verify/m3-stage-b/metrics.json` 当前记录 `mean_zero_shot_query_loss=0.6781679193178812`、`mean_adapted_query_loss=0.6538897852102915`、`mean_adaptation_gain=0.02427813410758972`
 - Stage C：`runs/verify/m3-stage-c/adapt_curve.csv` 当前记录 target domain `narrative` 上从 `zero_shot_query_loss=0.7023470401763916` 下降到 `best_adapt_query_loss=0.6856379508972168`
 - benchmark-native `core4` smoke：
-  - `runs/verify/m3-core4-qwen25/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`source_eval_task_score=0.16666666666666666`、`source_eval_metric_name=mean_score`、`mean_adaptation_gain=-0.4028587341308594`
-  - `runs/verify/m3-core4-qwen25/stage-c/metrics.json` 当前记录 `zero_shot_task_score=1.0`、`best_adapt_task_score=1.0`、`task_metric_name=accuracy`
-  - `runs/verify/m3-core4-qwen3/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`source_eval_task_score=0.16666666666666666`、`mean_adaptation_gain=-0.3529513080914815`
+  - `runs/verify/m3-core4-qwen25/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`query_candidate_pool_policy=exclude_support_for_query_eval`、`support_candidate_pool_policy=support_only_for_inner_loop`、`source_eval_task_score=0.0`、`mean_adaptation_gain=-3.577272097269694e-05`
+  - `runs/verify/m3-core4-qwen25/stage-c/metrics.json` 当前记录 `zero_shot_task_score=0.0`、`best_adapt_task_score=0.0`、`task_metric_name=accuracy`
+  - `runs/verify/m3-core4-qwen3/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`query_candidate_pool_policy=exclude_support_for_query_eval`、`support_candidate_pool_policy=support_only_for_inner_loop`、`source_eval_task_score=0.0`、`mean_adaptation_gain=-5.6743621826171875e-05`
   - `runs/verify/m3-core4-qwen3/stage-c/metrics.json` 当前记录 `zero_shot_task_score=0.5`、`best_adapt_task_score=0.5`
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
@@ -424,7 +424,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；但当前 `Stage B mean_adaptation_gain` 在两档 backbone 上都仍为负，因此不能把这条路径写成“已有稳定 source-domain meta gain”。这正是下一阶段需要继续攻克的主线 blocker。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 follow-up 还把 Stage B retrieval 协议改成了“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware 版本，已把两档 backbone 的负向 meta gain 从 `-0.4` 级别压到 `1e-5` 量级。它仍未形成稳定正收益，因此这条路径依然不能写成“已有稳定 source-domain meta gain”。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

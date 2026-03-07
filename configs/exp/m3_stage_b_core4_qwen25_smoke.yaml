@@ -16,10 +16,11 @@ backbone:
 runtime:
   training_stage: stage_b
   query_learning_mode: meta_trained
+  stage_b_trainable_target: queries_plus_fuser
   query_objective: continuation_retrieval
   retrieval_negative_count: 7
   meta_episodes: 6
-  inner_steps: 2
-  inner_learning_rate: 0.2
-  meta_learning_rate: 0.4
+  inner_steps: 1
+  inner_learning_rate: 0.01
+  meta_learning_rate: 0.05
   device: cpu

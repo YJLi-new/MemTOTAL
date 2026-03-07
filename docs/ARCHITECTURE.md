@@ -82,6 +82,7 @@
   - `random` 不做 Stage B 更新，只落 reader-side 随机初始化快照
   - toy 路径继续按 label 分层采样并使用 domain 内 label prototype
   - benchmark-native `core4` 路径改为统一 `continuation_retrieval` 目标：正样本是当前 continuation，负样本来自同域或全局 source pool
+  - benchmark-native `core4` 当前进一步固定为 episode-aware pool 协议：query/val 侧候选池显式排除 support continuations，inner-loop support update 只在 support pool 内做 retrieval
   - `metrics.json` 现已同时记录 `source_eval_query_loss/source_eval_query_accuracy` 与 `source_eval_task_score/source_eval_metric_name`
 - Stage C：
   - 默认按 `adaptation_target=q_only` 对齐 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的 Stage C 契约，只更新 `reader.queries`
@@ -92,7 +93,7 @@
   - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json`
   - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / query_objective / adaptation_target / trainable_module / trainable_parameter_count / objective_loss / task_score / task_metric_name`
 
-当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；尤其 Stage B 的 mixed-source `mean_adaptation_gain` 仍为负，需要在后续里程碑继续攻克。
+当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；最新 follow-up 已把 Stage B 的 mixed-source `mean_adaptation_gain` 从最初的 `-0.4` 级别压到 `1e-5` 量级，但 canonical run 仍略微为负，后续仍需继续攻克。
 
 ## M4 Benchmark Scaffold
 

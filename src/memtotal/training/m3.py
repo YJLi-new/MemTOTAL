@@ -109,6 +109,23 @@ def _resolve_stage_b_query_learning_mode(config: dict) -> str:
     return normalized
 
 
+def _resolve_stage_b_trainable_target(config: dict) -> str:
+    trainable_target = str(config["runtime"].get("stage_b_trainable_target", "queries_plus_fuser"))
+    aliases = {
+        "queries_only": "queries_only",
+        "q_only": "queries_only",
+        "queries_plus_fuser": "queries_plus_fuser",
+        "q_plus_fuser": "queries_plus_fuser",
+    }
+    normalized = aliases.get(trainable_target)
+    if normalized is None:
+        raise ValueError(
+            f"Unsupported Stage B stage_b_trainable_target={trainable_target}. "
+            "Expected one of queries_only, queries_plus_fuser."
+        )
+    return normalized
+
+
 def _resolve_expected_stage_c_query_learning_mode(config: dict) -> str | None:
     expected = config["runtime"].get("expected_query_learning_mode")
     if expected is None:
@@ -150,11 +167,23 @@ def _count_unique_parameters(parameters: list[torch.nn.Parameter]) -> int:
     return total
 
 
-def _stage_b_trainable_parameters(runtime: MemoryRuntime) -> tuple[list[torch.nn.Parameter], str]:
+def _stage_b_trainable_parameters(
+    runtime: MemoryRuntime,
+    trainable_target: str,
+) -> tuple[list[torch.nn.Parameter], str]:
     runtime.writer.freeze()
-    runtime.fuser.unfreeze()
     runtime.reader.unfreeze()
-    return [runtime.reader.queries, *runtime.fuser.parameters()], "reader.queries+fuser"
+    runtime.fuser.freeze()
+    if trainable_target == "queries_only":
+        runtime.reader.queries.requires_grad_(True)
+        return [runtime.reader.queries], "reader.queries"
+    if trainable_target == "queries_plus_fuser":
+        runtime.fuser.unfreeze()
+        return [runtime.reader.queries, *runtime.fuser.parameters()], "reader.queries+fuser"
+    raise ValueError(
+        f"Unsupported Stage B trainable_target={trainable_target}. "
+        "Expected one of queries_only, queries_plus_fuser."
+    )
 
 
 def _example_loss(runtime: MemoryRuntime, example: dict[str, str]) -> torch.Tensor:
@@ -320,6 +349,17 @@ def _resolve_retrieval_candidates(
     return [example, *selected_negatives]
 
 
+def _exclude_support_from_query_pool(
+    domain_examples: list[dict[str, Any]],
+    support_examples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not support_examples:
+        return list(domain_examples)
+    support_ids = {str(row["id"]) for row in support_examples}
+    filtered = [row for row in domain_examples if str(row["id"]) not in support_ids]
+    return filtered or list(domain_examples)
+
+
 def _continuation_retrieval_loss(
     runtime: MemoryRuntime,
     example: dict[str, Any],
@@ -381,6 +421,7 @@ def _save_stage_b_state(
     source_domains: list[str],
     query_learning_mode: str,
     query_objective: str,
+    stage_b_trainable_target: str,
     writer_checkpoint: Path,
 ) -> Path:
     queries_path = output_dir / "queries_meta_init.pt"
@@ -393,6 +434,7 @@ def _save_stage_b_state(
             "source_domains": source_domains,
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
+            "stage_b_trainable_target": stage_b_trainable_target,
         },
         queries_path,
     )
@@ -491,9 +533,13 @@ def run_stage_b(
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     query_learning_mode = _resolve_stage_b_query_learning_mode(config)
+    stage_b_trainable_target = _resolve_stage_b_trainable_target(config)
     query_objective = _resolve_query_objective(config)
     retrieval_negative_count = _resolve_retrieval_negative_count(config)
-    trainable_parameters, trainable_module = _stage_b_trainable_parameters(runtime)
+    trainable_parameters, trainable_module = _stage_b_trainable_parameters(
+        runtime,
+        stage_b_trainable_target,
+    )
     shutil.copy2(writer_path, output_dir / "writer.ckpt")
     source_examples = _flatten_domains(grouped_examples, manifest["source_domains"])
     source_eval_label_space = "per_domain"
@@ -545,6 +591,7 @@ def run_stage_b(
             source_domains=manifest["source_domains"],
             query_learning_mode=query_learning_mode,
             query_objective=query_objective,
+            stage_b_trainable_target=stage_b_trainable_target,
             writer_checkpoint=output_dir / "writer.ckpt",
         )
         metrics = {
@@ -552,10 +599,17 @@ def run_stage_b(
             "training_stage": "stage_b",
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
+            "query_candidate_pool_policy": (
+                "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
+            ),
+            "support_candidate_pool_policy": (
+                "support_only_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
+            ),
             "episodes_completed": 0,
             "steps_completed": 0,
             "examples_seen": 0,
             "trainable_module": trainable_module,
+            "stage_b_trainable_target": stage_b_trainable_target,
             "source_eval_label_space": source_eval_label_space,
             "source_eval_candidate_pool": source_eval_candidate_pool,
             "source_eval_query_loss": source_zero_shot_query_loss,
@@ -593,12 +647,17 @@ def run_stage_b(
             profiler.add_example()
             episode = sampler.sample_episode()
             fast_runtime = copy.deepcopy(runtime)
-            _stage_b_trainable_parameters(fast_runtime)
-            inner_optimizer = torch.optim.SGD(
-                [fast_runtime.reader.queries, *fast_runtime.fuser.parameters()],
-                lr=inner_lr,
+            fast_trainable_parameters, _ = _stage_b_trainable_parameters(
+                fast_runtime,
+                stage_b_trainable_target,
             )
+            inner_optimizer = torch.optim.SGD(fast_trainable_parameters, lr=inner_lr)
             domain_examples = list(grouped_examples[episode.domain])
+            query_candidate_pool = _exclude_support_from_query_pool(
+                domain_examples,
+                episode.support_examples,
+            )
+            support_candidate_pool = list(episode.support_examples)
             if query_objective == "label_prototype":
                 candidate_states, candidate_labels = _build_label_prototypes(runtime, domain_examples)
                 zero_shot_query_loss = _mean_classification_loss(
@@ -617,7 +676,7 @@ def run_stage_b(
                 zero_shot_query_loss, zero_shot_query_accuracy = _mean_continuation_retrieval_metrics(
                     runtime,
                     episode.query_examples,
-                    candidate_pool_resolver=lambda _: domain_examples,
+                    candidate_pool_resolver=lambda _: query_candidate_pool,
                     negative_count=retrieval_negative_count,
                 )
             for _ in range(inner_steps):
@@ -639,7 +698,7 @@ def run_stage_b(
                             _continuation_retrieval_loss(
                                 fast_runtime,
                                 example,
-                                candidate_pool=domain_examples,
+                                candidate_pool=support_candidate_pool,
                                 negative_count=retrieval_negative_count,
                             )[0]
                             for example in episode.support_examples
@@ -665,7 +724,7 @@ def run_stage_b(
                 adapted_query_loss, adapted_query_accuracy = _mean_continuation_retrieval_metrics(
                     fast_runtime,
                     episode.query_examples,
-                    candidate_pool_resolver=lambda _: domain_examples,
+                    candidate_pool_resolver=lambda _: query_candidate_pool,
                     negative_count=retrieval_negative_count,
                 )
 
@@ -682,6 +741,8 @@ def run_stage_b(
                     "episode": episode_index,
                     "domain": episode.domain,
                     "query_objective": query_objective,
+                    "query_candidate_pool_size": len(query_candidate_pool),
+                    "support_candidate_pool_size": len(support_candidate_pool),
                     "zero_shot_query_loss": zero_shot_query_loss,
                     "zero_shot_query_accuracy": zero_shot_query_accuracy,
                     "adapted_query_loss": adapted_query_loss,
@@ -738,6 +799,7 @@ def run_stage_b(
         source_domains=manifest["source_domains"],
         query_learning_mode=query_learning_mode,
         query_objective=query_objective,
+        stage_b_trainable_target=stage_b_trainable_target,
         writer_checkpoint=output_dir / "writer.ckpt",
     )
     if query_objective == "label_prototype":
@@ -766,10 +828,17 @@ def run_stage_b(
         "training_stage": "stage_b",
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
+        "query_candidate_pool_policy": (
+            "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
+        ),
+        "support_candidate_pool_policy": (
+            "support_only_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
+        ),
         "episodes_completed": episodes if query_learning_mode == "meta_trained" else 0,
         "steps_completed": len(events) if query_learning_mode == "non_meta_multitask" else 0,
         "examples_seen": len(events),
         "trainable_module": trainable_module,
+        "stage_b_trainable_target": stage_b_trainable_target,
         "source_eval_label_space": source_eval_label_space,
         "source_eval_candidate_pool": source_eval_candidate_pool,
         "source_eval_query_loss": source_zero_shot_query_loss,
@@ -858,6 +927,11 @@ def run_stage_c(
     for shot in shots_list:
         current_runtime = copy.deepcopy(runtime)
         support_examples = target_episode.support_examples[:shot]
+        query_candidate_pool = _exclude_support_from_query_pool(
+            domain_examples,
+            support_examples,
+        )
+        support_candidate_pool = list(support_examples) or list(domain_examples)
         max_recorded_steps = 0 if shot == 0 else max_steps
         for step in range(max_recorded_steps + 1):
             profiler.add_example()
@@ -884,7 +958,7 @@ def run_stage_c(
                 objective_loss, objective_accuracy = _mean_continuation_retrieval_metrics(
                     current_runtime,
                     target_episode.query_examples,
-                    candidate_pool_resolver=lambda _: domain_examples,
+                    candidate_pool_resolver=lambda _: query_candidate_pool,
                     negative_count=retrieval_negative_count,
                 )
                 task_score, task_metric_name = _mean_task_score(
@@ -900,6 +974,8 @@ def run_stage_c(
                     "trainable_parameter_count": trainable_parameter_count,
                     "shot": shot,
                     "step": step,
+                    "query_candidate_pool_size": len(query_candidate_pool),
+                    "support_candidate_pool_size": len(support_candidate_pool),
                     "objective_loss": objective_loss,
                     "objective_accuracy": objective_accuracy,
                     "task_score": task_score,
@@ -935,7 +1011,7 @@ def run_stage_c(
                         _continuation_retrieval_loss(
                             current_runtime,
                             example,
-                            candidate_pool=domain_examples,
+                            candidate_pool=support_candidate_pool,
                             negative_count=retrieval_negative_count,
                         )[0]
                         for example in support_examples
@@ -962,6 +1038,8 @@ def run_stage_c(
                 "trainable_parameter_count",
                 "shot",
                 "step",
+                "query_candidate_pool_size",
+                "support_candidate_pool_size",
                 "objective_loss",
                 "objective_accuracy",
                 "task_score",
@@ -996,6 +1074,12 @@ def run_stage_c(
     adapt_cost = {
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
+        "query_candidate_pool_policy": (
+            "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
+        ),
+        "support_candidate_pool_policy": (
+            "support_only_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
+        ),
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
@@ -1016,6 +1100,12 @@ def run_stage_c(
         "target_domain": manifest["target_domain"],
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
+        "query_candidate_pool_policy": (
+            "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
+        ),
+        "support_candidate_pool_policy": (
+            "support_only_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
+        ),
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
