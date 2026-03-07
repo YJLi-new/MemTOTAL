@@ -404,26 +404,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 已新增 benchmark-native `Stage C sensitivity audit`：`scripts/run_m3_core4_stage_c_sensitivity_audit.sh`
 - 已新增 benchmark-native `Stage C q-only target-split sweep` harness：`scripts/run_m3_core4_stage_c_qonly_target_split_sweep.sh`
   - 固定 `aggregate_support + ep3 + uniform`，对比 `target_split_policy in {random, proxy_topk_support, proxy_bottomk_support}`
-  - fresh `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v1/metrics.json` 当前显示：`proxy_bottomk_support` 在两档 backbone 上都明显优于 `random`，且稳定压过 `proxy_topk_support`
-  - 当前 qwen25：`bottomk=0.3037037037037037 > random=0.044444444444444474 > topk=-0.2592592592592592`
-  - 当前 qwen3：`bottomk=0.22962962962962963 > random=-0.02962962962962965 > topk=-0.2518518518518519`
-  - 因此 canonical `Stage C` 现已切到 `target_split_policy=proxy_bottomk_support`
-  - fresh clean canonical rerun `results/generated/m3-core4-stage-c-qonly-seed-sweep-v4-bottomk/metrics.json` 现进一步显示：切到 `proxy_bottomk_support` 后，两档 backbone 的 canonical q-only 5-seed 都达到 `positive_gain_rate=1.0`
-  - 当前 qwen25 canonical：`mean_task_gain=0.25925925925925924`
-  - 当前 qwen3 canonical：`mean_task_gain=0.17037037037037037`
+  - 注意：以上 v1 sweep 基于旧版 `shot`-耦合 eval/support protocol；该口径已在后续里程碑中判定存在评测泄漏
+  - 当前 canonical runner 仍暂保留 `target_split_policy=proxy_bottomk_support`，但它现在只算待复核默认值，不再视为已验证赢家
 - 已新增 benchmark-native `Stage C curve suite` harness：`scripts/run_m3_core4_stage_c_curve_suite.sh`
   - 单个 seed/run 直接产出更接近正式协议的 `adapt_shots={0,1,2,3}`、`adapt_steps=5` 曲线
   - 分析层会自动汇总 `curve_rows.csv`、`shot_curve.csv/.svg`、`step_curve.csv/.svg`
-  - fresh `results/generated/m3-core4-stage-c-curve-suite-v1/shot_curve.csv` 当前显示：
-    - qwen25：`0-shot=0.4815 < 1-shot=0.5926 < 2-shot=0.6815 < 3-shot=0.7926`
-    - qwen3：`0-shot=0.5556 < 1-shot=0.6815 < 2-shot=0.7704 < 3-shot=0.7852`
-  - fresh `results/generated/m3-core4-stage-c-curve-suite-v1/step_curve.csv` 同时显示：在 `shot=3` 下，两档 backbone 从 `step=0` 起几乎完全持平
+  - 修正协议后的 `results/generated/m3-core4-stage-c-curve-suite-v2-fixed-eval/shot_curve.csv` 当前显示：两档 backbone 的 official `shot_curve` 已全部打平
+    - qwen25：`0/1/2/3-shot` 的 `mean_task_gain` 全部为 `0.0`
+    - qwen3：`0/1/2/3-shot` 的 `mean_task_gain` 全部为 `0.0`
+  - 同目录 `step_curve.csv` 也显示：在公平 fixed-holdout eval 下，两档 backbone 的 `step=0..5` official `mean_task_gain` 也全部为 `0.0`
 - 已新增 benchmark-native `Stage C step saturation audit`：`scripts/run_m3_core4_stage_c_step_saturation_audit.sh`
   - 会把 canonical curve suite 拆成 `zero->step0` 与 `step0->final` 两段收益
-  - fresh `results/generated/m3-core4-stage-c-step-saturation-audit-v1/metrics.json` 当前显示：
-    - qwen25：`mean_zero_to_step0_task_gain=0.3111111111111111`，`mean_step0_to_final_task_gain=0.0`
-    - qwen3：`mean_zero_to_step0_task_gain=0.22962962962962968`，`mean_step0_to_final_task_gain=0.0`
-  - 也就是当前 canonical 路径的收益全部在 `step=0` 就拿到了
+  - 修正协议后的 `results/generated/m3-core4-stage-c-step-saturation-audit-v2-fixed-eval/metrics.json` 当前显示：
+    - qwen25：`mean_zero_to_step0_task_gain=0.0`，`mean_step0_to_final_task_gain=0.0`
+    - qwen3：`mean_zero_to_step0_task_gain=0.0`，`mean_step0_to_final_task_gain=0.0`
+  - 也就是说，旧版 “收益全部在 `zero->step0`” 的说法本身也是评测泄漏副产物；当前真实 blocker 已收缩成“为什么公平 eval 下 official few-shot gain 完全为 0”
   - 当前直接比较 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
@@ -463,8 +458,8 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v3/metrics.json` 现进一步说明：两档 backbone 在 official `task_score=0.6666666666666666` 完全打平时，proxy 仍能分出预算差异；当前 qwen25 与 qwen3 的 fresh best budget 都落在 `lr=5.0, steps=10`
   - `results/generated/m3-core4-stage-c-probe-suite-v4/metrics.json` 现进一步显示：将 canonical `Stage C` target 评测改成 `target_eval_repeats=3` 后，official `task_score` 已不再冻结。qwen25 的三条线当前都从 `0.6666666666666666 -> 0.8888888888888888`；qwen3 的三条线当前都从 `0.5555555555555555 -> 0.7777777777777778`
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v4/metrics.json` 同时说明：多 query-set 聚合确实能让 qwen25 的 q-only official `accuracy` 从 `0.3333333333333333 -> 0.5555555555555555`；但 qwen3 在这一组 target seed 上仍是 `0.4444444444444444 -> 0.2222222222222222`，即 target-side不稳定性还没真正消失
-  - `results/generated/m3-core4-stage-c-qonly-seed-sweep/metrics.json` 现进一步说明：把 canonical `q_only` 放到 5 个 target seeds 上后，单 seed 的正向 official 提升还不足以代表稳定规律。当前 qwen25 `positive_gain_rate=0.2`、`mean_task_gain=-0.2`；qwen3 `positive_gain_rate=0.4`、`mean_task_gain=-0.13333333333333333`
-  - `results/generated/m3-core4-stage-c-qonly-seed-sweep-v2/metrics.json` 现进一步显示：把 canonical `Stage C` 升级到 `target_episode_repeats=3` 后，5-seed q-only 分布已被拉到非负。当前 qwen25 `positive_gain_rate=0.6`、`mean_task_gain=0.0962962962962963`；qwen3 `positive_gain_rate=0.2`、`mean_task_gain=0.007407407407407407`
+  - `results/generated/m3-core4-stage-c-qonly-seed-sweep/metrics.json`、`results/generated/m3-core4-stage-c-qonly-seed-sweep-v2/metrics.json`、`results/generated/m3-core4-stage-c-qonly-seed-sweep-v4-bottomk/metrics.json` 这些早期正向 official gain 现已判定受到旧版 Stage C eval/support protocol 泄漏影响，不能再作为 canonical few-shot 证据
+  - 修正协议后的 `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-fixed-eval/metrics.json` 当前记录：qwen25 与 qwen3 的 canonical `q_only` 都是 `mean_task_gain=0.0`、`positive_gain_rate=0.0`，只有 `1e-6` 级 `mean_proxy_gain`
   - `results/generated/m3-core4-stage-c-probe-suite-v5/metrics.json` 当前也显示：多 episode 聚合后，两档 backbone 的 fresh best row 都回到了 `q_only`
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v5/metrics.json` 当前显示：在同一 target episode 聚合口径下，qwen25 仍偏好 `lr=5.0, steps=10`，而 qwen3 的 canonical `lr=0.2, steps=3` 已足够；也就是 qwen3 当前的主要问题已不再是预算不足
   - `results/generated/m3-core4-stage-c-probe-suite-v6/metrics.json` 现进一步显示：把 canonical `Stage C` 明确成 `target_episode_policy=aggregate_support` 后，两档 backbone 的 fresh best row 仍都回到 `q_only`；当前 qwen25 是 `0.6296296296296295 -> 0.6666666666666666`，qwen3 是 `0.6296296296296295 -> 0.8888888888888888`
@@ -472,7 +467,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-qonly-policy-sweep-v1/metrics.json` 现进一步把 policy 本身从 blocker 列表里拿掉：在同一组 5 seeds 上，`aggregate_support` 与 `independent` 给出的 `mean_task_gain` 完全一致，qwen25 都是 `-0.059259259259259255`，qwen3 都是 `0.0962962962962963`；但 `aggregate_support` 的 `mean_support_updates` 从 `9.0` 降到 `3.0`
   - `results/generated/m3-core4-stage-c-qonly-episode-budget-sweep-v1/metrics.json` 现进一步显示：在固定 `aggregate_support` 与同一组 5 seeds 的口径下，`target_episode_repeats=1` 的均值反而是两档 backbone 最优。当前 qwen25 是 `ep1=0.08888888888888889 > ep3=0.02222222222222222 > ep5=-0.013333333333333336`；qwen3 是 `ep1=0.022222222222222233 > ep5=0.013333333333333358 > ep3=0.007407407407407407`
   - `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 现进一步显示：在固定 `aggregate_support + ep3` 与同一组 5 seeds 的口径下，`target_support_weighting in {uniform, proxy_softmax, proxy_top1}` 的 official `mean_task_gain` 基本完全一致。当前 qwen25 三档都为 `-0.11111111111111112` 左右，qwen3 三档都为 `-0.022222222222222233`
-  - 这一步之后，`target split` 已不再只是待查 blocker，而是已经出现并通过 clean canonical rerun 验证的有效方案；而新的 blocker 已进一步被量化成“为什么 canonical `step0->final` 增益严格为 0”
+  - 这一步之后，旧版“`target split` 已被验证为有效方案”这条结论已撤销；当前新的 blocker 更基础，是“在 fixed-holdout fair eval 下，为什么 canonical `Stage C` 的 official gain 完全为 0”
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
@@ -495,7 +490,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有七套正式 probe/curve harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证不同 `lr/steps` 下的 q-only 行为，Stage C sensitivity audit 用于直接比较 query path 和 memory path 的函数影响量级，Stage C q-only target-split sweep 用于直接比较 target support/query 抽样结构，Stage C curve suite 用于直接产出更接近正式协议的 `shot_curve / step_curve`，Stage C step saturation audit 用于把 `zero->step0` 与 `step0->final` 两段收益拆开。同时，Stage C 现在已有并行的 `task_proxy_score` 观测层：当 official `task_score` 因为样本太少或指标太粗而打平时，仍能继续观测 `gold_choice_probability` 这种更平滑的 target-side变化。当前最新证据已经说明：benchmark-native Stage C 的主 blocker 已不再是 `q_only` 参数化无效，也不再是“完全看不到 target 改善”，而且 `proxy_bottomk_support` 这条 target split 已通过 clean canonical rerun 稳定翻正；当前新的主问题则被进一步锁定成“为什么 canonical `step0->final` 增益为 0”。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 follow-up 进一步修掉了 Stage C 里 `shot`-耦合 target episode / query pool / support pool 的协议泄漏。现在还额外有七套正式 probe/curve harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证不同 `lr/steps` 下的 q-only 行为，Stage C sensitivity audit 用于直接比较 query path 和 memory path 的函数影响量级，Stage C q-only target-split sweep 用于直接比较 target support/query 抽样结构，Stage C curve suite 用于直接产出更接近正式协议的 `shot_curve / step_curve`，Stage C step saturation audit 用于把 `zero->step0` 与 `step0->final` 两段收益拆开。同时，Stage C 现在已有并行的 `task_proxy_score` 观测层：当 official `task_score` 因为样本太少或指标太粗而打平时，仍能继续观测 `gold_choice_probability` 这种更平滑的 target-side 变化。当前最新证据已经说明：benchmark-native Stage C 的主 blocker 已不再是 `q_only` 参数化无效，而是“在 fixed-holdout fair eval 下，official few-shot gain 仍然为 0，只有极小 proxy 变化”；因此下一步应该优先增强真实 target-side 学习信号，再重跑公平的 `target_split` 与 few-shot grid。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

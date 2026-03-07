@@ -511,6 +511,11 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("preceding_support_grad_norm", rows[0])
             self.assertIn("preceding_support_update_max_abs", rows[0])
             self.assertEqual({row["query_objective"] for row in rows}, {"continuation_retrieval"})
+            zero_row = next(row for row in rows if row["shot"] == "0" and row["step"] == "0")
+            shot_row = next(row for row in rows if row["shot"] == "3" and row["step"] == "0")
+            self.assertAlmostEqual(float(zero_row["task_score"]), float(shot_row["task_score"]))
+            self.assertEqual(zero_row["query_candidate_pool_size"], shot_row["query_candidate_pool_size"])
+            self.assertEqual(zero_row["support_candidate_pool_size"], shot_row["support_candidate_pool_size"])
 
 
 if __name__ == "__main__":

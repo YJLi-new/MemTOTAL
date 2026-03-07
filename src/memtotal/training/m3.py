@@ -468,14 +468,12 @@ def _exclude_support_from_query_pool(
 
 
 def _sample_target_eval_query_sets(
-    domain_examples: list[dict[str, Any]],
+    candidate_pool: list[dict[str, Any]],
     *,
-    support_examples: list[dict[str, Any]],
     query_size: int,
     repeats: int,
     seed: int,
 ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]]]:
-    candidate_pool = _exclude_support_from_query_pool(domain_examples, support_examples)
     query_sets: list[list[dict[str, Any]]] = []
     for repeat_index in range(repeats):
         rng = random.Random(seed + (7919 * repeat_index))
@@ -483,6 +481,18 @@ def _sample_target_eval_query_sets(
         rng.shuffle(shuffled)
         query_sets.append(shuffled[: min(query_size, len(shuffled))])
     return query_sets, candidate_pool
+
+
+def _sample_target_support_bank(
+    domain_examples: list[dict[str, Any]],
+    *,
+    support_bank_size: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    shuffled = list(domain_examples)
+    rng.shuffle(shuffled)
+    return shuffled[:support_bank_size]
 
 
 def _build_stage_c_episode_states(
@@ -493,40 +503,43 @@ def _build_stage_c_episode_states(
     domain_examples: list[dict[str, Any]],
     shot: int,
     seed: int,
+    max_shot: int,
     target_episode_repeats: int,
     target_eval_repeats: int,
     target_split_policy: str,
 ) -> list[dict[str, object]]:
     episode_states: list[dict[str, object]] = []
     for episode_index in range(target_episode_repeats):
-        episode_seed = seed + (shot * 104729) + (episode_index * 16127)
-        target_episode = split_target_domain_examples(
-            grouped_examples,
-            target_domain=str(manifest["target_domain"]),
-            support_size=int(manifest["support_size"]),
-            query_size=int(manifest["query_size"]),
+        episode_seed = seed + (episode_index * 16127)
+        support_bank_size = min(max_shot, max(1, len(domain_examples) - int(manifest["query_size"])))
+        candidate_support_examples = _sample_target_support_bank(
+            domain_examples,
+            support_bank_size=support_bank_size,
             seed=episode_seed,
-            sampling_policy=str(manifest["sampling_policy"]),
         )
-        candidate_support_examples = list(target_episode.support_examples) + list(target_episode.query_examples)
         support_examples = _select_target_support_examples(
             runtime,
             candidate_support_examples,
             shot=shot,
             split_policy=target_split_policy,
         )
+        eval_candidate_pool = [
+            row for row in domain_examples if str(row["id"]) not in {str(item["id"]) for item in candidate_support_examples}
+        ]
+        if len(eval_candidate_pool) < int(manifest["query_size"]):
+            eval_candidate_pool = list(domain_examples)
         eval_query_sets, query_candidate_pool = _sample_target_eval_query_sets(
-            domain_examples,
-            support_examples=support_examples,
+            eval_candidate_pool,
             query_size=int(manifest["query_size"]),
             repeats=target_eval_repeats,
             seed=episode_seed + 7919,
         )
-        support_candidate_pool = list(support_examples) or list(domain_examples)
+        support_candidate_pool = list(candidate_support_examples)
         episode_states.append(
             {
                 "episode_seed": episode_seed,
                 "support_examples": support_examples,
+                "support_candidate_examples": candidate_support_examples,
                 "eval_query_sets": eval_query_sets,
                 "query_candidate_pool": query_candidate_pool,
                 "support_candidate_pool": support_candidate_pool,
@@ -1206,6 +1219,7 @@ def run_stage_c(
             domain_examples=domain_examples,
             shot=shot,
             seed=seed,
+            max_shot=max(shots_list),
             target_episode_repeats=target_episode_repeats,
             target_eval_repeats=target_eval_repeats,
             target_split_policy=target_split_policy,
@@ -1527,10 +1541,10 @@ def run_stage_c(
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
         "query_candidate_pool_policy": (
-            "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
+            "fixed_target_holdout_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
         "support_candidate_pool_policy": (
-            "support_only_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
+            "support_bank_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
@@ -1576,10 +1590,10 @@ def run_stage_c(
         "query_objective": query_objective,
         "retrieval_negative_count": retrieval_negative_count,
         "query_candidate_pool_policy": (
-            "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
+            "fixed_target_holdout_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
         "support_candidate_pool_policy": (
-            "support_only_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
+            "support_bank_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,

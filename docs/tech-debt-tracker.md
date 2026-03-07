@@ -87,3 +87,9 @@
 - benchmark materialize 现在已支持按 `max_examples` 生成不同的 real-smoke 文件名，避免 `smoke4` 与 `smoke8` 互相覆盖；但目前 manifest 仍只记录每个 benchmark 最近一次 materialize 的那个子集，还不是“多子集并存”的完整台账。
 - Hugging Face cache 现已迁到 `/root/autodl-tmp/.cache/huggingface`，并新增了固定脚本做 cache 迁移/清理；但这仍是“本机 runbook 级”约束，后续若换机器或换容器镜像，最好把数据盘/cache 根路径做成更显式的配置。
 - `MemGen / Qwen3-8B / story_cloze` 的真实 smoke 已完成并接进 dual-import protocol grid；当前剩余缺口不再是“能不能跑通”，而是“如何把 MemGen 的外部训练/权重成本折算进与 prompt/adapter 同构的预算比较”。
+- 已确认并修掉 benchmark-native `Stage C` 的协议泄漏：旧版实现里 `shot` 会改变 target episode seed，query/eval pool 也会随着 support 选择而缩小，support inner-loop retrieval 甚至会退化到只看被选中的 support 子集。该问题已在 `src/memtotal/training/m3.py` 中修正为固定 holdout eval + 固定 support bank。
+- 因此，`results/generated/m3-core4-stage-c-probe-suite-v4/`、`results/generated/m3-core4-stage-c-qonly-seed-sweep-v2/`、`results/generated/m3-core4-stage-c-qonly-seed-sweep-v4-bottomk/`、`results/generated/m3-core4-stage-c-curve-suite-v1/` 与 `results/generated/m3-core4-stage-c-step-saturation-audit-v1/` 这些基于旧协议得到的正向 official gain 结论，现在都只能作为“曾经暴露过协议方向”的历史记录，不能再作为当前 canonical 证据。
+- 修正协议后的 fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-fixed-eval/metrics.json` 当前记录：qwen25 与 qwen3 的 canonical `q_only` 都是 `mean_task_gain=0.0`、`positive_gain_rate=0.0`、`non_negative_gain_rate=1.0`；两档 backbone 仅剩 `1e-6` 级 `mean_proxy_gain`。
+- 修正协议后的 fresh `results/generated/m3-core4-stage-c-step-saturation-audit-v2-fixed-eval/metrics.json` 也明确显示：qwen25 与 qwen3 的 `mean_zero_to_step0_task_gain` 和 `mean_step0_to_final_task_gain` 都是 `0.0`。因此，旧版“收益全部发生在 `zero->step0`”这条判断本身也已经失效。
+- 现在真正剩下的 tech debt 不再是 target split / support weighting / target episode policy 的口径选择，而是更底层的“在公平 fixed-holdout eval 下，为什么 Stage C official task score 完全不动”。
+- 当前最值得继续拆的是两条线：一是增大 support-side retrieval negatives / support bank 表达力，二是在公平协议下重新做 `target_split_policy` sweep，确认 `proxy_bottomk_support` 是否还有真实贡献，而不是继续沿用旧协议结论。
