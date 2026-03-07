@@ -1,0 +1,11 @@
+includes:
+  - ./m3_stage_c_core4_qwen3_smoke.yaml
+
+experiment:
+  name: m3_stage_c_sensitivity_audit_qwen3
+  stage: M3-stage-c-sensitivity-audit
+  method_variant: analysis-stage-c-sensitivity-audit-qwen3
+
+runtime:
+  analysis_mode: m3_stage_c_sensitivity_audit
+  sensitivity_epsilon: 0.1
