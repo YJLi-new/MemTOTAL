@@ -34,7 +34,8 @@
 - 因此，Stage C 当前剩下的 tech debt 已进一步从“如何把 canonical q-only 拉到稳定正 gain”转成“何时把这条更稳的 canonical 路径扩大到正式 few-shot grid / 更多 benchmark 预算，并检验是否仍能保持预算公平”。
 - 这轮进一步把“扩大到正式 few-shot grid”也做成了可运行 harness：`results/generated/m3-core4-stage-c-curve-suite-v1/shot_curve.csv` 与 `step_curve.csv` 已能从多 seed Stage C run 自动汇总出来。
 - 但 fresh curve suite 也暴露了新的债务：在当前 canonical `proxy_bottomk_support` 路径上，`shot_curve` 单调上升，而 `step_curve` 从 `step=0` 起几乎完全持平。也就是说，target-side收益现在主要来自“拿到 support 之后的立即重排”，而不是后续 inner-loop 更新本身。下一步需要针对这个现象继续做 step-aware 诊断。
-- 因此，当前最真实的 tech debt 已进一步收缩成 target split / support set 本身，而不是 support aggregation 的权重形式。下一步应优先拆“哪些 support/query 例子被抽到了”，而不是继续调 `target_support_weighting`。
+- 这条 step-aware 诊断现在也已经跑出来了：`results/generated/m3-core4-stage-c-step-saturation-audit-v1/metrics.json` 当前明确记录，qwen25 与 qwen3 的 `mean_step0_to_final_task_gain` 都是 `0.0`，`shot_dominates_rate` 都是 `1.0`。也就是说，当前 canonical 路径下的 few-shot 收益完全来自 `zero->step0`，后续 inner-loop steps 没有再贡献额外 official gain。
+- 因此，当前最真实的 tech debt 已从“target split 怎么选”切换成“为什么拿到 support 之后，step-level inner-loop 更新不再提供额外收益”。下一步应优先拆 Stage C 的 step-level update semantics，而不是继续调 `target_support_weighting`。
 - Stage C 适配对象消融现已完成，但在 canonical toy smoke 上仍表现为 `Q-only` 基本不动、`W-only/W+Q` 只降低 loss 而不提升 accuracy；后续需要更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
 - Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
