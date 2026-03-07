@@ -13,23 +13,23 @@ task:
       - code
       - qa
     target_domain: narrative
-    support_size: 2
-    query_size: 2
+    support_size: 3
+    query_size: 3
     sampling_policy: uniform_examples
     dataset_sources:
       - benchmark_id: gsm8k
-        dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke4.jsonl
+        dataset_path: data/benchmarks/materialized/gsm8k/eval-real-smoke8.jsonl
         domain: math
-        smoke_subset: hf_real_smoke4
+        smoke_subset: hf_real_smoke8
       - benchmark_id: kodcode
-        dataset_path: data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl
+        dataset_path: data/benchmarks/materialized/kodcode/eval-real-smoke8.jsonl
         domain: code
-        smoke_subset: hf_real_smoke4
+        smoke_subset: hf_real_smoke8
       - benchmark_id: gpqa
-        dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl
+        dataset_path: data/benchmarks/materialized/gpqa/eval-real-smoke8.jsonl
         domain: qa
-        smoke_subset: hf_real_smoke4
+        smoke_subset: hf_real_smoke8
       - benchmark_id: story_cloze
-        dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl
+        dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl
         domain: narrative
-        smoke_subset: hf_real_smoke4
+        smoke_subset: hf_real_smoke8

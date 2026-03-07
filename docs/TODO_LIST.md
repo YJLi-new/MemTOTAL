@@ -370,6 +370,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 已新增 `toy_meta_smoke` 数据与 meta split；当前配置是 `source={math, code, qa}`、`target=narrative`、`support_size=2`、`query_size=2`
 - 已新增 benchmark-native `core4_transfer_smoke` meta split 配置：`configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml`
   - `dataset_sources={gsm8k->math, kodcode->code, gpqa->qa, story_cloze->narrative}`
+  - 当前 canonical 配置已提升为 `smoke8/3x3`：每个 source 使用 `eval-real-smoke8.jsonl`，并固定 `support_size=3`、`query_size=3`
   - `sampling_policy=uniform_examples`
   - 该配置不再依赖 toy label 结构，可直接跑真实 benchmark smoke 的 `Stage A/B/C`
 - Stage A 已真实产出 `writer.ckpt`，并把 `dataset_sha256`、domain 采样规则写入 `meta_data_manifest.json`
@@ -387,21 +388,22 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `python -m train --config configs/exp/m3_stage_b_qwen25_smoke.yaml --seed 303 --output_dir runs/verify/m3-stage-b --resume runs/verify/m3-stage-a`
   - `python -m train --config configs/exp/m3_stage_c_qwen25_smoke.yaml --seed 307 --output_dir runs/verify/m3-stage-c --resume runs/verify/m3-stage-b`
   - `python -m analysis --config configs/exp/m3_stage_c_qwen25_smoke.yaml --seed 307 --output_dir results/generated/m3-smoke-summary --input_root runs/verify`
-  - `./scripts/10_pretrain_writer.sh 1701 runs/verify/m3-core4-qwen25/stage-a`
-  - `./scripts/20_meta_train_queries.sh 1703 runs/verify/m3-core4-qwen25/stage-b runs/verify/m3-core4-qwen25/stage-a`
-  - `./scripts/30_adapt_queries.sh 1707 runs/verify/m3-core4-qwen25/stage-c runs/verify/m3-core4-qwen25/stage-b`
-  - `./scripts/10_pretrain_writer.sh 1711 runs/verify/m3-core4-qwen3/stage-a configs/exp/m3_stage_a_core4_qwen3_smoke.yaml`
-  - `./scripts/20_meta_train_queries.sh 1713 runs/verify/m3-core4-qwen3/stage-b runs/verify/m3-core4-qwen3/stage-a configs/exp/m3_stage_b_core4_qwen3_smoke.yaml`
-  - `./scripts/30_adapt_queries.sh 1717 runs/verify/m3-core4-qwen3/stage-c runs/verify/m3-core4-qwen3/stage-b configs/exp/m3_stage_c_core4_qwen3_smoke.yaml`
+  - `./scripts/10_pretrain_writer.sh 2501 runs/verify/m3-core4-qwen25/stage-a`
+  - `./scripts/20_meta_train_queries.sh 2503 runs/verify/m3-core4-qwen25/stage-b runs/verify/m3-core4-qwen25/stage-a`
+  - `./scripts/30_adapt_queries.sh 2507 runs/verify/m3-core4-qwen25/stage-c runs/verify/m3-core4-qwen25/stage-b`
+  - `./scripts/10_pretrain_writer.sh 2511 runs/verify/m3-core4-qwen3/stage-a configs/exp/m3_stage_a_core4_qwen3_smoke.yaml`
+  - `./scripts/20_meta_train_queries.sh 2513 runs/verify/m3-core4-qwen3/stage-b runs/verify/m3-core4-qwen3/stage-a configs/exp/m3_stage_b_core4_qwen3_smoke.yaml`
+  - `./scripts/30_adapt_queries.sh 2517 runs/verify/m3-core4-qwen3/stage-c runs/verify/m3-core4-qwen3/stage-b configs/exp/m3_stage_c_core4_qwen3_smoke.yaml`
 
 最新已验证结果：
 - Stage B：`runs/verify/m3-stage-b/metrics.json` 当前记录 `mean_zero_shot_query_loss=0.6781679193178812`、`mean_adapted_query_loss=0.6538897852102915`、`mean_adaptation_gain=0.02427813410758972`
 - Stage C：`runs/verify/m3-stage-c/adapt_curve.csv` 当前记录 target domain `narrative` 上从 `zero_shot_query_loss=0.7023470401763916` 下降到 `best_adapt_query_loss=0.6856379508972168`
 - benchmark-native `core4` smoke：
-  - `runs/verify/m3-core4-qwen25/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`query_candidate_pool_policy=exclude_support_for_query_eval`、`support_candidate_pool_policy=support_only_for_inner_loop`、`source_eval_task_score=0.0`、`mean_adaptation_gain=-3.577272097269694e-05`
-  - `runs/verify/m3-core4-qwen25/stage-c/metrics.json` 当前记录 `zero_shot_task_score=0.0`、`best_adapt_task_score=0.0`、`task_metric_name=accuracy`
-  - `runs/verify/m3-core4-qwen3/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`query_candidate_pool_policy=exclude_support_for_query_eval`、`support_candidate_pool_policy=support_only_for_inner_loop`、`source_eval_task_score=0.0`、`mean_adaptation_gain=-5.6743621826171875e-05`
-  - `runs/verify/m3-core4-qwen3/stage-c/metrics.json` 当前记录 `zero_shot_task_score=0.5`、`best_adapt_task_score=0.5`
+  - canonical 配置现已从早期 `smoke4/2x2` 升级为 `smoke8/3x3`
+  - `runs/verify/m3-core4-qwen25/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`query_candidate_pool_policy=exclude_support_for_query_eval`、`support_candidate_pool_policy=support_only_for_inner_loop`、`source_eval_task_score=0.125`、`mean_adaptation_gain=1.903374989827474e-05`
+  - `runs/verify/m3-core4-qwen25/stage-c/metrics.json` 当前记录 `zero_shot_task_score=0.3333333333333333`、`best_adapt_task_score=0.3333333333333333`、`task_metric_name=accuracy`、`best_adapt_query_loss=1.5992218255996704`
+  - `runs/verify/m3-core4-qwen3/stage-b/metrics.json` 当前记录 `query_objective=continuation_retrieval`、`query_candidate_pool_policy=exclude_support_for_query_eval`、`support_candidate_pool_policy=support_only_for_inner_loop`、`source_eval_task_score=0.0`、`mean_adaptation_gain=0.0007965167363484701`
+  - `runs/verify/m3-core4-qwen3/stage-c/metrics.json` 当前记录 `zero_shot_task_score=1.0`、`best_adapt_task_score=1.0`、`best_adapt_query_loss=1.522208571434021`
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
@@ -424,7 +426,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 follow-up 还把 Stage B retrieval 协议改成了“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware 版本，已把两档 backbone 的负向 meta gain 从 `-0.4` 级别压到 `1e-5` 量级。它仍未形成稳定正收益，因此这条路径依然不能写成“已有稳定 source-domain meta gain”。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。当前这还只能写成“最小 smoke 证据已成立”，不能写成“source-domain meta gain 已稳定成立”，因为 margin 仍然很小。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

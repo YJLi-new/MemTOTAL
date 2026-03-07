@@ -212,6 +212,8 @@
 - 2026-03-07 00:00 UTC: 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`。两档 backbone 的 `core4` smoke 均已真实跑通，并分别汇总到 `results/generated/m3-core4-summary/` 与 `results/generated/m3-core4-summary-qwen3/`。
 - 2026-03-07 00:00 UTC: benchmark-native `core4` 当前的真实 blocker 已显式记录而非掩盖：`runs/verify/m3-core4-qwen25/stage-b/metrics.json` 的 `mean_adaptation_gain=-0.4028587341308594`，`runs/verify/m3-core4-qwen3/stage-b/metrics.json` 的 `mean_adaptation_gain=-0.3529513080914815`。这说明 retrieval-style Stage B 还没有在 mixed-source smoke 上形成稳定正收益。
 - 2026-03-07 00:30 UTC: 已对 benchmark-native retrieval 协议做 follow-up 修正：`Stage B/C` 的 query/val 候选池现显式排除 support continuations，inner-loop support update 只在 support pool 内做 retrieval。最新 canonical run 仍未完全翻正，但已把 `mean_adaptation_gain` 压到 `-3.577272097269694e-05`（qwen25）与 `-5.6743621826171875e-05`（qwen3），说明当前 blocker 已从“协议明显错误”收缩为“接近零增益的 smoke 调优问题”。
+- 2026-03-07 01:10 UTC: 已将 benchmark-native `core4` 的 canonical 结构从早期 `smoke4/2x2` 升级为 `smoke8/3x3`：`configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml` 现固定指向 `gsm8k / kodcode / gpqa / story_cloze` 的 `eval-real-smoke8.jsonl`，并使用 `support_size=3`、`query_size=3`。
+- 2026-03-07 01:10 UTC: 在新的 `smoke8/3x3` canonical 配置上，两档 backbone 的 benchmark-native `Stage B` 已首次翻到正向 meta gain：`runs/verify/m3-core4-qwen25/stage-b/metrics.json` 当前记录 `mean_adaptation_gain=1.903374989827474e-05`，`runs/verify/m3-core4-qwen3/stage-b/metrics.json` 当前记录 `mean_adaptation_gain=0.0007965167363484701`。这说明 retrieval-style Stage B 的最小 smoke 证据已经成立，但当前 margin 仍然较小，后续仍需继续扩大稳定性。
 
 ## Surprises & Discoveries
 

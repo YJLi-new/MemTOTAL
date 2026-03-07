@@ -69,6 +69,7 @@
   - `dataset_sources={gsm8k, kodcode, gpqa, story_cloze}`
   - `source_domains={math, code, qa}`
   - `target_domain=narrative`
+  - 当前 canonical 配置已提升为 `smoke8/3x3`：每个 benchmark source 使用 `eval-real-smoke8.jsonl`，并固定 `support_size=3`、`query_size=3`
   - `sampling_policy=uniform_examples`
 - Stage A：
   - 产出 `writer.ckpt`
@@ -93,7 +94,7 @@
   - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json`
   - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / query_objective / adaptation_target / trainable_module / trainable_parameter_count / objective_loss / task_score / task_metric_name`
 
-当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；最新 follow-up 已把 Stage B 的 mixed-source `mean_adaptation_gain` 从最初的 `-0.4` 级别压到 `1e-5` 量级，但 canonical run 仍略微为负，后续仍需继续攻克。
+当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；但 canonical 配置现已从早期 `smoke4/2x2` 升级为 `smoke8/3x3`，并在 episode-aware retrieval 协议下首次把 Stage B 的 mixed-source `mean_adaptation_gain` 翻到正值：qwen25 为 `1.903374989827474e-05`，qwen3 为 `0.0007965167363484701`。这说明协议方向已经成立，但当前增益仍很小，后续仍需继续扩大 margin 并验证稳定性。
 
 ## M4 Benchmark Scaffold
 
@@ -136,7 +137,7 @@
   - `scripts/setup_benchmark_data.sh`
   - `scripts/run_real_benchmark_smoke_suite.sh`
 - 真实来源 smoke 当前会落到：
-  - `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke4.jsonl`
+  - `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke<k>.jsonl`
   - `data/benchmarks/manifests/<benchmark_id>.json`
   - `data/benchmarks/source_summary.json`
   - `alfworld` 目前通过 `src/memtotal/tasks/alfworld_env.py` 走官方 TextWorld 资产与一次 expert transition materialize，不再停留在手写 contract 样例

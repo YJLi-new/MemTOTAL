@@ -38,33 +38,33 @@ class M3TrainingTest(unittest.TestCase):
                 "general_domains": ["math", "code", "qa", "narrative"],
                 "source_domains": ["math", "code", "qa"],
                 "target_domain": "narrative",
-                "support_size": 2,
-                "query_size": 2,
+                "support_size": 3,
+                "query_size": 3,
                 "sampling_policy": "uniform_examples",
                 "dataset_sources": [
                     {
                         "benchmark_id": "gsm8k",
-                        "dataset_path": str(ROOT / "data/benchmarks/materialized/gsm8k/eval-real-smoke4.jsonl"),
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/gsm8k/eval-real-smoke8.jsonl"),
                         "domain": "math",
-                        "smoke_subset": "hf_real_smoke4",
+                        "smoke_subset": "hf_real_smoke8",
                     },
                     {
                         "benchmark_id": "kodcode",
-                        "dataset_path": str(ROOT / "data/benchmarks/materialized/kodcode/eval-real-smoke4.jsonl"),
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/kodcode/eval-real-smoke8.jsonl"),
                         "domain": "code",
-                        "smoke_subset": "hf_real_smoke4",
+                        "smoke_subset": "hf_real_smoke8",
                     },
                     {
                         "benchmark_id": "gpqa",
-                        "dataset_path": str(ROOT / "data/benchmarks/materialized/gpqa/eval-real-smoke4.jsonl"),
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/gpqa/eval-real-smoke8.jsonl"),
                         "domain": "qa",
-                        "smoke_subset": "hf_real_smoke4",
+                        "smoke_subset": "hf_real_smoke8",
                     },
                     {
                         "benchmark_id": "story_cloze",
-                        "dataset_path": str(ROOT / "data/benchmarks/materialized/story_cloze/eval-real-smoke4.jsonl"),
+                        "dataset_path": str(ROOT / "data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl"),
                         "domain": "narrative",
-                        "smoke_subset": "hf_real_smoke4",
+                        "smoke_subset": "hf_real_smoke8",
                     },
                 ],
             },
@@ -151,22 +151,22 @@ class M3TrainingTest(unittest.TestCase):
             general_domains=["math", "code", "qa", "narrative"],
             source_domains=["math", "code", "qa"],
             target_domain="narrative",
-            support_size=2,
-            query_size=2,
+            support_size=3,
+            query_size=3,
             sampling_policy="uniform_examples",
         )
         sampler = EpisodeSampler(
             grouped,
             source_domains=["math", "code", "qa"],
-            support_size=2,
-            query_size=2,
+            support_size=3,
+            query_size=3,
             seed=23,
             sampling_policy="uniform_examples",
         )
         episode = sampler.sample_episode()
         self.assertIn(episode.domain, {"math", "code", "qa"})
-        self.assertEqual(len(episode.support_examples), 2)
-        self.assertEqual(len(episode.query_examples), 2)
+        self.assertEqual(len(episode.support_examples), 3)
+        self.assertEqual(len(episode.query_examples), 3)
         self.assertTrue(all(row["benchmark_id"] == "story_cloze" for row in grouped["narrative"]))
         manifest = build_meta_manifest(
             dataset_sources=task_cfg["meta"]["dataset_sources"],
@@ -174,8 +174,8 @@ class M3TrainingTest(unittest.TestCase):
             general_domains=["math", "code", "qa", "narrative"],
             source_domains=["math", "code", "qa"],
             target_domain="narrative",
-            support_size=2,
-            query_size=2,
+            support_size=3,
+            query_size=3,
             sampling_policy="uniform_examples",
         )
         self.assertEqual(manifest["sampling_policy"], "uniform_examples")
