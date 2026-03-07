@@ -11,6 +11,7 @@
 - `scripts/run_m3_core4_stage_b_probe_suite.sh`: benchmark-native `core4` 的 Stage B probe suite，会在数据盘跑 probe variants，并把 `probe_summary.csv/.svg` 写回仓库
 - `scripts/run_m3_core4_stage_c_probe_suite.sh`: benchmark-native `core4` 的 Stage C probe suite，会在数据盘并排跑 `q_only / w_only / w_plus_q`，再把 `probe_summary.csv/.svg` 与 q-only gradient audit 关联结果写回仓库
 - `scripts/run_m3_story_cloze_real_pilot_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `story_cloze` decision-interface pilot，会按 `screen256 -> fixed100 -> A/B/C/D/E` 顺序跑完整对照，并把 review 产物镜像回仓库
+- `scripts/run_m4_fever_shared_injection_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `FEVER-first` shared generative injection gate，会先跑 `A=base_only`、`T=teacher-text upper bound`、`writer information audit`，只有 gate 通过后才继续 `I-real / I-shuffle / I-zero`
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -28,9 +29,11 @@
 - `src/memtotal/training/`: smoke 训练闭环
 - `src/memtotal/training/m3.py`: Stage A/B/C runner，当前同时承载 `toy_meta_smoke` 与 benchmark-native `core4_transfer_smoke`；负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
 - `src/memtotal/training/m3_real_pilot.py`: 真实 `story_cloze` pilot 的并行实验分支，负责 `base_only / shared_summary_late_fusion / candidate_conditioned_late_fusion` 三种决策接口与 `real / shuffled / zero` memory control
+- `src/memtotal/training/m4_shared_injection.py`: 真实 `FEVER` shared generative injection 分支，负责 `teacher-text`、`writer information audit` 的上游协作点，以及 `shared latent prefix injection` 的训练/评测入口
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
+- `src/memtotal/analysis/m4_shared_injection.py`: `teacher-text sanity / writer information audit / shared injection compare` 的统一分析入口
 - `src/memtotal/baselines/`: 外部 baseline 适配层，当前已接入 MemGen launch adapter
 - `configs/tasks|method|exp/`: 任务、方法、实验配置
 - `scripts/`: setup、train/eval/analysis 包装、profiling、smoke、artifact 收集、CI 风格检查
@@ -206,6 +209,43 @@
   - `Qwen3-8B` 版本的 NarrativeQA selector 消融也已真实跑通，汇总位于 `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv`
 
 当前 `M4` 已不只是本地 contract smoke。现在已有 11 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。其中特别需要区分：`MemoryAgentBench` 当前是“真实 source + 截断 context 的 smoke scaffold”，`NarrativeQA` 当前是“真实 full story source + runtime-selected selector-ablation excerpt + qa_f1 代理评测”的 smoke scaffold，二者都不是正式长上下文主结果。
+
+## M4 Shared Injection Pivot
+
+- 当前已正式停止维护旧的 `candidate-conditioned residual family`；新的方法侧主线改成 `FEVER-first shared generative injection`
+- 这条线的目标不是再做一个外部 residual scorer，而是先回答：
+  - frozen Qwen 是否会从显式 support bank 文本中受益
+  - 当前 writer family 产出的 latent 是否已经携带可读的任务信息
+  - 只有前两者成立后，shared latent prefix injection 才值得启动
+- 这条线当前固定分三段：
+  - `A = base_only`
+  - `T = teacher-text upper bound`
+  - `writer information audit`
+  - gate 通过后才进入 `I-real / I-shuffle / I-zero`
+- `writer information audit` 当前不是单一线性 probe：
+  - 同时提供 `linear` 与 `shallow MLP` probe，避免纯线性假阴性
+  - 同时比较 `real / shuffle / zero` 三种控制
+- `shared latent prefix injection` 当前实现为浅层 input-visible continuous prefix：
+  - support text 先过 `backbone.summarize_texts`
+  - 再过 `MemoryWriter`
+  - 再经 `LatentPrefixProjector` 投到 Qwen embedding space
+  - 最终通过 `BackboneWrapper.score_continuations(prefix_embeddings=...)` 直接进入 frozen Qwen 的主打分链路
+- 第一版训练只允许更新：
+  - `MemoryWriter`
+  - `LatentPrefixProjector`
+  - 并且默认先做 projector warmup，再联合放开 writer，避免随机 projector 早期梯度直接破坏已有 writer 表示
+- 第一版 objective 固定为 task-only：
+  - `choice CE + strongest-competitor hinge`
+  - 不上 KL
+  - 不做 candidate-conditioned / pair-conditioned injection
+- 当前 fresh `FEVER` 结果显示这条线还没走到真正 injection 训练：
+  - `pilot-A-base-only = 0.25`
+  - `pilot-T-teacher-text = 0.25`
+  - `teacher_margin` 明显差于 `base_margin`
+  - `writer-audit` 当前也未通过 `phase1_gate`
+- 因而，当前 immediate blocker 不是“如何继续调 injected prefix”，而是：
+  - support bank 显式序列化 / prompt 还没让 frozen qwen 受益
+  - 当前 writer family 还没在 `FEVER` 上产出足够可读的任务信息
 
 ## M3 Failure Checks
 

@@ -12,6 +12,7 @@ from memtotal.data import load_toy_dataset
 from memtotal.pipeline import MemoryRuntime
 from memtotal.training.m3 import run_stage_a, run_stage_b, run_stage_c
 from memtotal.training.m3_real_pilot import run_stage_c_real_pilot
+from memtotal.training.m4_shared_injection import run_shared_injection_pilot
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json
 from memtotal.utils.profiling import ProfileTracker
@@ -165,6 +166,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if training_stage == "stage_c_real_pilot":
         run_stage_c_real_pilot(
+            config=config,
+            seed=args.seed,
+            output_dir=output_dir,
+            resume=args.resume,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if training_stage == "shared_injection_pilot":
+        run_shared_injection_pilot(
             config=config,
             seed=args.seed,
             output_dir=output_dir,

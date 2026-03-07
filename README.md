@@ -8,6 +8,24 @@
 
 ## 最新进展
 
+- 已完成 `M4` 的架构换轨脚手架：不再继续修 `candidate-conditioned residual family`，而是新增 `FEVER-first shared generative injection` 主线，包含：
+  - `teacher-text upper bound`
+  - `writer information audit`
+  - `shared latent prefix injection` 的真实 qwen25 scaffold
+- `M4` 当前并没有直接宣称 injection 成功；相反，它先把更上游的 gate 跑实了：
+  - `A = base_only = 0.25`
+  - `T = teacher-text = 0.25`
+  - `teacher_margin = -0.9794906545430422`，明显差于 `base_margin = -8.739530039747478e-05`
+  - `phase0_support_has_value = false`
+  - `phase1_gate_passed = false`
+- `writer information audit` 这轮已经按更保守的判因口径实现：
+  - 同时做 `linear probe` 和浅层 `MLP probe`
+  - 同时比较 `real / shuffle / zero`
+  - 当前 `label_probe` 与 `base_margin_sign_probe` 都没有出现 `real > control`
+  - `teacher_gain_probe` 虽略高于 control，但仍低于 gate 下限
+- 因而，`I-real / I-shuffle / I-zero` 这轮并没有启动训练；当前最直接的 blocker 已经上移到：
+  - `support_text` 序列化 / prompt 还没让 frozen Qwen 从显式 support 中受益
+  - 当前 writer family 也还没在 `FEVER` 上暴露出足够可读的任务信息
 - benchmark-native `M3 core4` 主链已经打通：`gsm8k + kodcode + gpqa + story_cloze` 的 `Stage A/B/C`、统一产物、统一分析都可运行。
 - 真实 `Qwen2.5-1.5B-Instruct` 的最小闭环已经打通：`BackboneWrapper(load_mode=hf_causal_lm)` 现支持真实 `summarize_texts`、`score_continuations` 与本地 staged model 目录加载。
 - 最新判别实验已经完成三步：
@@ -89,6 +107,16 @@
   - 当前这条 `candidate-conditioned residual family` 在 repair objective 下依然没有 real-memory 内容效应
   - `R-real` 同时没有优于 `R-shuffle`，也没有优于 `R-zero`
   - 因而现在不该继续修 current candidate-conditioned family；如果后续还要做 candidate-specific `Stage C`，应直接换 residual family，而不是继续在这一条上加 router / sign selector
+- `M4 shared injection` 这轮又把当前主 blocker上移了一层：
+  - `teacher-text upper bound` 本身没有优于 `base_only`
+  - `writer information audit` 即便加入 `MLP fallback`，也仍没通过 `real > shuffle/zero` 的 gate
+  - 所以这轮没有进入 `I-real / I-shuffle / I-zero` 的真正注入训练
+  - 当前最合理的结论不是“shared injection 已失败”，而是“`support serialization / prompt` 与 `writer` 信息质量还没过门槛，现阶段不该烧注入训练算力”
+- 因而，当前最重要的下一步已改成：
+  - 先修 `FEVER` 的 `teacher-text` 构造和 support serialization，让 `T > A`
+  - 再提高当前 writer family 在 `FEVER` 上的可读任务信息，至少让 audit 出现稳定的 `real > shuffle/zero`
+  - 只有在这两个 gate 通过后，才重新启动 `shared injected memory` 训练
+  - `Story Cloze` 继续只保留为后续 stress test，不参与当前 capability gate
 
 ## 关键结果路径
 
@@ -96,6 +124,7 @@
   - `docs_review_bundle.zip`
 - 最新 brief：
   - `docs/briefs/20260307-story-cloze-real-pilot-brief.md`
+  - `docs/briefs/20260307-m4-shared-injection-brief.md`
 - Story Cloze real pilot 原始运行：
   - `runs/review/m3-story-cloze-real-pilot-qwen25/`
 - Story Cloze real pilot 汇总：
@@ -119,6 +148,11 @@
   - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/arm_pairwise_compare.csv`
   - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/real_vs_shuffle_gap.csv`
   - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/real_vs_zero_gap.csv`
+- M4 FEVER shared injection gating runs：
+  - `runs/review/m4-fever-shared-injection-qwen25/`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/writer-audit/report.md`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/writer-audit/summary.csv`
 
 ## 现在最重要的下一步
 
@@ -128,5 +162,6 @@
   - 先保留 `FEVER` 作为正 control，不再继续扩 story sweep
   - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
   - 也不继续修 current `candidate-conditioned residual family`，因为 repair objective 下它仍然 `R-real = R-shuffle = R-zero`
-  - 下一轮如果继续探索 candidate-specific `Stage C`，应该优先设计新的 residual family，再先拿 `FEVER` 做 capability probe
+  - 当前更上游的任务是先修 `teacher-text` / support serialization 与 writer information audit，让 shared injection 至少能真正进入 `I-real / I-shuffle / I-zero` 阶段
+  - 只有 shared injection 先证明 `real > shuffle > zero`，才值得回到 candidate-specific / Story / Qwen3
   - `Story Cloze` 只保留为后续 stress test，不再作为当前 candidate 分支的主开发面

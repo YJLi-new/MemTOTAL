@@ -188,26 +188,72 @@ class BackboneWrapper(nn.Module):
         )
         return {key: value.to(self.device) for key, value in encoded.items()}
 
-    def score_continuations(self, prompt: str, candidate_texts: list[str]) -> torch.Tensor:
+    def _prepare_prefixed_hf_inputs(
+        self,
+        texts: list[str],
+        prefix_embeddings: torch.Tensor | None,
+    ) -> tuple[dict[str, torch.Tensor], int]:
+        encoded = self._prepare_hf_inputs(texts)
+        if prefix_embeddings is None:
+            return encoded, 0
+        if self.model is None:
+            raise RuntimeError("Real backbone model is not initialized.")
+        if prefix_embeddings.ndim != 3:
+            raise ValueError("prefix_embeddings must have shape [batch, prefix_tokens, hidden_size].")
+        batch_size = encoded["input_ids"].shape[0]
+        if prefix_embeddings.shape[0] == 1 and batch_size > 1:
+            prefix_embeddings = prefix_embeddings.expand(batch_size, -1, -1)
+        if prefix_embeddings.shape[0] != batch_size:
+            raise ValueError(
+                "prefix_embeddings batch dimension must be 1 or match the number of candidate sequences."
+            )
+        if prefix_embeddings.shape[2] != self.hidden_size:
+            raise ValueError(
+                f"prefix_embeddings hidden size must match backbone hidden size {self.hidden_size}, "
+                f"got {prefix_embeddings.shape[2]}."
+            )
+        prefix_embeddings = prefix_embeddings.to(device=self.device, dtype=self._resolve_torch_dtype())
+        input_embeddings = self.model.get_input_embeddings()(encoded["input_ids"])
+        encoded.pop("input_ids")
+        prefix_mask = torch.ones(
+            batch_size,
+            prefix_embeddings.shape[1],
+            dtype=encoded["attention_mask"].dtype,
+            device=self.device,
+        )
+        encoded["inputs_embeds"] = torch.cat([prefix_embeddings, input_embeddings], dim=1)
+        encoded["attention_mask"] = torch.cat([prefix_mask, encoded["attention_mask"]], dim=1)
+        return encoded, int(prefix_embeddings.shape[1])
+
+    def score_continuations(
+        self,
+        prompt: str,
+        candidate_texts: list[str],
+        *,
+        prefix_embeddings: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if self.load_mode != "hf_causal_lm":
             raise RuntimeError("score_continuations is only available for load_mode='hf_causal_lm'.")
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Real backbone is not initialized.")
         prompt_with_sep = prompt if prompt.endswith((" ", "\n", "\t")) else f"{prompt} "
         full_texts = [f"{prompt_with_sep}{candidate_text}" for candidate_text in candidate_texts]
-        encoded = self._prepare_hf_inputs(full_texts)
+        encoded, prefix_length = self._prepare_prefixed_hf_inputs(full_texts, prefix_embeddings)
         prompt_length = len(self.tokenizer(prompt_with_sep, add_special_tokens=True)["input_ids"])
         with torch.inference_mode():
             logits = self.model(**encoded, use_cache=False).logits
         log_probs = torch.log_softmax(logits[:, :-1, :].to(dtype=torch.float32), dim=-1)
-        labels = encoded["input_ids"][:, 1:]
+        labels_source = encoded.get("input_ids")
+        if labels_source is None:
+            labels_source = self._prepare_hf_inputs(full_texts)["input_ids"]
+        labels = labels_source[:, 1:]
         token_log_probs = log_probs.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
-        scores = []
+        scores: list[torch.Tensor] = []
         sequence_lengths = encoded["attention_mask"].sum(dim=1).tolist()
         for row_index, sequence_length_value in enumerate(sequence_lengths):
-            sequence_length = int(sequence_length_value)
-            start_index = max(0, prompt_length - 1)
-            end_index = max(start_index, sequence_length - 1)
+            sequence_length = int(sequence_length_value) - prefix_length
+            start_index = max(0, prefix_length + prompt_length - 1)
+            end_index = max(start_index, prefix_length + sequence_length - 1)
             scores.append(token_log_probs[row_index, start_index:end_index].sum())
         return torch.stack(scores)
 

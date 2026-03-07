@@ -22,6 +22,7 @@ sync_dir "runs/verify/m3-core4-qwen25/stage-b" "runs/review/m3-core4-qwen25-stag
 sync_dir "runs/verify/m3-core4-qwen3/stage-b" "runs/review/m3-core4-qwen3-stage-b"
 sync_dir "runs/verify/m3-story-cloze-real-pilot-qwen25" "runs/review/m3-story-cloze-real-pilot-qwen25"
 sync_dir "runs/verify/m3-fever-real-pilot-qwen25" "runs/review/m3-fever-real-pilot-qwen25"
+sync_dir "runs/verify/m4-fever-shared-injection-qwen25" "runs/review/m4-fever-shared-injection-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -29,6 +30,7 @@ sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v6-case-dump" "runs
 
 sync_dir "results/generated/m3-story-cloze-real-pilot-qwen25" "results/generated/review/m3-story-cloze-real-pilot-qwen25"
 sync_dir "results/generated/m3-fever-real-pilot-qwen25" "results/generated/review/m3-fever-real-pilot-qwen25"
+sync_dir "results/generated/m4-fever-shared-injection-qwen25" "results/generated/review/m4-fever-shared-injection-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

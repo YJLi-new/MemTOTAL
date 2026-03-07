@@ -1,0 +1,11 @@
+includes:
+  - m4_fever_qwen25_shared_injection_common.yaml
+
+experiment:
+  name: m4_fever_qwen25_teacher_text
+  method_variant: shared-injection-teacher-text
+
+runtime:
+  shared_injection_arm: teacher_text
+  writer_memory_control: real
+  pilot_arm_alias: T

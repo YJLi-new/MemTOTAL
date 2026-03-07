@@ -454,6 +454,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 即便换成更对题的 repair objective，这条 current `candidate-conditioned residual family` 也仍然不 load-bearing
   - 下一步不该继续修 current family，也不该直接上 `Qwen3-8B` / routing / sign selection
   - 如果还要继续 candidate-specific `Stage C`，应直接换 residual family，并继续先拿 `FEVER` 做 capability gate
+- 已完成 `M4` 的 `FEVER-first shared generative injection` 前两道 gate：
+  - 已新增 `teacher-text upper bound`、`writer information audit`、`shared latent prefix injection` 的真实 qwen25 scaffold
+  - `writer information audit` 当前不是单一线性 probe；已同时包含 `linear + shallow MLP` 两档 probe，并显式比较 `real / shuffle / zero`
+  - `LatentPrefixProjector` 也已按 warmup 规则实现：先只训练 projector，再联合放开 writer
+  - fresh `runs/review/m4-fever-shared-injection-qwen25/pilot-A-base-only/metrics.json` 当前是 `A=0.25`
+  - fresh `runs/review/m4-fever-shared-injection-qwen25/pilot-T-teacher-text/metrics.json` 当前是 `T=0.25`，且 `teacher_margin=-0.9794906545430422`
+  - fresh `results/generated/review/m4-fever-shared-injection-qwen25/writer-audit/metrics.json` 当前记录：
+    - `phase0_support_has_value=false`
+    - `probe_gate_passed=false`
+    - `phase1_gate_passed=false`
+  - 因而，这轮没有继续启动 `I-real / I-shuffle / I-zero` 的真正注入训练
+  - 当前最直接的 blocker 已经上移到：
+    - `support_text` 序列化 / prompt 还没让 frozen Qwen 从显式 support 中受益
+    - 当前 writer family 也还没在 `FEVER` 上暴露出足够可读的任务信息
+  - 下一步不该直接跳到 `Story Cloze / candidate-conditioned injection / Qwen3 / KL`；应先把 `T > A` 和 `writer-audit real > shuffle/zero` 这两道 gate 过掉
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`
@@ -698,6 +713,19 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 同一组 selector 消融现已补到 `Qwen3-8B`：配置为 `configs/exp/benchmark_narrativeqa_qwen3_real_smoke{,_anchor_only,_oracle_like_proxy}.yaml`，统一汇总位于 `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv`；当前 qwen3 stub 结果为 `question_aware=0.03560512885451317`、`anchor_only=-0.011595143005251884`、`oracle_like_proxy=-0.033963803201913834`
 - 最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T163014Z/summary.csv`
 - 说明：这部分完成的是“统一任务契约 + smoke subset + 统一 eval harness”，不是正式 benchmark 主结果；`MemoryAgentBench` 当前为了本地 stub-harness 可运行，会把 context 截断到 `512` tokens，`NarrativeQA` 当前也只是“官方 full story -> runtime-selected 6 chunk excerpt”的 smoke 版本，因此两者都不是正式长上下文协议结果
+
+当前新增的 `M4` 方法侧 pivot：
+- 已新增 `FEVER-first shared generative injection` scaffold：
+  - `base_only`
+  - `teacher-text upper bound`
+  - `writer information audit`
+  - `shared latent prefix injection` 的 `real / shuffle / zero`
+- 但这轮 fresh qwen25 结果也说明，当前还没到真正注入训练那一步：
+  - `A=0.25`
+  - `T=0.25`
+  - `phase0_support_has_value=false`
+  - `phase1_gate_passed=false`
+- 因而，M4 现在的 immediate blocker 已从“怎么训练 injected memory”前移到“support bank 本身有没有价值、writer 当前是否已经产出可读任务信息”。
 
 ### P0 必须
 - [ ] 接入主套件 benchmark

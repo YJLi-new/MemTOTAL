@@ -16,6 +16,10 @@ from memtotal.analysis.m3_stage_c_step_saturation_audit import run_m3_stage_c_st
 from memtotal.analysis.m3_sensitivity_audit import run_m3_stage_c_sensitivity_audit
 from memtotal.analysis.m3_stage_c_probe import run_m3_stage_c_probe_summary
 from memtotal.analysis.m3_stage_c_seed_sweep import run_m3_stage_c_seed_sweep_summary
+from memtotal.analysis.m4_shared_injection import (
+    run_m4_shared_injection_compare,
+    run_m4_writer_information_audit,
+)
 from memtotal.analysis.story_cloze_real_pilot import (
     run_fever_real_fixed_set_builder,
     run_fever_real_pilot_split,
@@ -223,6 +227,27 @@ def main(argv: list[str] | None = None) -> int:
         if not args.input_root:
             raise ValueError("--input_root is required for stage_c_real_pilot_content_audit mode.")
         run_stage_c_real_pilot_content_audit(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "m4_writer_information_audit":
+        if not args.input_root:
+            raise ValueError("--input_root is required for m4_writer_information_audit mode.")
+        run_m4_writer_information_audit(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            resume=args.resume,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "m4_shared_injection_compare":
+        if not args.input_root:
+            raise ValueError("--input_root is required for m4_shared_injection_compare mode.")
+        run_m4_shared_injection_compare(
             config=config,
             output_dir=output_dir,
             input_root=args.input_root,

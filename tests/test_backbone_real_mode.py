@@ -52,27 +52,40 @@ class _FakeModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.config = types.SimpleNamespace(hidden_size=8)
+        self.embedding = torch.nn.Embedding(64, 8)
+        with torch.no_grad():
+            self.embedding.weight.copy_(torch.arange(64 * 8, dtype=torch.float32).view(64, 8) / 100.0)
 
-    def forward(self, input_ids, attention_mask=None, output_hidden_states=False, use_cache=False):
-        batch, seq = input_ids.shape
-        hidden = torch.stack(
-            [
-                input_ids.to(dtype=torch.float32),
-                input_ids.to(dtype=torch.float32) * 0.5,
-                input_ids.to(dtype=torch.float32) * 0.25,
-                input_ids.to(dtype=torch.float32) * 0.125,
-                input_ids.to(dtype=torch.float32) * 0.0625,
-                input_ids.to(dtype=torch.float32) * 0.03125,
-                input_ids.to(dtype=torch.float32) * 0.015625,
-                input_ids.to(dtype=torch.float32) * 0.0078125,
-            ],
-            dim=-1,
-        )
+    def get_input_embeddings(self):
+        return self.embedding
+
+    def forward(self, input_ids=None, attention_mask=None, inputs_embeds=None, output_hidden_states=False, use_cache=False):
+        if inputs_embeds is not None:
+            hidden = inputs_embeds.to(dtype=torch.float32)
+            batch, seq, _ = hidden.shape
+            token_basis = hidden[..., 0].round().to(dtype=torch.long).clamp(min=0)
+        else:
+            assert input_ids is not None
+            batch, seq = input_ids.shape
+            token_basis = input_ids.to(dtype=torch.long)
+            hidden = torch.stack(
+                [
+                    input_ids.to(dtype=torch.float32),
+                    input_ids.to(dtype=torch.float32) * 0.5,
+                    input_ids.to(dtype=torch.float32) * 0.25,
+                    input_ids.to(dtype=torch.float32) * 0.125,
+                    input_ids.to(dtype=torch.float32) * 0.0625,
+                    input_ids.to(dtype=torch.float32) * 0.03125,
+                    input_ids.to(dtype=torch.float32) * 0.015625,
+                    input_ids.to(dtype=torch.float32) * 0.0078125,
+                ],
+                dim=-1,
+            )
         logits = torch.zeros(batch, seq, 64, dtype=torch.float32)
         logits.scatter_(
             -1,
-            (input_ids % 64).unsqueeze(-1),
-            (input_ids.to(dtype=torch.float32) / 10.0).unsqueeze(-1),
+            (token_basis % 64).unsqueeze(-1),
+            ((token_basis % 64).to(dtype=torch.float32) / 10.0).unsqueeze(-1),
         )
         return types.SimpleNamespace(logits=logits, hidden_states=[hidden, hidden])
 
@@ -101,6 +114,9 @@ class BackboneRealModeTest(unittest.TestCase):
         scores = backbone.score_continuations("Prompt", ["good ending", "bad"])
         self.assertEqual(list(scores.shape), [2])
         self.assertNotEqual(float(scores[0].item()), float(scores[1].item()))
+        prefix = torch.ones(1, 3, 8, dtype=torch.float32)
+        prefixed_scores = backbone.score_continuations("Prompt", ["good ending", "bad"], prefix_embeddings=prefix)
+        self.assertEqual(list(prefixed_scores.shape), [2])
         generations = backbone.generate(["Prompt"])
         self.assertEqual(len(generations), 1)
         self.assertTrue(generations[0])
