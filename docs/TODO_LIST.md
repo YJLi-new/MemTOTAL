@@ -390,6 +390,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 原始 probe runs 默认落数据盘
   - 同一 backbone 下 `q_only / w_only / w_plus_q` 现在强制共用同一个 seed，避免 target episode 漂移
   - `probe_summary.csv/.svg` 会把 Stage C 曲线和 q-only gradient audit 合到同一份 summary
+- 已新增 benchmark-native `Stage C q-only budget probe` harness：`scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`
+  - 当前固定扫描 `adapt_learning_rate in {0.2, 1.0, 5.0}` 与 `adapt_steps in {3, 10}`
+  - 同一 backbone 下所有 budget variant 也强制共用同一个 seed
 - 已验证命令：
   - `python -m unittest discover -s tests -v`
   - `python -m train --config configs/exp/m3_stage_a_qwen25_smoke.yaml --seed 301 --output_dir runs/verify/m3-stage-a`
@@ -421,6 +424,8 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-probe-suite/metrics.json` 当前记录 `seed_consistent_by_backbone={Qwen2.5-1.5B-Instruct: true, Qwen3-8B: true}`；同一 target episode 下，两档 backbone 的 `q_only` 都仍然 `adaptation_effective=False`
   - 同一份 Stage C probe 当前记录：qwen25 的 `q_only / w_only / w_plus_q` 都停在 `best_adapt_task_score=0.3333333333333333`、`best_adapt_query_loss=1.6212215423583984`；qwen3 的 writer-inclusive 变体把 `best_adapt_query_loss` 从 `1.5973001718521118` 压到 `1.596140742301941`，但 `task_score` 仍停在 `0.3333333333333333`
   - qwen3 的 q-only gradient audit 当前进一步记录 `query_to_fuser_grad_ratio=8.94973632636852e-09`、`query_to_writer_grad_ratio=1.2672182777076557e-07`
+  - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite/metrics.json` 当前显示：把 `adapt_learning_rate` 提到 `5.0`、`adapt_steps` 提到 `10` 仍然救不回 q-only；两档 backbone 的所有 budget variant 都保持 `adaptation_effective=False`
+  - 同一份 q-only budget probe 当前记录：qwen25 最好的 q-only objective 也只到 `best_adapt_query_loss=1.6321028470993042`（`lr=1.0, steps=3`），qwen3 仍停在 `best_adapt_query_loss=1.6052712202072144`
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
@@ -443,7 +448,7 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 说明：`MAIN_IDEA.md` 与 `EXPERIMENTS_INFO.md` 都把 Stage C 默认口径锁定为“只更新 queries”；因此这里已显式把 `runtime.adaptation_target` 引入配置层，并将默认实现对齐为 `q_only`。此前 code drift 中的 `queries + fuser` 更新方式不再作为 Stage C 默认口径。
 说明：当前 canonical toy smoke 上，Reader 学习方式的 target zero-shot loss 呈现 `meta-trained < non-meta < random`，但三者的 `q_only` few-shot accuracy 仍都保持 `0.5`；因此这里完成的是“可直接比较 meta 价值的 harness”，不是论文级结论。
 说明：退化模式检查条目现在不只是“显式检查 + smoke ablation harness”，还已经完成了一轮真实 follow-up 修复。当前 canonical follow-up run 中，三项检查均通过，说明这套 harness 既能抓出结构退化，也能验证修复是否真正生效。
-说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有两套正式 probe harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`。当前证据已经说明：benchmark-native Stage C 的下一步问题不是“是不是还没扫够 learning rate”，而是 `q_only` 的梯度/参数化本身几乎不承载 target support loss，而且当前 smoke task score 对 writer-only 的 objective 改善也还不够敏感。
+说明：benchmark-native `core4` smoke 现在已经打通真实 benchmark 子集上的 `Stage A/B/C` artifact contract、多 source meta-split 与真实 `task_score` 曲线；最新 canonical follow-up 已进一步把 episode 结构提升到 `smoke8/3x3`，并在“query eval 排除 support、support inner-loop 只看 support pool”的 episode-aware retrieval 协议下，把两档 backbone 的 Stage B `mean_adaptation_gain` 都翻成了正值。现在还额外有三套正式 probe harness：Stage B probe 用于比较 backbone-specific 预算，Stage C probe 用于在同 seed 下比较 `q_only / w_only / w_plus_q`，Stage C q-only budget probe 用于验证更大的 `lr/steps` 能不能救回 query-only。当前证据已经说明：benchmark-native Stage C 的下一步问题不是“是不是还没扫够 learning rate”，而是 `q_only` 的梯度/参数化本身几乎不承载 target support loss，而且当前 smoke task score 对 writer-only 的 objective 改善也还不够敏感。
 
 说明：当前 M3 P0 的 smoke DoD 已完成，重点是先把 Stage A/B/C 的 artifact contract、resume 链路、meta split、以及“source-domain 有正向适配收益”的最小证据打通。更强的 few-shot 曲线、更多 seeds、以及 target-domain accuracy 提升仍属于后续 M4/M5 的正式实验工作。
 

@@ -84,6 +84,8 @@ def collect_stage_c_probe_rows(
             "adaptation_target": adaptation_target,
             "trainable_module": metrics.get("trainable_module"),
             "trainable_parameter_count": metrics.get("trainable_parameter_count"),
+            "adapt_learning_rate": metrics.get("adapt_learning_rate"),
+            "adapt_steps": metrics.get("adapt_steps"),
             "zero_shot_task_score": zero_shot_task_score,
             "best_adapt_task_score": best_adapt_task_score,
             "task_gain": best_adapt_task_score - zero_shot_task_score,
@@ -131,6 +133,8 @@ def write_stage_c_probe_csv(output_path: str | Path, rows: list[dict[str, object
         "adaptation_target",
         "trainable_module",
         "trainable_parameter_count",
+        "adapt_learning_rate",
+        "adapt_steps",
         "zero_shot_task_score",
         "best_adapt_task_score",
         "task_gain",
@@ -249,6 +253,8 @@ def run_m3_stage_c_probe_summary(
                 "task_gain": float(row.get("task_gain") or 0.0),
                 "best_adapt_task_score": row["best_adapt_task_score"],
                 "best_adapt_query_loss": row["best_adapt_query_loss"],
+                "adapt_learning_rate": row["adapt_learning_rate"],
+                "adapt_steps": row["adapt_steps"],
                 "trainable_parameter_count": row["trainable_parameter_count"],
             }
 
@@ -256,14 +262,23 @@ def run_m3_stage_c_probe_summary(
     for row in rows:
         if row["adaptation_target"] != "q_only":
             continue
-        q_only_by_backbone[str(row["backbone"])] = {
+        backbone = str(row["backbone"])
+        current = q_only_by_backbone.get(backbone)
+        candidate = {
             "run_name": row["run_name"],
             "seed": row["seed"],
             "task_gain": row["task_gain"],
+            "adapt_learning_rate": row["adapt_learning_rate"],
+            "adapt_steps": row["adapt_steps"],
             "adaptation_effective": row["adaptation_effective"],
+            "best_adapt_task_score": row["best_adapt_task_score"],
+            "best_adapt_query_loss": row["best_adapt_query_loss"],
+            "trainable_parameter_count": row["trainable_parameter_count"],
             "query_to_writer_grad_ratio": row["query_to_writer_grad_ratio"],
             "query_to_fuser_grad_ratio": row["query_to_fuser_grad_ratio"],
         }
+        if current is None or _stage_c_probe_row_key(candidate) > _stage_c_probe_row_key(current):
+            q_only_by_backbone[backbone] = candidate
 
     seed_consistent_by_backbone: dict[str, bool] = {}
     for backbone in sorted({str(row["backbone"]) for row in rows}):
