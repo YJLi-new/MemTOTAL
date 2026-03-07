@@ -28,7 +28,7 @@ runtime:
   target_split_policy: random
   target_support_bank_size: auto
   target_support_negative_pool: source_plus_support_bank
-  target_support_negative_sampler: deterministic_id
+  target_support_negative_sampler: hard_by_current_model
   adapt_shots:
     - 0
     - 3

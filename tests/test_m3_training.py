@@ -6,8 +6,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
+import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -219,6 +221,44 @@ class M3TrainingTest(unittest.TestCase):
             negative_count=2,
             runtime=runtime,
             negative_sampler="hard_by_continuation",
+        )
+        self.assertEqual(resolved[0]["id"], "anchor")
+        self.assertEqual(resolved[1]["id"], "near")
+
+    def test_resolve_retrieval_candidates_supports_model_hard_negative_sampler(self) -> None:
+        class FakeBackbone:
+            def summarize_texts(self, texts):
+                mapping = {
+                    "near": torch.tensor([1.0, 0.0]),
+                    "far": torch.tensor([0.0, 1.0]),
+                }
+                return torch.stack([mapping[str(text)] for text in texts])
+
+        class FakeRuntime:
+            def __init__(self) -> None:
+                self.backbone = FakeBackbone()
+
+            def forward_example(self, example):
+                return SimpleNamespace(memory_short=torch.tensor([[[1.0, 0.0]]], dtype=torch.float32))
+
+            def summarize_memory_short(self, memory_short):
+                return memory_short.squeeze(0).squeeze(0)
+
+            def score_candidates(self, memory_summary, candidate_states):
+                return torch.mv(candidate_states, memory_summary)
+
+        example = {"id": "anchor", "continuation": "unused"}
+        candidate_pool = [
+            example,
+            {"id": "near", "continuation": "near"},
+            {"id": "far", "continuation": "far"},
+        ]
+        resolved = _resolve_retrieval_candidates(
+            example,
+            candidate_pool,
+            negative_count=2,
+            runtime=FakeRuntime(),
+            negative_sampler="hard_by_current_model",
         )
         self.assertEqual(resolved[0]["id"], "anchor")
         self.assertEqual(resolved[1]["id"], "near")
@@ -511,7 +551,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_c_metrics["target_split_policy"], "random")
             self.assertEqual(stage_c_metrics["target_support_bank_size"], "auto")
             self.assertEqual(stage_c_metrics["target_support_negative_pool"], "source_plus_support_bank")
-            self.assertEqual(stage_c_metrics["target_support_negative_sampler"], "deterministic_id")
+            self.assertEqual(stage_c_metrics["target_support_negative_sampler"], "hard_by_current_model")
             self.assertEqual(stage_c_metrics["checkpoint_target_episode_policy"], "shared_aggregate")
             self.assertIn("mean_support_grad_norm", stage_c_metrics)
             self.assertIn("max_support_update_max_abs", stage_c_metrics)

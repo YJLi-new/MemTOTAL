@@ -61,7 +61,7 @@ PY
     "${EXTRA_ARGS[@]}"
 }
 
-for negative_sampler in deterministic_id hard_by_continuation; do
+for negative_sampler in deterministic_id hard_by_continuation hard_by_current_model; do
   write_override \
     "${TMP_CONFIG_DIR}/qwen25_${negative_sampler}.yaml" \
     "${ROOT_DIR}/configs/exp/m3_stage_c_core4_qwen25_smoke.yaml" \
@@ -79,7 +79,7 @@ done
 for ((index=0; index<SEED_COUNT; index++)); do
   qwen25_seed="$((SEED_BASE + index))"
   qwen3_seed="$((SEED_BASE + 100 + index))"
-  for negative_sampler in deterministic_id hard_by_continuation; do
+  for negative_sampler in deterministic_id hard_by_continuation hard_by_current_model; do
     run_stage_c \
       "${TMP_CONFIG_DIR}/qwen25_${negative_sampler}.yaml" \
       "${qwen25_seed}" \

@@ -137,10 +137,10 @@ def _resolve_target_support_negative_pool(config: dict) -> str:
 
 def _resolve_target_support_negative_sampler(config: dict) -> str:
     sampler = str(config["runtime"].get("target_support_negative_sampler", "deterministic_id"))
-    if sampler not in {"deterministic_id", "hard_by_continuation"}:
+    if sampler not in {"deterministic_id", "hard_by_continuation", "hard_by_current_model"}:
         raise ValueError(
             f"Unsupported runtime.target_support_negative_sampler={sampler}. "
-            "Expected one of deterministic_id, hard_by_continuation."
+            "Expected one of deterministic_id, hard_by_continuation, hard_by_current_model."
         )
     return sampler
 
@@ -501,6 +501,21 @@ def _resolve_retrieval_candidates(
         positive_state = F.normalize(positive_state.unsqueeze(0), dim=1).squeeze(0)
         candidate_states = F.normalize(candidate_states, dim=1)
         scores = torch.mv(candidate_states, positive_state)
+        ranked_negatives = sorted(
+            zip(scores.tolist(), (str(row["id"]) for row in negatives), negatives, strict=False),
+            key=lambda item: (item[0], item[1]),
+            reverse=True,
+        )
+        selected_negatives = [item[2] for item in ranked_negatives[: min(negative_count, len(ranked_negatives))]]
+    elif negative_sampler == "hard_by_current_model" and negatives:
+        if runtime is None:
+            raise ValueError("runtime is required when negative_sampler='hard_by_current_model'.")
+        forward = runtime.forward_example(example)
+        memory_summary = runtime.summarize_memory_short(forward.memory_short)
+        candidate_states = runtime.backbone.summarize_texts(
+            [str(row["continuation"]) for row in negatives]
+        )
+        scores = runtime.score_candidates(memory_summary, candidate_states)
         ranked_negatives = sorted(
             zip(scores.tolist(), (str(row["id"]) for row in negatives), negatives, strict=False),
             key=lambda item: (item[0], item[1]),
