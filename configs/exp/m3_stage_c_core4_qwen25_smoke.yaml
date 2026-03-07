@@ -23,6 +23,7 @@ runtime:
   adapt_learning_rate: 0.2
   target_eval_repeats: 3
   target_episode_repeats: 3
+  target_episode_policy: aggregate_support
   adapt_shots:
     - 0
     - 3

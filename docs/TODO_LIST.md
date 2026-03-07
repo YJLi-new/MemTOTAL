@@ -445,7 +445,10 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-qonly-seed-sweep-v2/metrics.json` 现进一步显示：把 canonical `Stage C` 升级到 `target_episode_repeats=3` 后，5-seed q-only 分布已被拉到非负。当前 qwen25 `positive_gain_rate=0.6`、`mean_task_gain=0.0962962962962963`；qwen3 `positive_gain_rate=0.2`、`mean_task_gain=0.007407407407407407`
   - `results/generated/m3-core4-stage-c-probe-suite-v5/metrics.json` 当前也显示：多 episode 聚合后，两档 backbone 的 fresh best row 都回到了 `q_only`
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v5/metrics.json` 当前显示：在同一 target episode 聚合口径下，qwen25 仍偏好 `lr=5.0, steps=10`，而 qwen3 的 canonical `lr=0.2, steps=3` 已足够；也就是 qwen3 当前的主要问题已不再是预算不足
-  - 当前剩余 blocker 已从“均值尚未转正”进一步收缩成“qwen3 的正向增益仍偏脆、最坏 seed 仍会回落”，而不是继续怀疑 q-only 路径是否有效
+  - `results/generated/m3-core4-stage-c-probe-suite-v6/metrics.json` 现进一步显示：把 canonical `Stage C` 明确成 `target_episode_policy=aggregate_support` 后，两档 backbone 的 fresh best row 仍都回到 `q_only`；当前 qwen25 是 `0.6296296296296295 -> 0.6666666666666666`，qwen3 是 `0.6296296296296295 -> 0.8888888888888888`
+  - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v6/metrics.json` 同时显示：在 `aggregate_support` 口径下，两档 backbone 的最优 budget 都回到了 canonical `lr=0.2, steps=3`，说明当前 main issue 已不再是 Stage C q-only 预算
+  - `results/generated/m3-core4-stage-c-qonly-policy-sweep-v1/metrics.json` 现进一步把 policy 本身从 blocker 列表里拿掉：在同一组 5 seeds 上，`aggregate_support` 与 `independent` 给出的 `mean_task_gain` 完全一致，qwen25 都是 `-0.059259259259259255`，qwen3 都是 `0.0962962962962963`；但 `aggregate_support` 的 `mean_support_updates` 从 `9.0` 降到 `3.0`
+  - 因此，当前剩余 blocker 已更新为“target-seed 分布仍然很宽”，而不是继续怀疑 q-only 是否有效、也不是继续怀疑 `target_episode_policy`
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`

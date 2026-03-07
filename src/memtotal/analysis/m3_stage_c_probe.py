@@ -89,6 +89,7 @@ def collect_stage_c_probe_rows(
             "adapt_steps": metrics.get("adapt_steps"),
             "target_eval_repeats": metrics.get("target_eval_repeats"),
             "target_episode_repeats": metrics.get("target_episode_repeats"),
+            "target_episode_policy": metrics.get("target_episode_policy"),
             "zero_shot_task_score": zero_shot_task_score,
             "best_adapt_task_score": best_adapt_task_score,
             "task_gain": best_adapt_task_score - zero_shot_task_score,
@@ -144,6 +145,7 @@ def write_stage_c_probe_csv(output_path: str | Path, rows: list[dict[str, object
         "adapt_steps",
         "target_eval_repeats",
         "target_episode_repeats",
+        "target_episode_policy",
         "zero_shot_task_score",
         "best_adapt_task_score",
         "task_gain",
@@ -236,10 +238,14 @@ def write_stage_c_probe_svg(output_path: str | Path, rows: list[dict[str, object
         parts.append(
             f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} [{row.get('task_proxy_name') or 'none'}]</text>"
         )
+        if row.get("target_episode_policy"):
+            parts.append(
+                f"<text x='{center_x + half_bar + 16}' y='{top + 44}' font-size='11' font-family='monospace'>episode_policy={row.get('target_episode_policy')} repeats={row.get('target_episode_repeats') or 1}</text>"
+            )
         ratio = row.get("query_to_writer_grad_ratio")
         if ratio is not None:
             parts.append(
-                f"<text x='{center_x + half_bar + 16}' y='{top + 44}' font-size='11' font-family='monospace'>q/w grad ratio={float(ratio):.3e}</text>"
+                f"<text x='{center_x + half_bar + 16}' y='{top + 58}' font-size='11' font-family='monospace'>q/w grad ratio={float(ratio):.3e}</text>"
             )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -278,6 +284,7 @@ def run_m3_stage_c_probe_summary(
                 "adapt_steps": row["adapt_steps"],
                 "target_eval_repeats": row.get("target_eval_repeats"),
                 "target_episode_repeats": row.get("target_episode_repeats"),
+                "target_episode_policy": row.get("target_episode_policy"),
                 "trainable_parameter_count": row["trainable_parameter_count"],
             }
 
@@ -295,6 +302,7 @@ def run_m3_stage_c_probe_summary(
             "adapt_steps": row["adapt_steps"],
             "target_eval_repeats": row.get("target_eval_repeats"),
             "target_episode_repeats": row.get("target_episode_repeats"),
+            "target_episode_policy": row.get("target_episode_policy"),
             "adaptation_effective": row["adaptation_effective"],
             "best_adapt_task_score": row["best_adapt_task_score"],
             "best_adapt_task_proxy_score": row.get("best_adapt_task_proxy_score"),

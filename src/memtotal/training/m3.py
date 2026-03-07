@@ -78,6 +78,16 @@ def _resolve_target_episode_repeats(config: dict) -> int:
     return max(1, int(config["runtime"].get("target_episode_repeats", 1)))
 
 
+def _resolve_target_episode_policy(config: dict) -> str:
+    policy = str(config["runtime"].get("target_episode_policy", "independent"))
+    if policy not in {"independent", "aggregate_support"}:
+        raise ValueError(
+            f"Unsupported runtime.target_episode_policy={policy}. "
+            "Expected one of independent, aggregate_support."
+        )
+    return policy
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -1060,6 +1070,7 @@ def run_stage_c(
     retrieval_negative_count = _resolve_retrieval_negative_count(config)
     target_eval_repeats = _resolve_target_eval_repeats(config)
     target_episode_repeats = _resolve_target_episode_repeats(config)
+    target_episode_policy = _resolve_target_episode_policy(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1103,7 +1114,9 @@ def run_stage_c(
     latest_support_grad_norm = 0.0
     latest_support_update_max_abs = 0.0
     latest_support_update_l2 = 0.0
-    checkpoint_target_episode_policy = "first_repeat"
+    checkpoint_target_episode_policy = (
+        "shared_aggregate" if target_episode_policy == "aggregate_support" else "first_repeat"
+    )
 
     for shot in shots_list:
         episode_states = _build_stage_c_episode_states(
@@ -1115,8 +1128,13 @@ def run_stage_c(
             target_episode_repeats=target_episode_repeats,
             target_eval_repeats=target_eval_repeats,
         )
-        for episode_state in episode_states:
-            episode_state["runtime"] = copy.deepcopy(runtime)
+        if target_episode_policy == "aggregate_support":
+            shared_runtime = copy.deepcopy(runtime)
+            for episode_state in episode_states:
+                episode_state["runtime"] = shared_runtime
+        else:
+            for episode_state in episode_states:
+                episode_state["runtime"] = copy.deepcopy(runtime)
         max_recorded_steps = 0 if shot == 0 else max_steps
         for step in range(max_recorded_steps + 1):
             profiler.add_example()
@@ -1202,6 +1220,7 @@ def run_stage_c(
                     "step": step,
                     "target_eval_repeats": target_eval_repeats,
                     "target_episode_repeats": target_episode_repeats,
+                    "target_episode_policy": target_episode_policy,
                     "evaluated_target_episodes": len(episode_states),
                     "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": (
@@ -1234,38 +1253,45 @@ def run_stage_c(
             per_episode_grad_norms: list[float] = []
             per_episode_update_max_abs: list[float] = []
             per_episode_update_l2: list[float] = []
-            for episode_state in episode_states:
-                current_runtime = episode_state["runtime"]
-                support_examples = episode_state["support_examples"]
-                support_candidate_pool = episode_state["support_candidate_pool"]
-                current_adapt_parameters, _ = _configure_stage_c_trainables(current_runtime, adaptation_target)
+            if target_episode_policy == "aggregate_support":
+                shared_runtime = episode_states[0]["runtime"]
+                current_adapt_parameters, _ = _configure_stage_c_trainables(shared_runtime, adaptation_target)
                 optimizer = torch.optim.SGD(current_adapt_parameters, lr=adapt_lr)
-                if query_objective == "label_prototype":
-                    support_loss = torch.stack(
-                        [
-                            _classification_loss(
-                                current_runtime,
-                                example,
-                                candidate_states=candidate_states,
-                                candidate_labels=candidate_labels,
-                            )
-                            for example in support_examples
-                        ]
-                    ).mean()
-                else:
-                    support_loss = torch.stack(
-                        [
-                            _continuation_retrieval_loss(
-                                current_runtime,
-                                example,
-                                candidate_pool=support_candidate_pool,
-                                negative_count=retrieval_negative_count,
-                            )[0]
-                            for example in support_examples
-                        ]
-                    ).mean()
+                support_terms: list[torch.Tensor] = []
+                for episode_state in episode_states:
+                    support_examples = episode_state["support_examples"]
+                    support_candidate_pool = episode_state["support_candidate_pool"]
+                    if query_objective == "label_prototype":
+                        support_terms.extend(
+                            [
+                                _classification_loss(
+                                    shared_runtime,
+                                    example,
+                                    candidate_states=candidate_states,
+                                    candidate_labels=candidate_labels,
+                                )
+                                for example in support_examples
+                            ]
+                        )
+                    else:
+                        support_terms.extend(
+                            [
+                                _continuation_retrieval_loss(
+                                    shared_runtime,
+                                    example,
+                                    candidate_pool=support_candidate_pool,
+                                    negative_count=retrieval_negative_count,
+                                )[0]
+                                for example in support_examples
+                            ]
+                        )
+                    for example in support_examples:
+                        profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+                        profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+                        support_examples_touched += 1
                 optimizer.zero_grad()
                 before_update = _snapshot_parameter_tensors(current_adapt_parameters)
+                support_loss = torch.stack(support_terms).mean()
                 support_loss.backward()
                 episode_grad_norm = _parameter_grad_norm(current_adapt_parameters)
                 optimizer.step()
@@ -1280,10 +1306,57 @@ def run_stage_c(
                 support_grad_norms.append(episode_grad_norm)
                 support_update_max_abs.append(episode_update_max_abs)
                 support_update_l2.append(episode_update_l2)
-                for example in support_examples:
-                    profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
-                    profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
-                    support_examples_touched += 1
+            else:
+                for episode_state in episode_states:
+                    current_runtime = episode_state["runtime"]
+                    support_examples = episode_state["support_examples"]
+                    support_candidate_pool = episode_state["support_candidate_pool"]
+                    current_adapt_parameters, _ = _configure_stage_c_trainables(current_runtime, adaptation_target)
+                    optimizer = torch.optim.SGD(current_adapt_parameters, lr=adapt_lr)
+                    if query_objective == "label_prototype":
+                        support_loss = torch.stack(
+                            [
+                                _classification_loss(
+                                    current_runtime,
+                                    example,
+                                    candidate_states=candidate_states,
+                                    candidate_labels=candidate_labels,
+                                )
+                                for example in support_examples
+                            ]
+                        ).mean()
+                    else:
+                        support_loss = torch.stack(
+                            [
+                                _continuation_retrieval_loss(
+                                    current_runtime,
+                                    example,
+                                    candidate_pool=support_candidate_pool,
+                                    negative_count=retrieval_negative_count,
+                                )[0]
+                                for example in support_examples
+                            ]
+                        ).mean()
+                    optimizer.zero_grad()
+                    before_update = _snapshot_parameter_tensors(current_adapt_parameters)
+                    support_loss.backward()
+                    episode_grad_norm = _parameter_grad_norm(current_adapt_parameters)
+                    optimizer.step()
+                    episode_update_max_abs, episode_update_l2 = _parameter_update_stats(
+                        before_update,
+                        current_adapt_parameters,
+                    )
+                    support_updates += 1
+                    per_episode_grad_norms.append(episode_grad_norm)
+                    per_episode_update_max_abs.append(episode_update_max_abs)
+                    per_episode_update_l2.append(episode_update_l2)
+                    support_grad_norms.append(episode_grad_norm)
+                    support_update_max_abs.append(episode_update_max_abs)
+                    support_update_l2.append(episode_update_l2)
+                    for example in support_examples:
+                        profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
+                        profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
+                        support_examples_touched += 1
             latest_support_grad_norm = sum(per_episode_grad_norms) / len(per_episode_grad_norms)
             latest_support_update_max_abs = (
                 sum(per_episode_update_max_abs) / len(per_episode_update_max_abs)
@@ -1304,6 +1377,7 @@ def run_stage_c(
                 "step",
                 "target_eval_repeats",
                 "target_episode_repeats",
+                "target_episode_policy",
                 "evaluated_target_episodes",
                 "evaluated_query_examples",
                 "query_candidate_pool_size",
@@ -1336,6 +1410,7 @@ def run_stage_c(
             "target_domain": manifest["target_domain"],
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
+            "target_episode_policy": target_episode_policy,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -1362,6 +1437,7 @@ def run_stage_c(
         "adapt_shots": shots_list,
         "target_eval_repeats": target_eval_repeats,
         "target_episode_repeats": target_episode_repeats,
+        "target_episode_policy": target_episode_policy,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1408,6 +1484,7 @@ def run_stage_c(
         "adapt_shots": shots_list,
         "target_eval_repeats": target_eval_repeats,
         "target_episode_repeats": target_episode_repeats,
+        "target_episode_policy": target_episode_policy,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],

@@ -48,6 +48,9 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                     "adapt_steps": 3,
                     "target_eval_repeats": 3,
                     "target_episode_repeats": 3,
+                    "target_episode_policy": "aggregate_support",
+                    "support_updates": 3,
+                    "support_examples_touched": 9,
                     "zero_shot_task_score": zero_shot_task_score,
                     "best_adapt_task_score": best_adapt_task_score,
                     "task_metric_name": "accuracy",
@@ -93,6 +96,9 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             self.assertEqual(rows[0]["seed"], 1)
             self.assertEqual(rows[0]["target_eval_repeats"], 3)
             self.assertEqual(rows[0]["target_episode_repeats"], 3)
+            self.assertEqual(rows[0]["target_episode_policy"], "aggregate_support")
+            self.assertEqual(rows[0]["support_updates"], 3)
+            self.assertEqual(rows[0]["support_examples_touched"], 9)
             self.assertAlmostEqual(float(rows[0]["task_gain"]), 0.25)
             self.assertAlmostEqual(float(rows[1]["task_gain"]), -0.25)
 
@@ -158,6 +164,18 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             )
             self.assertEqual(metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_eval_repeats"], [3])
             self.assertEqual(metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_episode_repeats"], [3])
+            self.assertEqual(
+                metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_episode_policies"],
+                ["aggregate_support"],
+            )
+            self.assertEqual(
+                metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["mean_support_updates"],
+                3.0,
+            )
+            self.assertEqual(
+                metrics["by_backbone_policy"]["Qwen2.5-1.5B-Instruct::aggregate_support"]["seed_count"],
+                2,
+            )
             self.assertEqual(metrics["by_backbone"]["Qwen3-8B"]["worst_seed"], 21)
             self.assertAlmostEqual(metrics["by_backbone"]["Qwen3-8B"]["mean_task_gain"], -0.25)
 

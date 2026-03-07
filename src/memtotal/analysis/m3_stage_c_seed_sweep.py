@@ -34,6 +34,13 @@ def _load_seed(run_dir: Path) -> int | None:
     return int(seed)
 
 
+def _load_adapt_cost(run_dir: Path) -> dict[str, object]:
+    adapt_cost_path = run_dir / "adapt_cost.json"
+    if not adapt_cost_path.exists():
+        return {}
+    return _read_json(adapt_cost_path)
+
+
 def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, object]]:
     root = Path(input_root).resolve()
     rows: list[dict[str, object]] = []
@@ -44,6 +51,7 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
         if str(metrics.get("adaptation_target", "")) != "q_only":
             continue
         run_dir = metrics_path.parent
+        adapt_cost = _load_adapt_cost(run_dir)
         zero_shot_task_score = float(metrics.get("zero_shot_task_score") or 0.0)
         best_adapt_task_score = float(metrics.get("best_adapt_task_score") or 0.0)
         zero_shot_task_proxy_score = float(metrics.get("zero_shot_task_proxy_score") or 0.0)
@@ -63,6 +71,12 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
                 "adapt_steps": metrics.get("adapt_steps"),
                 "target_eval_repeats": metrics.get("target_eval_repeats"),
                 "target_episode_repeats": metrics.get("target_episode_repeats"),
+                "target_episode_policy": metrics.get("target_episode_policy"),
+                "support_updates": metrics.get("support_updates", adapt_cost.get("support_updates")),
+                "support_examples_touched": metrics.get(
+                    "support_examples_touched",
+                    adapt_cost.get("support_examples_touched"),
+                ),
                 "zero_shot_task_score": zero_shot_task_score,
                 "best_adapt_task_score": best_adapt_task_score,
                 "task_gain": best_adapt_task_score - zero_shot_task_score,
@@ -99,6 +113,9 @@ def write_stage_c_seed_sweep_csv(output_path: str | Path, rows: list[dict[str, o
         "adapt_steps",
         "target_eval_repeats",
         "target_episode_repeats",
+        "target_episode_policy",
+        "support_updates",
+        "support_examples_touched",
         "zero_shot_task_score",
         "best_adapt_task_score",
         "task_gain",
@@ -157,7 +174,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
         bar_x = center_x if value >= 0 else center_x - bar_width
         backbone = str(row["backbone"])
         parts.append(
-            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} seed={row['seed']}</text>"
+            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} {row.get('target_episode_policy') or 'independent'} seed={row['seed']}</text>"
         )
         parts.append(
             f"<rect x='{center_x - half_bar}' y='{top}' width='{half_bar * 2}' height='24' fill='#efe6d0' rx='4' />"
@@ -176,7 +193,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
             f"<text x='{center_x + half_bar + 16}' y='{top + 16}' font-size='12' font-family='monospace'>{value:.3f} score={score_label}</text>"
         )
         parts.append(
-            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1}</text>"
+            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1} policy={row.get('target_episode_policy') or 'independent'}</text>"
         )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -197,29 +214,54 @@ def run_m3_stage_c_seed_sweep_summary(
     write_stage_c_seed_sweep_csv(summary_csv, rows)
     write_stage_c_seed_sweep_svg(summary_svg, rows)
 
-    by_backbone: dict[str, dict[str, object]] = {}
-    for backbone in sorted({str(row["backbone"]) for row in rows}):
-        backbone_rows = [row for row in rows if str(row["backbone"]) == backbone]
-        positive = [row for row in backbone_rows if float(row["task_gain"]) > 0.0]
-        non_negative = [row for row in backbone_rows if float(row["task_gain"]) >= 0.0]
-        best_row = max(backbone_rows, key=lambda row: (float(row["task_gain"]), float(row["proxy_gain"])))
-        worst_row = min(backbone_rows, key=lambda row: (float(row["task_gain"]), float(row["proxy_gain"])))
-        by_backbone[backbone] = {
-            "seed_count": len(backbone_rows),
+    def _summarize(group_rows: list[dict[str, object]]) -> dict[str, object]:
+        positive = [row for row in group_rows if float(row["task_gain"]) > 0.0]
+        non_negative = [row for row in group_rows if float(row["task_gain"]) >= 0.0]
+        best_row = max(group_rows, key=lambda row: (float(row["task_gain"]), float(row["proxy_gain"])))
+        worst_row = min(group_rows, key=lambda row: (float(row["task_gain"]), float(row["proxy_gain"])))
+        return {
+            "seed_count": len(group_rows),
             "positive_gain_count": len(positive),
-            "positive_gain_rate": len(positive) / len(backbone_rows),
-            "non_negative_gain_rate": len(non_negative) / len(backbone_rows),
-            "mean_task_gain": sum(float(row["task_gain"]) for row in backbone_rows) / len(backbone_rows),
-            "mean_proxy_gain": sum(float(row["proxy_gain"]) for row in backbone_rows) / len(backbone_rows),
-            "target_eval_repeats": sorted({int(row.get("target_eval_repeats") or 1) for row in backbone_rows}),
+            "positive_gain_rate": len(positive) / len(group_rows),
+            "non_negative_gain_rate": len(non_negative) / len(group_rows),
+            "mean_task_gain": sum(float(row["task_gain"]) for row in group_rows) / len(group_rows),
+            "mean_proxy_gain": sum(float(row["proxy_gain"]) for row in group_rows) / len(group_rows),
+            "mean_support_updates": sum(float(row.get("support_updates") or 0.0) for row in group_rows)
+            / len(group_rows),
+            "mean_support_examples_touched": sum(
+                float(row.get("support_examples_touched") or 0.0) for row in group_rows
+            )
+            / len(group_rows),
+            "target_eval_repeats": sorted({int(row.get("target_eval_repeats") or 1) for row in group_rows}),
             "target_episode_repeats": sorted(
-                {int(row.get("target_episode_repeats") or 1) for row in backbone_rows}
+                {int(row.get("target_episode_repeats") or 1) for row in group_rows}
+            ),
+            "target_episode_policies": sorted(
+                {str(row.get("target_episode_policy") or "independent") for row in group_rows}
             ),
             "best_seed": best_row["seed"],
             "best_task_gain": best_row["task_gain"],
             "worst_seed": worst_row["seed"],
             "worst_task_gain": worst_row["task_gain"],
         }
+
+    by_backbone: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        backbone_rows = [row for row in rows if str(row["backbone"]) == backbone]
+        by_backbone[backbone] = _summarize(backbone_rows)
+
+    by_backbone_policy: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        for policy in sorted({str(row.get("target_episode_policy") or "independent") for row in rows if str(row["backbone"]) == backbone}):
+            grouped_rows = [
+                row
+                for row in rows
+                if str(row["backbone"]) == backbone
+                and str(row.get("target_episode_policy") or "independent") == policy
+            ]
+            if not grouped_rows:
+                continue
+            by_backbone_policy[f"{backbone}::{policy}"] = _summarize(grouped_rows)
 
     metrics = {
         "mode": "analysis",
@@ -229,6 +271,7 @@ def run_m3_stage_c_seed_sweep_summary(
         "summary_csv": str(summary_csv.resolve()),
         "summary_plot": str(summary_svg.resolve()),
         "by_backbone": by_backbone,
+        "by_backbone_policy": by_backbone_policy,
     }
     write_json(output_dir / "metrics.json", metrics)
     return metrics
