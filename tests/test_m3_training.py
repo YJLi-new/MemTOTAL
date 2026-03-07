@@ -691,6 +691,17 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("support_ids", episode_trace["rows"][0])
             self.assertIn("eval_query_set_ids", episode_trace["rows"][0])
             self.assertIn("target_support_selection_policy", episode_trace["rows"][0])
+            self.assertTrue(stage_c_dir.joinpath("task_case_dump.jsonl").exists())
+            case_rows = [
+                json.loads(line)
+                for line in stage_c_dir.joinpath("task_case_dump.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(case_rows)
+            self.assertIn("example_id", case_rows[0])
+            self.assertIn("gold_label", case_rows[0])
+            self.assertIn("top_competitor_text", case_rows[0])
+            self.assertIn("support_ids", case_rows[0])
 
             with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
                 rows = list(csv.DictReader(handle))
@@ -723,6 +734,8 @@ class M3TrainingTest(unittest.TestCase):
             self.assertAlmostEqual(float(zero_row["task_score"]), float(shot_row["task_score"]))
             self.assertEqual(zero_row["query_candidate_pool_size"], shot_row["query_candidate_pool_size"])
             self.assertEqual(zero_row["support_candidate_pool_size"], shot_row["support_candidate_pool_size"])
+            self.assertEqual(stage_c_metrics["task_case_dump_rows"], len(case_rows))
+            self.assertTrue(stage_c_metrics["task_case_dump_path"].endswith("task_case_dump.jsonl"))
 
 
 if __name__ == "__main__":

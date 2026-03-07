@@ -6,6 +6,8 @@
 
 - 给外部 review 用的最新摘要在 `docs/briefs/20260307-stage-c-review-brief.md`。
 - 可随仓库一起 push 的关键结果镜像在 `runs/review/` 与 `results/generated/review/`；刷新脚本是 `scripts/publish_review_artifacts.sh`。
+- `Stage C` canonical 现在会把每个 target case 的 `gold / competitor / margin / support_ids` 直接写到 `task_case_dump.jsonl`；对应归因摘要在 `results/generated/m3-core4-stage-c-error-attribution-v1/`。
+- 最新 error-attribution 结论：当前不是“大量 case 都差临门一脚”，而是 61 个配对 case 里只有 2 个 near-threshold bad cases；同时不少错例被打上 `story_context_favors_competitor`。因此下一步该优先做 near-threshold 非线性推力和 case-level 错误归因，而不是继续扫全局 loss/sample 策略。
 - 现在已经打通 benchmark-native `M3 core4` smoke：`gsm8k + kodcode + gpqa + story_cloze`。
 - Stage C 当前 canonical 是 `target_split_policy=random`、`target_support_bank_size=auto`、`target_support_negative_pool=source_plus_support_bank`、`target_support_negative_sampler=hard_by_current_model`、`retrieval_loss_type=cross_entropy_plus_margin`、`retrieval_margin_value=0.1`；其余仍是 `target_eval_repeats=3`、`target_episode_repeats=3`、`target_episode_policy=aggregate_support`。
 - 最新进展：已经修掉 benchmark-native `Stage C` 的评测泄漏。现在 `shot` 不再改变 target episode seed，query/eval 改为固定 holdout pool，support inner-loop 也改为固定 support bank。

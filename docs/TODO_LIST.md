@@ -463,6 +463,14 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 已用新的 canonical `retrieval_loss_type=cross_entropy_plus_margin` 重跑 q-only 5-seed sweep：`results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/metrics.json`
   - 当前两档 backbone 仍都是 `mean_task_gain=0.0`、`positive_gain_rate=0.0`
   - 也就是说，当前 blocker 已继续收缩成“如何把更强的 proxy / margin gain 推过 official rank-flip 阈值”，而不是“该用哪一类 retrieval loss”
+- 已新增 benchmark-native `Stage C` case-level error attribution：`scripts/run_m3_core4_stage_c_error_attribution.sh`
+  - `Stage C` 现会直接产出 `task_case_dump.jsonl`，把每个 target case 的 `gold / competitor / margin / support_ids` 落盘
+  - fresh canonical replay `results/generated/m3-core4-stage-c-qonly-seed-sweep-v6-case-dump/metrics.json` 当前与 v5 一样，仍是两档 backbone `mean_task_gain=0.0`
+  - 但 `results/generated/m3-core4-stage-c-error-attribution-v1/metrics.json` 现给出更具体的 blocker：
+    - 61 个配对 case 里真正 near-threshold 但没翻正的只有 2 个
+    - qwen25 还有 9 个 `improving_but_unflipped` cases，qwen3 只有 1 个
+    - 很多 remaining wrong cases 会被打上 `story_context_favors_competitor`
+  - 因此下一步不应再扫全局 loss/sample 策略，而应优先做 near-threshold 非线性推力和 case-level targeted objective
 - 已新增 benchmark-native `Stage C curve suite` harness：`scripts/run_m3_core4_stage_c_curve_suite.sh`
   - 单个 seed/run 直接产出更接近正式协议的 `adapt_shots={0,1,2,3}`、`adapt_steps=5` 曲线
   - 分析层会自动汇总 `curve_rows.csv`、`shot_curve.csv/.svg`、`step_curve.csv/.svg`

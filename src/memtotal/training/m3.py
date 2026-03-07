@@ -19,7 +19,7 @@ from memtotal.data import (
 )
 from memtotal.pipeline import MemoryRuntime
 from memtotal.tasks import TaskEvaluator, get_task_spec
-from memtotal.utils.io import write_json
+from memtotal.utils.io import write_json, write_jsonl
 from memtotal.utils.profiling import ProfileTracker
 
 
@@ -425,6 +425,8 @@ def _build_task_evaluator_for_example(example: dict[str, Any]) -> TaskEvaluator:
 def _evaluate_task_example(
     runtime: MemoryRuntime,
     example: dict[str, Any],
+    *,
+    return_details: bool = False,
 ) -> dict[str, object]:
     evaluator = _build_task_evaluator_for_example(example)
     if evaluator.evaluator_type == "multiple_choice":
@@ -448,18 +450,58 @@ def _evaluate_task_example(
         gold_label = str(example["label"])
         gold_index = candidate_labels.index(gold_label)
         if len(candidate_labels) > 1:
-            best_other_score = max(
-                float(score.item()) for index, score in enumerate(scores) if index != gold_index
+            best_other_index = max(
+                (index for index in range(len(candidate_labels)) if index != gold_index),
+                key=lambda index: float(scores[index].item()),
             )
         else:
-            best_other_score = float(scores[gold_index].item())
-        return {
+            best_other_index = gold_index
+        best_other_score = float(scores[best_other_index].item())
+        payload = {
             "task_score": float(score_payload["score"]),
             "task_metric_name": evaluator.metric_name,
             "task_proxy_score": float(probabilities[gold_index].item()),
             "task_proxy_name": "gold_choice_probability",
             "task_margin": float(scores[gold_index].item()) - best_other_score,
         }
+        if return_details:
+            payload["details"] = {
+                "example_id": str(example.get("id", "")),
+                "benchmark_id": str(example.get("benchmark_id", "")),
+                "domain": str(example.get("domain", "")),
+                "task_name": str(example.get("task_name", "")),
+                "segment": str(example.get("segment", "")),
+                "example_task_score": float(score_payload["score"]),
+                "example_task_metric_name": evaluator.metric_name,
+                "example_task_proxy_score": float(probabilities[gold_index].item()),
+                "example_task_proxy_name": "gold_choice_probability",
+                "example_task_margin": float(scores[gold_index].item()) - best_other_score,
+                "gold_label": gold_label,
+                "gold_text": candidate_texts[gold_index],
+                "predicted_label": predicted_label,
+                "predicted_text": predicted_text,
+                "predicted_correct": predicted_label == gold_label,
+                "gold_score": float(scores[gold_index].item()),
+                "gold_probability": float(probabilities[gold_index].item()),
+                "predicted_score": float(scores[predicted_index].item()),
+                "predicted_probability": float(probabilities[predicted_index].item()),
+                "top_competitor_label": candidate_labels[best_other_index],
+                "top_competitor_text": candidate_texts[best_other_index],
+                "top_competitor_score": best_other_score,
+                "top_competitor_probability": float(probabilities[best_other_index].item()),
+                "choices": [
+                    {
+                        "label": candidate_labels[index],
+                        "text": candidate_texts[index],
+                        "score": float(scores[index].item()),
+                        "probability": float(probabilities[index].item()),
+                        "is_gold": index == gold_index,
+                        "is_predicted": index == predicted_index,
+                    }
+                    for index in range(len(candidate_labels))
+                ],
+            }
+        return payload
 
     forward = runtime.forward_example(example)
     generated_text = runtime.backbone.generate(
@@ -468,50 +510,77 @@ def _evaluate_task_example(
     )[0]
     score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
     score = float(score_payload["score"])
-    return {
+    payload = {
         "task_score": score,
         "task_metric_name": evaluator.metric_name,
         "task_proxy_score": score,
         "task_proxy_name": evaluator.metric_name,
         "task_margin": 0.0,
     }
+    if return_details:
+        payload["details"] = {
+            "example_id": str(example.get("id", "")),
+            "benchmark_id": str(example.get("benchmark_id", "")),
+            "domain": str(example.get("domain", "")),
+            "task_name": str(example.get("task_name", "")),
+            "segment": str(example.get("segment", "")),
+            "example_task_score": score,
+            "example_task_metric_name": evaluator.metric_name,
+            "example_task_proxy_score": score,
+            "example_task_proxy_name": evaluator.metric_name,
+            "example_task_margin": 0.0,
+            "generated_text": generated_text,
+            "gold_answer": str(example.get("gold_answer", example.get("continuation", ""))),
+        }
+    return payload
 
 
 def _mean_task_score(
     runtime: MemoryRuntime,
     examples: list[dict[str, Any]],
+    *,
+    include_details: bool = False,
 ) -> dict[str, object]:
     task_scores: list[float] = []
     metric_names: list[str] = []
     proxy_scores: list[float] = []
     proxy_names: list[str] = []
     task_margins: list[float] = []
+    detail_rows: list[dict[str, object]] = []
     for example in examples:
-        metrics = _evaluate_task_example(runtime, example)
+        metrics = _evaluate_task_example(runtime, example, return_details=include_details)
         task_scores.append(float(metrics["task_score"]))
         metric_names.append(str(metrics["task_metric_name"]))
         proxy_scores.append(float(metrics["task_proxy_score"]))
         proxy_names.append(str(metrics["task_proxy_name"]))
         task_margins.append(float(metrics["task_margin"]))
+        if include_details and "details" in metrics:
+            detail_rows.append(dict(metrics["details"]))
     if not task_scores:
-        return {
+        payload = {
             "task_score": 0.0,
             "task_metric_name": "none",
             "task_proxy_score": 0.0,
             "task_proxy_name": "none",
             "task_margin": 0.0,
         }
+        if include_details:
+            payload["details"] = []
+        return payload
     unique_metric_names = sorted(set(metric_names))
     resolved_metric_name = unique_metric_names[0] if len(unique_metric_names) == 1 else "mean_score"
     unique_proxy_names = sorted(set(proxy_names))
     resolved_proxy_name = unique_proxy_names[0] if len(unique_proxy_names) == 1 else "mean_proxy_score"
-    return {
+    payload = {
         "task_score": sum(task_scores) / len(task_scores),
         "task_metric_name": resolved_metric_name,
         "task_proxy_score": sum(proxy_scores) / len(proxy_scores),
         "task_proxy_name": resolved_proxy_name,
         "task_margin": sum(task_margins) / len(task_margins),
     }
+    if include_details:
+        payload["details"] = detail_rows
+    return payload
 
 
 def _resolve_retrieval_candidates(
@@ -1468,6 +1537,7 @@ def run_stage_c(
     profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
     curve_rows: list[dict[str, object]] = []
     episode_trace_rows: list[dict[str, object]] = []
+    task_case_rows: list[dict[str, object]] = []
     best_runtime = copy.deepcopy(runtime)
     best_adapt_row: dict[str, object] | None = None
     support_updates = 0
@@ -1549,7 +1619,7 @@ def run_stage_c(
                 eval_query_sets = episode_state["eval_query_sets"]
                 query_candidate_pool = episode_state["query_candidate_pool"]
                 episode_task_proxy_scores: list[float] = []
-                for query_examples in eval_query_sets:
+                for query_set_index, query_examples in enumerate(eval_query_sets):
                     for example in query_examples:
                         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
                         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
@@ -1582,12 +1652,75 @@ def run_stage_c(
                             loss_type=retrieval_loss_type,
                             margin_value=retrieval_margin_value,
                         )
-                        task_metrics = _mean_task_score(current_runtime, query_examples)
+                        task_metrics = _mean_task_score(
+                            current_runtime,
+                            query_examples,
+                            include_details=True,
+                        )
                         task_score = float(task_metrics["task_score"])
                         task_metric_name = str(task_metrics["task_metric_name"])
                         task_proxy_score = float(task_metrics["task_proxy_score"])
                         task_proxy_name = str(task_metrics["task_proxy_name"])
                         task_margin = float(task_metrics["task_margin"])
+                        for case_index, case_row in enumerate(task_metrics.get("details", [])):
+                            task_case_rows.append(
+                                {
+                                    "shot": shot,
+                                    "step": step,
+                                    "episode_index": episode_index,
+                                    "episode_seed": int(episode_state["episode_seed"]),
+                                    "eval_query_set_index": query_set_index,
+                                    "eval_query_set_size": len(query_examples),
+                                    "case_index": case_index,
+                                    "query_learning_mode": query_learning_mode,
+                                    "query_objective": query_objective,
+                                    "adaptation_target": adaptation_target,
+                                    "backbone": config["backbone"]["name"],
+                                    "seed": seed,
+                                    "target_eval_repeats": target_eval_repeats,
+                                    "target_episode_repeats": target_episode_repeats,
+                                    "target_episode_policy": target_episode_policy,
+                                    "target_support_weighting": target_support_weighting,
+                                    "target_split_policy": target_split_policy,
+                                    "target_support_bank_size": int(
+                                        episode_state["target_support_bank_size"]
+                                    ),
+                                    "target_support_negative_pool": target_support_negative_pool,
+                                    "target_support_negative_sampler": target_support_negative_sampler,
+                                    "target_support_selection_policy": target_support_selection_policy,
+                                    "support_ids": [
+                                        str(example["id"]) for example in episode_state["support_examples"]
+                                    ],
+                                    "support_candidate_ids": [
+                                        str(example["id"])
+                                        for example in episode_state["support_candidate_examples"]
+                                    ],
+                                    "support_negative_pool_ids": [
+                                        str(example["id"])
+                                        for example in episode_state["support_candidate_pool"]
+                                    ],
+                                    "query_candidate_ids": [
+                                        str(example["id"]) for example in episode_state["query_candidate_pool"]
+                                    ],
+                                    "eval_query_set_ids": [
+                                        str(example["id"]) for example in query_examples
+                                    ],
+                                    "objective_loss": objective_loss,
+                                    "objective_accuracy": objective_accuracy,
+                                    "task_score": float(case_row.get("example_task_score", task_score)),
+                                    "task_metric_name": str(
+                                        case_row.get("example_task_metric_name", task_metric_name)
+                                    ),
+                                    "task_proxy_score": float(
+                                        case_row.get("example_task_proxy_score", task_proxy_score)
+                                    ),
+                                    "task_proxy_name": str(
+                                        case_row.get("example_task_proxy_name", task_proxy_name)
+                                    ),
+                                    "task_margin": float(case_row.get("example_task_margin", task_margin)),
+                                    **case_row,
+                                }
+                            )
                     eval_objective_losses.append(objective_loss)
                     eval_objective_accuracies.append(objective_accuracy)
                     eval_task_scores.append(task_score)
@@ -1916,6 +2049,7 @@ def run_stage_c(
     }
     adapt_cost_path = output_dir / "adapt_cost.json"
     write_json(adapt_cost_path, adapt_cost)
+    task_case_dump_path = output_dir / "task_case_dump.jsonl"
     metrics = {
         "mode": "train",
         "training_stage": "stage_c",
@@ -1972,6 +2106,8 @@ def run_stage_c(
         "best_adapt_step": best_row["step"],
         "adapt_curve_path": str(adapt_curve_path.resolve()),
         "adapt_cost_path": str(adapt_cost_path.resolve()),
+        "task_case_dump_path": str(task_case_dump_path.resolve()),
+        "task_case_dump_rows": len(task_case_rows),
         "queries_meta_init": str(queries_path.resolve()),
         "writer_checkpoint": str(writer_path.resolve()),
         "adapted_queries_checkpoint": str((output_dir / "queries_adapted.pt").resolve()),
@@ -1985,4 +2121,5 @@ def run_stage_c(
     write_json(output_dir / "metrics.json", metrics)
     write_json(output_dir / "adapt_curve.json", {"rows": curve_rows})
     write_json(output_dir / "episode_trace.json", {"rows": episode_trace_rows})
+    write_jsonl(task_case_dump_path, task_case_rows)
     return metrics

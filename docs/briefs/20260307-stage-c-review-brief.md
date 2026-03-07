@@ -92,6 +92,32 @@ fresh 5-seed replay：
 
 > 默认口径已经推进到“更强 proxy / 更强 margin”，但 official rank flip 仍未打通。
 
+### 4. 现在已经有 case-level error attribution
+
+最新 canonical case-dump replay：
+- `runs/review/m3-core4-stage-c-qonly-seed-sweep-v6-case-dump/`
+- `results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v6-case-dump/`
+- `results/generated/review/m3-core4-stage-c-error-attribution-v1/`
+
+当前新增的硬证据是：
+- `Stage C` 现在会直接写 `task_case_dump.jsonl`
+- fresh error-attribution 当前收到了 `61` 个 zero-shot vs best-adapt 配对 case
+- 其中真正接近 rank flip 但仍没翻正的只有 `2` 个
+  - qwen25: `1`
+  - qwen3: `1`
+- qwen25 还有 `9` 个 “margin/proxy 都在变好，但还没翻正” 的 case；qwen3 只有 `1` 个
+- 很多 remaining wrong cases 会被打上 `story_context_favors_competitor`
+  - qwen25: `14`
+  - qwen3: `16`
+
+这说明当前 blocker 比之前想得更具体：
+- 不是“大量 case 都离翻正只差一点”
+- 而是“只有极少数 case 真正贴近边界，且一批错例的 story context 本身就更像 competitor”
+
+所以现在更值得问高手的是：
+- 对那极少数 near-threshold cases，应该怎样加非线性推力
+- 对那些 `story_context_favors_competitor` 的错例，应该怎样做 case-level 归因与 targeted objective，而不是继续扫全局策略
+
 ## 当前最值得外部高手判断的问题
 
 我们现在更需要的不是再扫一个全局 loss / sample 策略，而是以下两类方向的建议：
@@ -126,9 +152,12 @@ fresh 5-seed replay：
 - `runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1/`
 - `runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1/`
 - `runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/`
+- `runs/review/m3-core4-stage-c-qonly-seed-sweep-v6-case-dump/`
 - `results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1/`
 - `results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1/`
 - `results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/`
+- `results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v6-case-dump/`
+- `results/generated/review/m3-core4-stage-c-error-attribution-v1/`
 - `results/generated/review/m3-core4-stage-c-margin-audit-v3-fixed-holdout/`
 - `results/generated/review/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/`
 - `results/generated/review/m3-core4-stage-c-curve-suite-v3-fixed-holdout/`

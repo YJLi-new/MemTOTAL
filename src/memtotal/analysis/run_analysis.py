@@ -7,6 +7,7 @@ from pathlib import Path
 from memtotal.analysis.baseline_budget import run_baseline_budget_audit
 from memtotal.analysis.failure_checks import run_m3_failure_checks
 from memtotal.analysis.m3_gradient_audit import run_m3_stage_c_gradient_audit
+from memtotal.analysis.m3_stage_c_error_attribution import run_m3_stage_c_error_attribution
 from memtotal.analysis.m3_stage_c_margin_audit import run_m3_stage_c_margin_audit
 from memtotal.analysis.m3_stage_c_negative_seed_curve_audit import run_m3_stage_c_negative_seed_curve_audit
 from memtotal.analysis.m3_probe import run_m3_stage_b_probe_summary
@@ -116,6 +117,16 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=output_dir,
             input_root=args.input_root,
             dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "m3_stage_c_error_attribution":
+        if not args.input_root:
+            raise ValueError("--input_root is required for m3_stage_c_error_attribution mode.")
+        run_m3_stage_c_error_attribution(
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+            near_threshold_margin=float(config["runtime"].get("near_threshold_margin", 0.02)),
         )
         return 0
     if analysis_mode == "m3_stage_c_negative_seed_curve_audit":
