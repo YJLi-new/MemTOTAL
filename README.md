@@ -75,6 +75,8 @@
 
 ## 关键结果路径
 
+- 最新 `docs/` 压缩包：
+  - `docs_review_bundle.zip`
 - 最新 brief：
   - `docs/briefs/20260307-story-cloze-real-pilot-brief.md`
 - Story Cloze real pilot 原始运行：
