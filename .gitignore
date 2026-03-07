@@ -1,6 +1,8 @@
 runs/*
 !runs/review/
 !runs/review/**
+runs/review/**/*.pt
+runs/review/**/*.ckpt
 results/generated/*
 !results/generated/review/
 !results/generated/review/**

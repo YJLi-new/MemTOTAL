@@ -1,0 +1,27 @@
+{
+  "eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/screen-eval248.jsonl",
+  "eval_examples": 248,
+  "source_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/story_cloze/eval-real-smoke256.jsonl",
+  "support_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/pilot-support8.jsonl",
+  "support_examples": 8,
+  "support_ids": [
+    "2ce3faeb-ad74-4812-8451-ce60c002762f",
+    "32618467-c2f9-4bb5-a619-d77135a738d8",
+    "3780e0e6-e6d9-44bd-93ba-dfba822abad7",
+    "73c40173-522e-47b7-9051-d3569be0a196",
+    "933f6b31-5034-4a02-aa53-121fd41fdc2c",
+    "c57406cd-91ee-43cb-b94f-c014117b714b",
+    "c95a3418-908a-4395-97f2-e7e8d5453a15",
+    "cb1cdd39-38aa-4229-a2ef-289d88057b33"
+  ],
+  "support_labels": [
+    "B",
+    "B",
+    "B",
+    "A",
+    "B",
+    "A",
+    "A",
+    "A"
+  ]
+}

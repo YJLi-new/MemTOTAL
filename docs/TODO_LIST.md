@@ -381,6 +381,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - Stage C 现支持 `expected_query_learning_mode` 校验，避免把 `random / non-meta / meta-trained` 的 reader init resume 混到错误 run 里
 - Stage C 的 `adapt_curve.csv` 现已同时写出 `objective_loss / task_score / task_metric_name`，并把 `best_adapt_task_score` 作为 benchmark-native 主曲线字段
 - Stage C 的 `adapt_curve.csv` 现还会额外写出 `task_proxy_score / task_proxy_name / task_margin`；当前 multiple-choice 任务的默认 proxy 是 `gold_choice_probability`
+- 已新增真实 `Qwen2.5-1.5B-Instruct` 的 `story_cloze` decision-interface pilot：
+  - `src/memtotal/training/m3_real_pilot.py`
+  - `src/memtotal/analysis/story_cloze_real_pilot.py`
+  - `scripts/run_m3_story_cloze_real_pilot_qwen25.sh`
+  - 固定流程是 `screen256 -> split -> A/B screening -> fixed100 -> A/B/C/D/E compare`
+- 这轮 real qwen25 pilot 的当前结果已经明确：
+  - `screen248` 上 `A=base_only` 为 `accuracy=0.6411290322580645`
+  - 但 hard `fixed100` 上 `A/B/C/D/E` 全部是 `task_score=0.2`
+  - `A -> C` 只有极小 `mean_margin_gain=0.0016285324096679688`、`mean_proxy_gain=0.00023484499303563528`
+  - `C -> D` 与 `C -> E` 的 `mean_task_gain` 都是 `0.0`
+- 因而，这轮已经能下一个明确结论：
+  - 当前这版 `candidate_conditioned_late_fusion` 在真实 qwen25 上还没有带来任何 `story_cloze` choice flip
+  - 当前也还看不出真实 memory 内容效应，`real memory` 与 `shuffled memory` 几乎重合
+  - 顺着“推力不够”做的全局 `support_grid_search` 也已经试过：看 `pilot-support8` 会把 `alpha` 压到 `0`，换成额外的 `calibration-hard32` 也仍然回到 `alpha=1`
+  - 下一步更值得做的是 competitor-aware inner-loop / conditional residual calibration，而不是继续扫全局 loss/sample
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

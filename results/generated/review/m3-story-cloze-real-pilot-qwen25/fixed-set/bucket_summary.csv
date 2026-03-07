@@ -1,0 +1,6 @@
+bucket,requested_examples,selected_examples
+near_threshold_bad,20,0
+improving_but_unflipped,20,40
+stubborn_wrong_story_context,20,20
+stubborn_wrong_other,20,20
+base_correct_control,20,20

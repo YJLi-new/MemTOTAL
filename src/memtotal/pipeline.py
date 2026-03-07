@@ -29,18 +29,26 @@ class ExampleForward:
 class MemoryRuntime(nn.Module):
     def __init__(self, config: dict, seed: int) -> None:
         super().__init__()
-        embed_dim = int(config["method"]["embed_dim"])
         backbone_cfg = config["backbone"]
+        runtime_device = str(config["runtime"].get("device", "cpu"))
+        backbone_hidden_size = backbone_cfg.get("stub_hidden_size")
         self.backbone = BackboneWrapper(
             name=backbone_cfg["name"],
             load_mode=backbone_cfg["load_mode"],
-            hidden_size=int(backbone_cfg["stub_hidden_size"]),
+            hidden_size=int(backbone_hidden_size) if backbone_hidden_size is not None else None,
             seed=seed,
+            model_id=backbone_cfg.get("model_id"),
+            device=runtime_device,
+            dtype=str(backbone_cfg.get("dtype", "float32")),
+            cache_dir=backbone_cfg.get("cache_dir"),
+            max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
         )
+        embed_dim_raw = config["method"].get("embed_dim", self.backbone.hidden_size)
+        embed_dim = self.backbone.hidden_size if str(embed_dim_raw) == "auto" else int(embed_dim_raw)
         self.task_name = str(config["task"]["name"])
         if self.backbone.hidden_size != embed_dim:
             raise ValueError(
-                "For M0 stub mode, method.embed_dim must match backbone.stub_hidden_size."
+                f"method.embed_dim={embed_dim} must match backbone hidden size {self.backbone.hidden_size}."
             )
         self.segmenter = Segmenter(
             mode=config["method"]["segmenter"]["mode"],
@@ -87,6 +95,8 @@ class MemoryRuntime(nn.Module):
             "domain_key": str(conditioning_cfg.get("domain_key", "domain")),
             "include_task_name": bool(conditioning_cfg.get("include_task_name", True)),
         }
+        self.runtime_device = torch.device(runtime_device)
+        self.to(self.runtime_device)
 
     def _resolve_conditioning(self, example: dict[str, str]) -> tuple[dict[str, str], torch.Tensor]:
         domain_key = self.conditioning_cfg["domain_key"]

@@ -167,6 +167,7 @@ class MemoryReader(ManagedMemoryModule):
         self,
         memory: torch.Tensor,
         context: torch.Tensor | None = None,
+        candidate_state: torch.Tensor | None = None,
         memory_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         _ensure_rank("memory", memory, 3)
@@ -181,8 +182,15 @@ class MemoryReader(ManagedMemoryModule):
             raise ValueError(
                 f"Reader expected context hidden size {self.embed_dim}, got {pooled_context.shape[-1]}."
             )
+        pooled_candidate_state = self._pool_context(candidate_state)
+        if pooled_candidate_state is not None and pooled_candidate_state.shape[-1] != self.embed_dim:
+            raise ValueError(
+                f"Reader expected candidate_state hidden size {self.embed_dim}, got {pooled_candidate_state.shape[-1]}."
+            )
         if self.context_proj is not None and pooled_context is not None:
             queries = queries + self.context_proj(pooled_context).unsqueeze(1)
+        if pooled_candidate_state is not None:
+            queries = queries + pooled_candidate_state.unsqueeze(1)
 
         key_padding_mask = self._build_key_padding_mask(memory, memory_mask)
         readouts, attention = self.cross_attn(

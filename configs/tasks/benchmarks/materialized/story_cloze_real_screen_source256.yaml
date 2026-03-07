@@ -1,0 +1,10 @@
+task:
+  name: story_cloze_real_screen_source256
+  benchmark_id: story_cloze
+  domain: narrative
+  split: eval
+  smoke_subset: hf_real_screen256
+  dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke256.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

@@ -10,6 +10,7 @@
 - `scripts/run_memgen.sh`: MemGen baseline 的统一 adapter 入口，先支持 dry-run launch 计划与后续真实执行桥接
 - `scripts/run_m3_core4_stage_b_probe_suite.sh`: benchmark-native `core4` 的 Stage B probe suite，会在数据盘跑 probe variants，并把 `probe_summary.csv/.svg` 写回仓库
 - `scripts/run_m3_core4_stage_c_probe_suite.sh`: benchmark-native `core4` 的 Stage C probe suite，会在数据盘并排跑 `q_only / w_only / w_plus_q`，再把 `probe_summary.csv/.svg` 与 q-only gradient audit 关联结果写回仓库
+- `scripts/run_m3_story_cloze_real_pilot_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `story_cloze` decision-interface pilot，会按 `screen256 -> fixed100 -> A/B/C/D/E` 顺序跑完整对照，并把 review 产物镜像回仓库
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -26,8 +27,10 @@
 - `src/memtotal/models/`: backbone wrapper、Writer/Reader/Fuser/Injector、Segmenter
 - `src/memtotal/training/`: smoke 训练闭环
 - `src/memtotal/training/m3.py`: Stage A/B/C runner，当前同时承载 `toy_meta_smoke` 与 benchmark-native `core4_transfer_smoke`；负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
+- `src/memtotal/training/m3_real_pilot.py`: 真实 `story_cloze` pilot 的并行实验分支，负责 `base_only / shared_summary_late_fusion / candidate_conditioned_late_fusion` 三种决策接口与 `real / shuffled / zero` memory control
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
+- `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
 - `src/memtotal/baselines/`: 外部 baseline 适配层，当前已接入 MemGen launch adapter
 - `configs/tasks|method|exp/`: 任务、方法、实验配置
 - `scripts/`: setup、train/eval/analysis 包装、profiling、smoke、artifact 收集、CI 风格检查
@@ -73,7 +76,7 @@
 - `predictions.jsonl` 中每个样本的 `segment_stats`
 - `predictions.jsonl` 中每个样本的 `conditioning`
 
-这些实现当前仍运行在 deterministic stub backbone 与 toy pipeline 上，用于先验证接口、梯度、注入路径与结果治理；真实 Qwen 权重加载保留在 `BackboneWrapper` 扩展点中。
+这些实现最初是在 deterministic stub backbone 与 toy pipeline 上建立接口与治理契约；现在 `BackboneWrapper(load_mode=hf_causal_lm)` 也已支持真实 `Qwen2.5-1.5B-Instruct / Qwen3-8B` 的 hidden-state pooling、continuation logprob scoring 与本地 staged model 目录加载。
 
 ## M3 Smoke Boundary
 
@@ -118,6 +121,19 @@
   - `runtime.target_support_bank_size` 现支持 `auto / max_shot / all_non_holdout / 正整数`；当前 canonical 配置使用 `auto`，即至少给 support-side retrieval 留出 `retrieval_negative_count + 1` 的候选空间，再受 target 域非 holdout 上限裁剪
   - `runtime.target_support_negative_pool` 现支持 `support_bank / source_plus_support_bank`；当前 canonical 配置已切到 `source_plus_support_bank`，即在 target support bank 之外，再把 source domains 的 continuations 作为 support inner-loop negatives 接入
   - `runtime.target_support_negative_sampler` 现支持 `deterministic_id / hard_by_continuation / hard_by_current_model`；fresh 5-seed 对照显示 `hard_by_current_model` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain`，因此当前 canonical probe 已切到 `hard_by_current_model`
+  - 并行的 real pilot 分支现已固定支持：
+    - `runtime.stage_c_decision_mode in {base_only, shared_summary_late_fusion, candidate_conditioned_late_fusion}`
+    - `runtime.stage_c_memory_control in {real, shuffled, zero}`
+    - `runtime.stage_c_choice_objective in {continuation_retrieval, choice_ce_plus_margin}`
+  - 真实 `Qwen2.5-1.5B-Instruct` `story_cloze` pilot 当前已完成 `A/B/C/D/E` 五臂对照
+    - `A=base_only`
+    - `B=base + shared_summary residual`
+    - `C=base + candidate_conditioned residual`
+    - `D=base + candidate_conditioned residual + shuffled memory`
+    - `E=base + candidate_conditioned residual + choice_ce_plus_margin`
+  - 当前结论是负的：hard `fixed100` 上五条臂全部停在 `task_score=0.2`
+  - `A -> C` 只有极小 `mean_margin_gain=0.0016285324096679688`，而 `C -> D` 与 `C -> E` 的 `mean_task_gain` 都是 `0.0`
+  - 因此，当前这版 `candidate_conditioned_late_fusion` 还不能作为“decision interface 已修复”的证据；下一步需要更直接的 competitor-aware objective 与 residual calibration
   - `runtime.retrieval_loss_type` 现支持 `cross_entropy / margin_pairwise / cross_entropy_plus_margin`，`runtime.retrieval_margin_value` 控制 pairwise margin；fresh 5-seed 对照显示 `cross_entropy_plus_margin` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain` 与 `mean_margin_gain`，因此当前 canonical `Stage C` 已切到 `cross_entropy_plus_margin + margin=0.1`
   - `runtime.target_support_selection_policy` 现支持 `plain / label_diverse_if_possible`；fresh fair-holdout 对照显示它不是当前主杠杆，因此 canonical 仍保留 `plain`
   - `runtime.target_support_weighting` 现支持 `uniform / proxy_softmax / proxy_top1`；当前 canonical 仍保留 `uniform`，因为 fresh support-weight sweep 尚未观察到对 official `task_score` 的稳定改善

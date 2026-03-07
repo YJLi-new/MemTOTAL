@@ -1,0 +1,44 @@
+{
+  "events": [
+    {
+      "domain": "math",
+      "loss": 6.246926307678223,
+      "step": 0
+    },
+    {
+      "domain": "math",
+      "loss": 8.41380500793457,
+      "step": 1
+    },
+    {
+      "domain": "math",
+      "loss": 5.798820495605469,
+      "step": 2
+    },
+    {
+      "domain": "math",
+      "loss": 5.57013463973999,
+      "step": 3
+    },
+    {
+      "domain": "math",
+      "loss": 8.265300750732422,
+      "step": 4
+    },
+    {
+      "domain": "math",
+      "loss": 10.711523056030273,
+      "step": 5
+    },
+    {
+      "domain": "math",
+      "loss": 8.050271987915039,
+      "step": 6
+    },
+    {
+      "domain": "math",
+      "loss": 8.406317710876465,
+      "step": 7
+    }
+  ]
+}

@@ -2,7 +2,9 @@
 
 ## Open
 
-- 将 `BackboneWrapper` 从当前 stub 模式扩展为真实 Hugging Face/Qwen 加载路径，并补充权重缓存与设备策略。
+- 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
+- 真实 `Qwen2.5-1.5B-Instruct` `story_cloze` pilot 已表明：当前 `candidate_conditioned_late_fusion` 只带来 `1e-3` 级 margin/proxy 改善，却没有任何 flip，也没有显出真实 memory 内容效应。连全局 `support_grid_search` residual calibration 也没救起来，所以后续需要直接检查 competitor-aware objective、conditional residual calibration 和 choice-level scorer 接口，而不是继续扫全局 loss/sample。
+- 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。后续需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
 - 将当前 toy smoke 数据替换为与 `docs/EXPERIMENTS_INFO.md` 主套件兼容的数据准备流水线。
 - 增加更严格的结构 lint，覆盖 run 命名、结果目录和 generated-only 报表规则。
 - 让 MemGen adapter 在真实运行后补齐 profiling / wall time / token / 显存字段，并与我们自己的 `metrics.json` 结构进一步对齐。

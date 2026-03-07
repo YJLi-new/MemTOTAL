@@ -1,0 +1,13 @@
+task:
+  name: story_cloze_real_fixed100
+  benchmark_id: story_cloze
+  domain: narrative
+  split: eval
+  smoke_subset: real_fixed100
+  pilot_split: fixed100
+  dataset_path: data/benchmarks/pilots/story_cloze/fixed100.jsonl
+  support_dataset_path: data/benchmarks/pilots/story_cloze/pilot-support8.jsonl
+  calibration_dataset_path: data/benchmarks/pilots/story_cloze/calibration-hard32.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

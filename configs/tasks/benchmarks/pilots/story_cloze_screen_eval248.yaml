@@ -1,0 +1,12 @@
+task:
+  name: story_cloze_real_screen_eval248
+  benchmark_id: story_cloze
+  domain: narrative
+  split: eval
+  smoke_subset: real_screen_eval248
+  pilot_split: screen_eval248
+  dataset_path: data/benchmarks/pilots/story_cloze/screen-eval248.jsonl
+  support_dataset_path: data/benchmarks/pilots/story_cloze/pilot-support8.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

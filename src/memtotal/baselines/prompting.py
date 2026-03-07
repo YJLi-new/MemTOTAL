@@ -30,11 +30,18 @@ class PromptBaselineRuntime:
         if family == "meta_prompting" and mode not in {"planner_critic"}:
             raise ValueError(f"Unsupported prompt baseline mode: {mode}")
         backbone_cfg = config["backbone"]
+        runtime_device = str(config.get("runtime", {}).get("device", "cpu"))
+        backbone_hidden_size = backbone_cfg.get("stub_hidden_size")
         self.backbone = BackboneWrapper(
             name=backbone_cfg["name"],
             load_mode=backbone_cfg["load_mode"],
-            hidden_size=int(backbone_cfg["stub_hidden_size"]),
+            hidden_size=int(backbone_hidden_size) if backbone_hidden_size is not None else None,
             seed=seed,
+            model_id=backbone_cfg.get("model_id"),
+            device=runtime_device,
+            dtype=str(backbone_cfg.get("dtype", "float32")),
+            cache_dir=backbone_cfg.get("cache_dir"),
+            max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
         )
         self.family = family
         self.mode = mode

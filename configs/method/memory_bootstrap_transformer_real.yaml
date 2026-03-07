@@ -1,0 +1,9 @@
+includes:
+  - memory_bootstrap_transformer.yaml
+
+method:
+  embed_dim: auto
+  writer:
+    hidden_dim:
+  fuser:
+    hidden_dim:

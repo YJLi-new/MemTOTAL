@@ -78,6 +78,18 @@ TASK_SPECS: dict[str, TaskSpec] = {
         prompt_template="Story: {story} || Candidate endings: {choices_block} || Choose the most coherent ending.",
         choices_field="choices",
         label_field="label",
+        passthrough_fields=(
+            "story",
+            "choice_scoring_prompt",
+            "screening_bucket",
+            "screening_split",
+            "screening_base_margin",
+            "screening_shared_margin",
+            "screening_margin_gain",
+            "screening_base_correct",
+            "screening_shared_correct",
+            "shuffled_memory_example_id",
+        ),
     ),
     "narrativeqa": TaskSpec(
         benchmark_id="narrativeqa",
@@ -285,6 +297,11 @@ def _build_canonical_benchmark_example(
         "smoke_subset": smoke_subset,
         "supports_tools": spec.supports_tools,
     }
+    if spec.benchmark_id in {"story_cloze", "rocstories"}:
+        story_text = str(raw_row.get("story", "")).strip()
+        if story_text:
+            example["story"] = story_text
+            example["choice_scoring_prompt"] = f"Story: {story_text} || Candidate ending:"
     if choices:
         example["choices"] = choices
     aliases = raw_row.get("aliases")

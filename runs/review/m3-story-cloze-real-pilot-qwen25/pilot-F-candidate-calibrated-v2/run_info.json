@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/train.py",
+    "--config",
+    "configs/exp/m3_stage_c_real_qwen25_candidate_calibrated_fixed100.yaml",
+    "--seed",
+    "2725",
+    "--output_dir",
+    "runs/verify/m3-story-cloze-real-pilot-qwen25/pilot-F-candidate-calibrated-v2",
+    "--resume",
+    "runs/verify/m3-story-cloze-real-pilot-qwen25/stage-b"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "story_cloze",
+  "experiment_name": "m3_stage_c_real_qwen25_candidate_calibrated_fixed100",
+  "git_hash": "0e6803e9250a1ba6aaacd5c4f4467fbf67278f98",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "stage-c-real-candidate-conditioned-calibrated-fixed100",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 2725,
+  "smoke_subset": "real_fixed100",
+  "stage": "M3-story-cloze-real-fixed100",
+  "task_domain": "narrative",
+  "task_name": "story_cloze_real_fixed100",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T10:49:51.732066+00:00",
+  "torch_version": "2.8.0+cu128"
+}

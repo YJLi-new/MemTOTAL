@@ -1,0 +1,9 @@
+{
+  "analysis_mode": "stage_c_real_pilot_compare",
+  "arm_summary_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/compare/arm_summary.csv",
+  "flip_cases": 0,
+  "flip_cases_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/compare/flip_cases.csv",
+  "memory_control_gap_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/compare/memory_control_gap.csv",
+  "pair_count": 4,
+  "pairwise_compare_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/compare/arm_pairwise_compare.csv"
+}

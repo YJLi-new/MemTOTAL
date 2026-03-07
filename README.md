@@ -1,25 +1,58 @@
 # MemTOTAL
 
-面向论文主线的实验仓库：做 `M_long -> M_short` 的 Writer/Reader 记忆压缩、跨域 few-shot 适配和 CDMI 路线验证。
+面向论文主线的实验仓库：研究 `M_long -> M_short` 的通用 Writer / 可适配 Reader 记忆压缩、跨域 few-shot 适配，以及 CDMI 路线验证。
 
-## 当前状态
+当前代码层只支持两个 backbone：
+- `Qwen2.5-1.5B-Instruct`
+- `Qwen3-8B`
 
-- 给外部 review 用的最新摘要在 `docs/briefs/20260307-stage-c-review-brief.md`。
-- 可随仓库一起 push 的关键结果镜像在 `runs/review/` 与 `results/generated/review/`；刷新脚本是 `scripts/publish_review_artifacts.sh`。
-- `Stage C` canonical 现在会把每个 target case 的 `gold / competitor / margin / support_ids` 直接写到 `task_case_dump.jsonl`；对应归因摘要在 `results/generated/m3-core4-stage-c-error-attribution-v1/`。
-- 最新 error-attribution 结论：当前不是“大量 case 都差临门一脚”，而是 61 个配对 case 里只有 2 个 near-threshold bad cases；同时不少错例被打上 `story_context_favors_competitor`。因此下一步该优先做 near-threshold 非线性推力和 case-level 错误归因，而不是继续扫全局 loss/sample 策略。
-- 现在已经打通 benchmark-native `M3 core4` smoke：`gsm8k + kodcode + gpqa + story_cloze`。
-- Stage C 当前 canonical 是 `target_split_policy=random`、`target_support_bank_size=auto`、`target_support_negative_pool=source_plus_support_bank`、`target_support_negative_sampler=hard_by_current_model`、`retrieval_loss_type=cross_entropy_plus_margin`、`retrieval_margin_value=0.1`；其余仍是 `target_eval_repeats=3`、`target_episode_repeats=3`、`target_episode_policy=aggregate_support`。
-- 最新进展：已经修掉 benchmark-native `Stage C` 的评测泄漏。现在 `shot` 不再改变 target episode seed，query/eval 改为固定 holdout pool，support inner-loop 也改为固定 support bank。
-- 最新结论：之前那些正向 official gain 主要是协议泄漏，不是可信 few-shot 提升。修正后，canonical `q_only` 在两档 backbone 上先回到 `0.0`；公平 `target_split_policy={random,topk,bottomk}` 重扫后，三档在 official 上完全打平。继续扩 support negative pool 之后，`source_plus_support_bank` 已经成为当前第一条真正更强的公平杠杆：qwen25 的 proxy 明显高于 `support_bank`，qwen3 则拿到过 `mean_task_gain=0.0222`、`positive_gain_rate=0.2`。
-- 最新补充结论：`hard_by_continuation` 不够强，但新加的 `hard_by_current_model` 已经在两档 backbone 上都给出当前最高的 proxy gain：qwen25 从 `1.106e-5` 提到 `2.561e-5`，qwen3 从 `3.389e-5` 提到 `4.391e-5`。因此 canonical probe 现切到 `source_plus_support_bank + hard_by_current_model`；但要明确，这一轮 5-seed official `mean_task_gain` 仍然是 `0.0`，所以它是“当前最强 proxy 杠杆”，还不是“已经打通 official gain”的解法。
-- 最新新增结论：把 canonical 切到 `hard_by_current_model` 后重跑 `curve suite / step saturation audit`，official `step0->final` 仍然是 `0.0`；但 proxy 会随着 steps 单调上升。也就是说，现在的内循环不是没学到东西，而是 gain 还没跨过 multiple-choice 的 rank-flip 阈值。
-- 最新补充结论：进一步做 `margin / rank-flip audit` 后，`cross_zero_margin_rate` 在两档 backbone 上都还是 `0.0`，而 `margin_improves_rate` 都是 `0.6`。这说明后续 steps 现在主要是在把已接近正确或已经正确的 case 再拉开一点，还没有真正救回原本错的 case。
-- 最新补充结论：再把 `margin audit` 拆成 `negative_only` 之后，当前更清楚了。两档 backbone 各只有 `2` 个负 margin seeds；qwen25 只有 `1/2` 在缩小 gap，平均只关掉 `1.88e-5`，qwen3 也是 `1/2`，而且平均 gap 还略微变差。也就是说，当前 canonical gain 还没有稳定集中到真正错的 seeds 上。
-- 最新补充结论：继续做 `negative-seed shot/step curve audit` 后，一开始看起来像是 qwen3 的负 margin seeds 会被 step 推坏；但这条结论在 fresh holdout 解耦重跑后已经被修正。当前 `results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/metrics.json` 记录：qwen25 的负 seed `gap-to-flip` 从 `0.0433873` 降到 `0.0424508`，qwen3 也从 `0.0731741` 降到 `0.0730539`。也就是说，当前两档 backbone 的 inner-loop steps 都会轻微缩小负 margin，而不是 qwen3 单独反向恶化。
-- 最新补充进展：`Stage C` 现在会额外写出 `episode_trace.json`，把每个 target episode 实际使用的 `support/query/eval_holdout` 组成落盘；同时 eval holdout 也已与 support bank 解耦。fresh `target_support_selection_policy={plain,label_diverse_if_possible}` sweep 进一步证明：`label_diverse_if_possible` 在 fair holdout 下不是当前主杠杆。qwen25 两档 policy 的 `mean_task_gain` 都是 `0.0222`，qwen3 都是 `0.0`；而 qwen3 的 `mean_proxy_gain` 还是 `plain=1.144e-05 > label_diverse=9.725e-06`。
-- 最新补充结论：fresh `retrieval_negative_count={3,7,15}` 5-seed sweep 已把 negative-count 这条线也排掉了。它会改变 proxy，但不会改变 official `task_gain`；当前 qwen25 是 `neg15 > neg7 > neg3`，qwen3 则是 `neg15 > neg3 > neg7`，但三档在两档 backbone 上的 official `mean_task_gain` 仍全部为 `0.0`。
-- 最新补充结论：fresh `retrieval_loss_type={cross_entropy, margin_pairwise, cross_entropy_plus_margin}` 5-seed sweep 说明 `cross_entropy_plus_margin` 是当前最强的 fair loss 变体。它把 qwen25 的 `mean_proxy_gain` 从 `4.921e-05` 提到 `1.015e-04`，把 qwen3 的 `mean_proxy_gain` 从 `3.531e-05` 提到 `7.791e-05`；对应 `mean_margin_gain` 也从 `1.974e-04 -> 4.072e-04` 与 `1.422e-04 -> 3.139e-04`。因此 canonical `Stage C` 已切到 `cross_entropy_plus_margin`。
-- 最新 blocker：在新的 fixed-holdout 口径下，问题已经不再是“坏 seed 被 step 推反了”，而是“两档 backbone 的负 margin 都只被轻微缩小，但没人真正跨过 rank-flip 阈值”。fresh `margin audit` 当前记录：qwen25 与 qwen3 的 `negative_only margin_improves_rate` 都已到 `1.0`，但 `cross_zero_margin_rate` 仍然都是 `0.0`。也就是说，下一步该继续攻的是 inner-loop objective / negative curriculum 的增益强度，而不是 support label 覆盖。
-- 最新补充进展：canonical 切到 `cross_entropy_plus_margin` 后，fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/metrics.json` 当前仍记录两档 backbone 的 `mean_task_gain=0.0`、`positive_gain_rate=0.0`。也就是说，新的 loss 已经把当前默认口径推进到“更强 proxy / 更强 margin”，但 official rank flip 仍未打通。
-- 当前只支持两个 backbone：`Qwen2.5-1.5B-Instruct`、`Qwen3-8B`。
+## 最新进展
+
+- benchmark-native `M3 core4` 主链已经打通：`gsm8k + kodcode + gpqa + story_cloze` 的 `Stage A/B/C`、统一产物、统一分析都可运行。
+- 真实 `Qwen2.5-1.5B-Instruct` 的最小闭环已经打通：`BackboneWrapper(load_mode=hf_causal_lm)` 现支持真实 `summarize_texts`、`score_continuations` 与本地 staged model 目录加载。
+- 最新判别实验已经完成：`story_cloze` 上做了真实 qwen25 的 `100` 条 fixed-set、单 seed、五臂对照 pilot。
+
+## 最新结论
+
+- 这轮 real pilot 的五条臂是：
+  - `A = base_only`
+  - `B = base + shared_summary residual`
+  - `C = base + candidate_conditioned residual`
+  - `D = base + candidate_conditioned residual + shuffled memory`
+  - `E = base + candidate_conditioned residual + choice-aligned objective`
+- 当前结果是负的：`A/B/C/D/E` 在同一批 hard `fixed100` 上全部都是 `task_score=0.2`，`flip_count_delta` 全部为 `0`。
+- `candidate-conditioned` 相比 `base_only` 只带来了很小的平均 `margin/proxy` 改善：
+  - `A -> C`: `mean_margin_gain=0.0016285`
+  - `A -> C`: `mean_proxy_gain=0.0002348`
+- 但 `C -> D` 和 `C -> E` 基本完全重合：
+  - `C -> D`: `mean_task_gain=0.0`
+  - `C -> E`: `mean_task_gain=0.0`
+- 这说明：在当前 real qwen25 + 当前实例化下，问题不只是旧的 `shared_summary` 接口；至少这版 `candidate-conditioned late fusion` 还没有带来真实 flip，也还没有显出真实 memory 内容效应。
+- 我又顺着“推力不够”做了一步残差标定试探：
+  - 离线后处理显示，只有把 `alpha` 放到几十以上才开始出现少量 flip；明显改善甚至要到几千量级
+  - 但把 `support_grid_search` 正式接进 runtime 后，无论看 `pilot-support8` 还是额外构造的 `calibration-hard32`，全局单标量 `alpha` 仍然选不出比 `1.0` 更好的值
+- 当前更像是：不是完全没有 residual signal，而是单一全局缩放既不够强，也不够有选择性。
+
+## 关键结果路径
+
+- 最新 brief：
+  - `docs/briefs/20260307-story-cloze-real-pilot-brief.md`
+- 最新 real pilot 原始运行：
+  - `runs/review/m3-story-cloze-real-pilot-qwen25/`
+- 最新 real pilot 汇总：
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/`
+- 关键 compare 文件：
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/arm_pairwise_compare.csv`
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/arm_summary.csv`
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/report.md`
+- 额外的 calibration 探针原始运行：
+  - `runs/review/m3-story-cloze-real-pilot-qwen25/pilot-F-candidate-calibrated-v2/`
+
+## 现在最重要的下一步
+
+- 不再继续扫全局 loss / sample 网格。
+- 优先检查为什么 `candidate-conditioned` 分支在真实 Qwen 上只带来极小 margin 改善，却完全没有 choice flip。
+- 下一轮更值得做的是：
+  - competitor-aware inner-loop / direct pairwise target objective
+  - case-level / conditional residual calibration，而不是单一全局 `alpha`
+  - 扩大 screening pool，重新找真正 near-threshold 的 fixed-set

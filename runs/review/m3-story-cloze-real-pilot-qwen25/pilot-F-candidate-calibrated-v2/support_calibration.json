@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "real",
+      "residual_calibration_mode": "support_grid_search",
+      "step": 0,
+      "support_task_margin": -4.936383917927742,
+      "support_task_proxy_score": 0.6449064985909778,
+      "support_task_score": 0.71875
+    },
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "real",
+      "residual_calibration_mode": "support_grid_search",
+      "step": 1,
+      "support_task_margin": -4.936383977532387,
+      "support_task_proxy_score": 0.6449064911403972,
+      "support_task_score": 0.71875
+    },
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "real",
+      "residual_calibration_mode": "support_grid_search",
+      "step": 2,
+      "support_task_margin": -4.936383947730064,
+      "support_task_proxy_score": 0.6449064948656875,
+      "support_task_score": 0.71875
+    },
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "real",
+      "residual_calibration_mode": "support_grid_search",
+      "step": 3,
+      "support_task_margin": -4.936383947730064,
+      "support_task_proxy_score": 0.6449064948656875,
+      "support_task_score": 0.71875
+    }
+  ]
+}

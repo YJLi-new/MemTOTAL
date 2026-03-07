@@ -341,7 +341,10 @@ def _classification_loss(
     memory_summary = runtime.summarize_memory_short(forward.memory_short)
     scores = runtime.score_candidates(memory_summary, candidate_states)
     gold_index = candidate_labels.index(example["label"])
-    return F.cross_entropy(scores.unsqueeze(0), torch.tensor([gold_index], dtype=torch.long))
+    return F.cross_entropy(
+        scores.unsqueeze(0),
+        torch.tensor([gold_index], dtype=torch.long, device=scores.device),
+    )
 
 
 def _mean_loss(runtime: MemoryRuntime, examples: list[dict[str, str]]) -> float:
@@ -900,7 +903,10 @@ def _continuation_retrieval_loss(
         [str(row["continuation"]) for row in candidate_examples]
     )
     scores = runtime.score_candidates(memory_summary, candidate_states)
-    cross_entropy_loss = F.cross_entropy(scores.unsqueeze(0), torch.tensor([0], dtype=torch.long))
+    cross_entropy_loss = F.cross_entropy(
+        scores.unsqueeze(0),
+        torch.tensor([0], dtype=torch.long, device=scores.device),
+    )
     margin_loss = _pairwise_margin_loss(scores, margin_value=margin_value)
     if loss_type == "cross_entropy":
         loss = cross_entropy_loss

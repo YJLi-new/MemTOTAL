@@ -16,6 +16,11 @@ from memtotal.analysis.m3_stage_c_step_saturation_audit import run_m3_stage_c_st
 from memtotal.analysis.m3_sensitivity_audit import run_m3_stage_c_sensitivity_audit
 from memtotal.analysis.m3_stage_c_probe import run_m3_stage_c_probe_summary
 from memtotal.analysis.m3_stage_c_seed_sweep import run_m3_stage_c_seed_sweep_summary
+from memtotal.analysis.story_cloze_real_pilot import (
+    run_stage_c_real_pilot_compare,
+    run_story_cloze_real_fixed_set_builder,
+    run_story_cloze_real_pilot_split,
+)
 from memtotal.analysis.reporting import collect_metrics, write_sanity_plot, write_summary_csv
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json
@@ -153,6 +158,32 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             output_dir=output_dir,
             resume=args.resume,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "story_cloze_real_pilot_split":
+        run_story_cloze_real_pilot_split(
+            config=config,
+            output_dir=output_dir,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "story_cloze_real_fixed_set_builder":
+        if not args.input_root:
+            raise ValueError("--input_root is required for story_cloze_real_fixed_set_builder mode.")
+        run_story_cloze_real_fixed_set_builder(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "stage_c_real_pilot_compare":
+        if not args.input_root:
+            raise ValueError("--input_root is required for stage_c_real_pilot_compare mode.")
+        run_stage_c_real_pilot_compare(
+            output_dir=output_dir,
+            input_root=args.input_root,
             dry_run=args.dry_run,
         )
         return 0
