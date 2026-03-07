@@ -438,6 +438,22 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 当前 candidate residual family 的主体效应来自 branch form，不来自 memory content
   - 下一步不该继续修这条 `shared + candidate delta`，也不该直接上 pairwise / routing / qwen3
   - 若后续仍要继续做 candidate-specific `Stage C`，应从新的 residual family 重新开始，并且先在 `FEVER` 上过 capability gate，再回 `Story Cloze`
+- 已完成 `FEVER-first` 的 `choice_repair_ce_margin` fresh pilot：
+  - 历史 `B-old=shared_summary+continuation_retrieval=0.75`
+  - fresh `B-newObj=shared_summary+choice_repair_ce_margin=0.75`
+  - fresh `R-real=shared+candidate_conditioned+repair objective+real memory=0.25`
+  - fresh `R-shuffle=0.25`
+  - fresh `R-zero=0.25`
+  - `B-old -> B-newObj flip_count_delta=0`
+  - `B-newObj -> R-real flip_count_delta=-32`
+  - `R-shuffle -> R-real flip_count_delta=0`
+  - `R-zero -> R-real flip_count_delta=0`
+  - `gate_passed=false`
+- 因而，这条 candidate-conditioned family 的结论又进一步收紧了一层：
+  - 问题已经不只是 `continuation_retrieval` objective 不对
+  - 即便换成更对题的 repair objective，这条 current `candidate-conditioned residual family` 也仍然不 load-bearing
+  - 下一步不该继续修 current family，也不该直接上 `Qwen3-8B` / routing / sign selection
+  - 如果还要继续 candidate-specific `Stage C`，应直接换 residual family，并继续先拿 `FEVER` 做 capability gate
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

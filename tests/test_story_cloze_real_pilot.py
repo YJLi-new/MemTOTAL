@@ -21,6 +21,9 @@ from memtotal.analysis.story_cloze_real_pilot import (
     run_story_cloze_real_pilot_split,
 )
 from memtotal.training.m3_real_pilot import (
+    _build_repair_anchor,
+    _choice_repair_ce_margin_from_scores,
+    _compose_shared_plus_candidate_conditioned_scores,
     _compose_shared_plus_candidate_delta_scores,
     _compute_candidate_delta_gate,
     _pick_residual_calibration_row,
@@ -43,6 +46,65 @@ def _story_row(example_id: str, label: str, story: str, good: str, bad: str) -> 
 
 
 class StoryClozeRealPilotAnalysisTest(unittest.TestCase):
+    def test_shared_plus_candidate_conditioned_scores_follow_formula(self):
+        payload = _compose_shared_plus_candidate_conditioned_scores(
+            base_scores=torch.tensor([0.4, 0.3, -0.2]),
+            shared_residual_scores=torch.tensor([0.01, -0.02, 0.0]),
+            conditioned_residual_scores=torch.tensor([0.02, 0.04, -0.03]),
+            shared_scale=1.0,
+            candidate_residual_scale=0.5,
+        )
+        expected_shared = torch.tensor([0.41, 0.28, -0.2])
+        expected_final = expected_shared + torch.tensor([0.01, 0.02, -0.015])
+        self.assertTrue(torch.allclose(payload["shared_choice_scores"], expected_shared))
+        self.assertTrue(torch.allclose(payload["final_choice_scores"], expected_final))
+        self.assertTrue(torch.allclose(payload["memory_residual_scores"], expected_final - payload["base_scores"]))
+
+    def test_build_repair_anchor_marks_wrong_and_confident_cases(self):
+        wrong_anchor = _build_repair_anchor(
+            choice_scores=torch.tensor([0.1, 0.5]),
+            candidate_labels=["A", "B"],
+            gold_label="A",
+            margin_threshold=0.01,
+        )
+        self.assertTrue(wrong_anchor.repair_active)
+        self.assertEqual(wrong_anchor.repair_bucket, "anchor_wrong")
+
+        confident_anchor = _build_repair_anchor(
+            choice_scores=torch.tensor([0.5, 0.1]),
+            candidate_labels=["A", "B"],
+            gold_label="A",
+            margin_threshold=0.01,
+        )
+        self.assertFalse(confident_anchor.repair_active)
+        self.assertEqual(confident_anchor.repair_bucket, "anchor_confident_correct")
+
+    def test_choice_repair_ce_margin_stops_gradient_when_repair_inactive(self):
+        scores = torch.tensor([0.6, 0.1], requires_grad=True)
+        loss, accuracy = _choice_repair_ce_margin_from_scores(
+            scores,
+            gold_index=0,
+            competitor_index=1,
+            repair_active=False,
+            margin_value=0.1,
+        )
+        loss.backward()
+        self.assertEqual(accuracy, 1.0)
+        self.assertTrue(torch.allclose(scores.grad, torch.zeros_like(scores)))
+
+    def test_choice_repair_ce_margin_updates_when_repair_active(self):
+        scores = torch.tensor([0.0, 0.4], requires_grad=True)
+        loss, accuracy = _choice_repair_ce_margin_from_scores(
+            scores,
+            gold_index=0,
+            competitor_index=1,
+            repair_active=True,
+            margin_value=0.1,
+        )
+        loss.backward()
+        self.assertEqual(accuracy, 0.0)
+        self.assertFalse(torch.allclose(scores.grad, torch.zeros_like(scores)))
+
     def test_candidate_delta_gate_closes_when_shared_gap_exceeds_tau(self):
         gate = _compute_candidate_delta_gate(
             shared_residual_scores=torch.tensor([0.02, 0.005]),
@@ -545,6 +607,157 @@ class StoryClozeRealPilotAnalysisTest(unittest.TestCase):
             self.assertEqual(len(gap_rows), 1)
             self.assertEqual(gap_rows[0]["left_alias"], "F")
             self.assertEqual(gap_rows[0]["right_alias"], "G")
+
+    def test_compare_analysis_supports_repair_aliases_and_gate_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            input_root = root / "runs"
+            import_root = root / "history"
+
+            def write_arm(
+                run_dir: Path,
+                *,
+                decision_mode: str,
+                memory_control: str,
+                candidate_memory_control: str,
+                choice_objective: str,
+                score: float,
+                predicted_correct: bool,
+                repair_bucket: str,
+            ) -> None:
+                run_dir.mkdir(parents=True)
+                (run_dir / "metrics.json").write_text(
+                    json.dumps(
+                        {
+                            "training_stage": "stage_c_real_pilot",
+                            "decision_mode": decision_mode,
+                            "memory_control_mode": memory_control,
+                            "candidate_branch_memory_control": candidate_memory_control,
+                            "choice_objective": choice_objective,
+                            "pilot_split": "fixed64",
+                            "eval_dataset_path": str(root / "fixed64.jsonl"),
+                            "best_adapt_step": 0,
+                            "best_adapt_task_score": score,
+                            "zero_shot_task_score": 0.0,
+                            "best_adapt_task_proxy_score": 0.5 + score / 2.0,
+                            "best_adapt_task_margin": score / 2.0,
+                            "task_case_dump_path": str(run_dir / "task_case_dump.jsonl"),
+                        }
+                    )
+                )
+                (run_dir / "task_case_dump.jsonl").write_text(
+                    "\n".join(
+                        [
+                            json.dumps(
+                                {
+                                    "step": 0,
+                                    "example_id": "id-1",
+                                    "predicted_correct": predicted_correct,
+                                    "task_score": float(predicted_correct),
+                                    "task_proxy_score": 0.5 + score / 2.0,
+                                    "final_margin": score / 2.0,
+                                    "segment": "claim and evidence",
+                                    "gold_text": "supports",
+                                    "final_predicted_label": "SUPPORTS" if predicted_correct else "REFUTES",
+                                    "screening_bucket": "near_threshold_bad",
+                                    "repair_bucket": repair_bucket,
+                                    "repair_active": repair_bucket != "anchor_confident_correct",
+                                    "anchor_shared_margin": -0.2 if repair_bucket == "anchor_wrong" else 0.2,
+                                }
+                            )
+                        ]
+                    )
+                    + "\n"
+                )
+
+            write_arm(
+                import_root / "B_old",
+                decision_mode="shared_summary_late_fusion",
+                memory_control="real",
+                candidate_memory_control="real",
+                choice_objective="continuation_retrieval",
+                score=0.5,
+                predicted_correct=True,
+                repair_bucket="anchor_confident_correct",
+            )
+            write_arm(
+                input_root / "B_new",
+                decision_mode="shared_summary_late_fusion",
+                memory_control="real",
+                candidate_memory_control="real",
+                choice_objective="choice_repair_ce_margin",
+                score=0.5,
+                predicted_correct=True,
+                repair_bucket="anchor_wrong",
+            )
+            write_arm(
+                input_root / "R_real",
+                decision_mode="shared_plus_candidate_conditioned_late_fusion",
+                memory_control="real",
+                candidate_memory_control="real",
+                choice_objective="choice_repair_ce_margin",
+                score=1.0,
+                predicted_correct=True,
+                repair_bucket="anchor_wrong",
+            )
+            write_arm(
+                input_root / "R_shuffle",
+                decision_mode="shared_plus_candidate_conditioned_late_fusion",
+                memory_control="real",
+                candidate_memory_control="shuffled",
+                choice_objective="choice_repair_ce_margin",
+                score=0.0,
+                predicted_correct=False,
+                repair_bucket="anchor_wrong",
+            )
+            write_arm(
+                input_root / "R_zero",
+                decision_mode="shared_plus_candidate_conditioned_late_fusion",
+                memory_control="real",
+                candidate_memory_control="zero",
+                choice_objective="choice_repair_ce_margin",
+                score=0.0,
+                predicted_correct=False,
+                repair_bucket="anchor_wrong",
+            )
+
+            output_dir = root / "analysis"
+            output_dir.mkdir()
+            run_stage_c_real_pilot_compare(
+                config={
+                    "task": {"dataset_path": str(root / "fixed64.jsonl")},
+                    "runtime": {
+                        "pilot_split_name": "fixed64",
+                        "required_arm_aliases": ["B_old", "B_new", "R_real", "R_shuffle", "R_zero"],
+                        "pair_specs": ["B_old->B_new", "B_new->R_real", "R_shuffle->R_real", "R_zero->R_real"],
+                        "flip_compare_aliases": "B_new->R_real",
+                        "memory_control_pair": "R_shuffle->R_real",
+                        "zero_control_pair": "R_zero->R_real",
+                        "gate_primary_alias": "R_real",
+                        "gate_shuffle_alias": "R_shuffle",
+                        "gate_zero_alias": "R_zero",
+                        "gate_anchor_alias": "B_new",
+                        "gate_min_flip_gain": 1,
+                        "import_arm_runs": {"B_old": str(import_root / "B_old")},
+                    },
+                },
+                output_dir=output_dir,
+                input_root=input_root,
+                dry_run=False,
+            )
+            with (output_dir / "repair_bucket_summary.csv").open() as handle:
+                repair_rows = list(csv.DictReader(handle))
+            self.assertTrue(any(row["alias"] == "R_real" for row in repair_rows))
+            with (output_dir / "real_vs_shuffle_gap.csv").open() as handle:
+                shuffle_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(shuffle_rows), 1)
+            self.assertEqual(shuffle_rows[0]["left_alias"], "R_shuffle")
+            self.assertEqual(shuffle_rows[0]["right_alias"], "R_real")
+            with (output_dir / "real_vs_zero_gap.csv").open() as handle:
+                zero_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(zero_rows), 1)
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            self.assertTrue(metrics["gate_passed"])
 
     def test_pick_oracle_alpha_case_prefers_smallest_successful_abs_scale(self):
         row = {

@@ -14,6 +14,7 @@
   - `story_cloze` 上的真实 qwen25 `fixed100` pilot，外加离线 oracle 审计
   - `FEVER` 上的真实 qwen25 `fixed64` control pilot
   - 基于上述结论重做了更保守的 `shared + candidate delta` real pilot
+  - 又进一步做了 `FEVER-first` 的 `choice_repair_ce_margin` fresh pilot：`B-newObj / R-real / R-shuffle / R-zero`
 
 ## 最新结论
 
@@ -72,6 +73,22 @@
   - 当前这条 `candidate` residual family 的主体效应来自 branch form，而不是 real-memory content
   - 因而下一步不该直接做 raw routing / sign selection，也不该继续扩大 `candidate-conditioned` sweep 或上 `Qwen3-8B`
   - 如果后续还要回到 candidate-specific `Stage C`，应从新的 residual family 重新开始，而不是继续修这条 `shared + candidate delta`
+- 最新的 `FEVER-first repair` pilot 又把这条结论钉死了一次：
+  - 历史 `B-old = shared_summary + continuation_retrieval = 0.75`
+  - fresh `B-newObj = shared_summary + choice_repair_ce_margin = 0.75`
+  - fresh `R-real = shared + candidate_conditioned + repair objective = 0.25`
+  - fresh `R-shuffle = 0.25`
+  - fresh `R-zero = 0.25`
+  - `B-old -> B-newObj`: `flip_count_delta=0`
+  - `B-newObj -> R-real`: `flip_count_delta=-32`
+  - `R-shuffle -> R-real`: `flip_count_delta=0`
+  - `R-zero -> R-real`: `flip_count_delta=0`
+  - `gate_passed=false`
+- 这轮最重要的新结论不是“objective 也没用”，而是更窄的一条：
+  - `choice_repair_ce_margin` 没能让 `shared` baseline 更强
+  - 当前这条 `candidate-conditioned residual family` 在 repair objective 下依然没有 real-memory 内容效应
+  - `R-real` 同时没有优于 `R-shuffle`，也没有优于 `R-zero`
+  - 因而现在不该继续修 current candidate-conditioned family；如果后续还要做 candidate-specific `Stage C`，应直接换 residual family，而不是继续在这一条上加 router / sign selector
 
 ## 关键结果路径
 
@@ -98,6 +115,10 @@
   - `results/generated/review/m3-fever-real-pilot-qwen25/compare/arm_pairwise_compare.csv`
   - `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/report.md`
   - `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_oracle_summary.csv`
+  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/report.md`
+  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/arm_pairwise_compare.csv`
+  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/real_vs_shuffle_gap.csv`
+  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/real_vs_zero_gap.csv`
 
 ## 现在最重要的下一步
 
@@ -105,6 +126,7 @@
 - 不直接进入更大的 `candidate-conditioned` sweep，也不直接上 `Qwen3-8B`。
 - 下一轮更值得做的是：
   - 先保留 `FEVER` 作为正 control，不再继续扩 story sweep
-  - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为这轮 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
+  - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
+  - 也不继续修 current `candidate-conditioned residual family`，因为 repair objective 下它仍然 `R-real = R-shuffle = R-zero`
   - 下一轮如果继续探索 candidate-specific `Stage C`，应该优先设计新的 residual family，再先拿 `FEVER` 做 capability probe
   - `Story Cloze` 只保留为后续 stress test，不再作为当前 candidate 分支的主开发面

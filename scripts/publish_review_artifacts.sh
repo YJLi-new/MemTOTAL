@@ -12,8 +12,7 @@ sync_dir() {
     return 0
   fi
   mkdir -p "$(dirname "${dst}")"
-  rsync -a --delete \
-    --delete-excluded \
+  rsync -a \
     --exclude='*.pt' \
     --exclude='*.ckpt' \
     "${src}/" "${dst}/"

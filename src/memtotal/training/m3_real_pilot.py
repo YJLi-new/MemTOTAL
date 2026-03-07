@@ -35,6 +35,20 @@ class PilotExampleCache:
     choice_scoring_prompt: str
 
 
+@dataclass(frozen=True)
+class RepairAnchor:
+    choice_scores: torch.Tensor
+    gold_index: int
+    predicted_index: int
+    competitor_index: int
+    margin: float
+    predicted_label: str
+    competitor_label: str
+    repair_weight: float
+    repair_active: bool
+    repair_bucket: str
+
+
 def _load_task_dataset_from_path(config: dict[str, Any], dataset_path: str) -> list[dict[str, Any]]:
     config_copy = copy.deepcopy(config)
     config_copy["task"]["dataset_path"] = dataset_path
@@ -48,11 +62,13 @@ def _resolve_decision_mode(config: dict[str, Any]) -> str:
         "shared_summary_late_fusion",
         "candidate_conditioned_late_fusion",
         "shared_plus_candidate_delta_late_fusion",
+        "shared_plus_candidate_conditioned_late_fusion",
     }:
         raise ValueError(
             f"Unsupported runtime.stage_c_decision_mode={decision_mode}. "
             "Expected one of base_only, shared_summary_late_fusion, "
-            "candidate_conditioned_late_fusion, shared_plus_candidate_delta_late_fusion."
+            "candidate_conditioned_late_fusion, shared_plus_candidate_delta_late_fusion, "
+            "shared_plus_candidate_conditioned_late_fusion."
         )
     return decision_mode
 
@@ -67,12 +83,36 @@ def _resolve_memory_control(config: dict[str, Any]) -> str:
     return memory_control
 
 
+def _resolve_candidate_memory_control(
+    config: dict[str, Any],
+    *,
+    decision_mode: str,
+    default_memory_control: str,
+) -> str:
+    raw_value = config["runtime"].get("stage_c_candidate_memory_control")
+    if raw_value is None:
+        if decision_mode == "shared_plus_candidate_conditioned_late_fusion":
+            return "real"
+        return default_memory_control
+    memory_control = str(raw_value)
+    if memory_control not in {"real", "shuffled", "zero"}:
+        raise ValueError(
+            f"Unsupported runtime.stage_c_candidate_memory_control={memory_control}. "
+            "Expected one of real, shuffled, zero."
+        )
+    return memory_control
+
+
 def _resolve_choice_objective(config: dict[str, Any]) -> str:
     choice_objective = str(config["runtime"].get("stage_c_choice_objective", "continuation_retrieval"))
-    if choice_objective not in {"continuation_retrieval", "choice_ce_plus_margin"}:
+    if choice_objective not in {
+        "continuation_retrieval",
+        "choice_ce_plus_margin",
+        "choice_repair_ce_margin",
+    }:
         raise ValueError(
             f"Unsupported runtime.stage_c_choice_objective={choice_objective}. "
-            "Expected one of continuation_retrieval, choice_ce_plus_margin."
+            "Expected one of continuation_retrieval, choice_ce_plus_margin, choice_repair_ce_margin."
         )
     return choice_objective
 
@@ -133,11 +173,19 @@ def _resolve_candidate_delta_scale(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("stage_c_candidate_delta_scale", 1.0))
 
 
+def _resolve_candidate_residual_scale(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("stage_c_candidate_residual_scale", 1.0))
+
+
 def _resolve_candidate_delta_gate_tau(config: dict[str, Any]) -> float:
     gate_tau = float(config["runtime"].get("stage_c_candidate_delta_gate_tau", 0.01))
     if gate_tau <= 0.0:
         raise ValueError("runtime.stage_c_candidate_delta_gate_tau must be > 0.0")
     return gate_tau
+
+
+def _resolve_repair_anchor_margin_threshold(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("stage_c_repair_anchor_margin_threshold", 0.01))
 
 
 def _resolve_story_text(example: dict[str, Any]) -> str:
@@ -253,6 +301,20 @@ def _shared_memory_summary(
     return runtime.summarize_memory_short(memory_short)
 
 
+def _shared_residual_scores(
+    runtime: MemoryRuntime,
+    example_cache: PilotExampleCache,
+    *,
+    memory_source_cache: PilotExampleCache | None,
+) -> torch.Tensor:
+    memory_summary = _shared_memory_summary(
+        runtime,
+        example_cache,
+        memory_source_cache=memory_source_cache,
+    )
+    return runtime.score_candidates(memory_summary, example_cache.candidate_states)
+
+
 def _candidate_conditioned_residual_scores(
     runtime: MemoryRuntime,
     example_cache: PilotExampleCache,
@@ -324,14 +386,136 @@ def _compose_shared_plus_candidate_delta_scores(
     }
 
 
+def _compose_shared_plus_candidate_conditioned_scores(
+    *,
+    base_scores: torch.Tensor,
+    shared_residual_scores: torch.Tensor,
+    conditioned_residual_scores: torch.Tensor,
+    shared_scale: float,
+    candidate_residual_scale: float,
+) -> dict[str, torch.Tensor | float]:
+    shared_choice_scores = base_scores + (float(shared_scale) * shared_residual_scores)
+    candidate_residual_scores = float(candidate_residual_scale) * conditioned_residual_scores
+    final_choice_scores = shared_choice_scores + candidate_residual_scores
+    total_memory_residual_scores = final_choice_scores - base_scores
+    return {
+        "base_scores": base_scores,
+        "shared_residual_scores": shared_residual_scores,
+        "conditioned_residual_scores": conditioned_residual_scores,
+        "raw_candidate_delta_scores": torch.zeros_like(base_scores),
+        "candidate_delta_scores": torch.zeros_like(base_scores),
+        "candidate_delta_gate": 1.0,
+        "shared_choice_scores": shared_choice_scores,
+        "memory_residual_scores": total_memory_residual_scores,
+        "final_choice_scores": final_choice_scores,
+    }
+
+
+def _build_repair_anchor(
+    *,
+    choice_scores: torch.Tensor,
+    candidate_labels: list[str],
+    gold_label: str,
+    margin_threshold: float,
+) -> RepairAnchor:
+    gold_index = candidate_labels.index(gold_label)
+    predicted_index = int(torch.argmax(choice_scores).item())
+    other_indices = [index for index in range(len(candidate_labels)) if index != gold_index]
+    competitor_index = (
+        max(other_indices, key=lambda index: float(choice_scores[index].item()))
+        if other_indices
+        else gold_index
+    )
+    margin = float(choice_scores[gold_index].item() - choice_scores[competitor_index].item())
+    predicted_label = candidate_labels[predicted_index]
+    competitor_label = candidate_labels[competitor_index]
+    if predicted_index != gold_index:
+        repair_bucket = "anchor_wrong"
+        repair_weight = 1.0
+    elif margin < float(margin_threshold):
+        repair_bucket = "anchor_near_threshold"
+        repair_weight = 1.0
+    else:
+        repair_bucket = "anchor_confident_correct"
+        repair_weight = 0.0
+    return RepairAnchor(
+        choice_scores=choice_scores.detach().cpu(),
+        gold_index=gold_index,
+        predicted_index=predicted_index,
+        competitor_index=competitor_index,
+        margin=margin,
+        predicted_label=predicted_label,
+        competitor_label=competitor_label,
+        repair_weight=float(repair_weight),
+        repair_active=bool(repair_weight > 0.0),
+        repair_bucket=repair_bucket,
+    )
+
+
+def _build_repair_anchor_lookup(
+    runtime: MemoryRuntime,
+    example_caches: dict[str, PilotExampleCache],
+    *,
+    residual_scale: float,
+    margin_threshold: float,
+) -> dict[str, RepairAnchor]:
+    anchors: dict[str, RepairAnchor] = {}
+    with torch.no_grad():
+        for example_id, example_cache in example_caches.items():
+            shared_residual_scores = _shared_residual_scores(
+                runtime,
+                example_cache,
+                memory_source_cache=_resolve_memory_source_cache(
+                    example_cache,
+                    example_caches,
+                    memory_control="real",
+                ),
+            )
+            shared_choice_scores = example_cache.base_scores + (float(residual_scale) * shared_residual_scores)
+            anchors[example_id] = _build_repair_anchor(
+                choice_scores=shared_choice_scores,
+                candidate_labels=example_cache.candidate_labels,
+                gold_label=str(example_cache.example["label"]),
+                margin_threshold=margin_threshold,
+            )
+    return anchors
+
+
+def _choice_repair_ce_margin_from_scores(
+    final_scores: torch.Tensor,
+    *,
+    gold_index: int,
+    competitor_index: int,
+    repair_active: bool,
+    margin_value: float,
+) -> tuple[torch.Tensor, float]:
+    accuracy = float(int(torch.argmax(final_scores).item()) == gold_index)
+    if not repair_active:
+        return final_scores.sum() * 0.0, accuracy
+    ce_loss = F.cross_entropy(
+        final_scores.unsqueeze(0),
+        torch.tensor([gold_index], dtype=torch.long, device=final_scores.device),
+    )
+    repair_pair_scores = torch.stack(
+        [
+            final_scores[gold_index],
+            final_scores[competitor_index],
+        ]
+    )
+    margin_loss = _pairwise_margin_loss(repair_pair_scores, margin_value=margin_value)
+    return ce_loss + margin_loss, accuracy
+
+
 def _score_choice_components(
     runtime: MemoryRuntime,
     example_cache: PilotExampleCache,
     *,
     decision_mode: str,
     memory_control: str,
+    candidate_memory_control: str,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_residual_scale: float,
     candidate_delta_scale: float,
     candidate_delta_gate_tau: float,
 ) -> dict[str, torch.Tensor | float]:
@@ -356,12 +540,11 @@ def _score_choice_components(
         }
 
     if decision_mode == "shared_summary_late_fusion":
-        memory_summary = _shared_memory_summary(
+        shared_residual_scores = _shared_residual_scores(
             runtime,
             example_cache,
             memory_source_cache=memory_source_cache,
         )
-        shared_residual_scores = runtime.score_candidates(memory_summary, example_cache.candidate_states)
         memory_residual_scores = float(residual_scale) * shared_residual_scores
         final_scores = base_scores + memory_residual_scores
         return {
@@ -379,7 +562,11 @@ def _score_choice_components(
     conditioned_residual_scores = _candidate_conditioned_residual_scores(
         runtime,
         example_cache,
-        memory_source_cache=memory_source_cache,
+        memory_source_cache=_resolve_memory_source_cache(
+            example_cache,
+            cache_lookup,
+            memory_control=candidate_memory_control,
+        ),
     )
     if decision_mode == "candidate_conditioned_late_fusion":
         memory_residual_scores = float(residual_scale) * conditioned_residual_scores
@@ -396,12 +583,25 @@ def _score_choice_components(
             "final_choice_scores": final_scores,
         }
 
-    shared_memory_summary = _shared_memory_summary(
+    if decision_mode == "shared_plus_candidate_conditioned_late_fusion":
+        shared_residual_scores = _shared_residual_scores(
+            runtime,
+            example_cache,
+            memory_source_cache=memory_source_cache,
+        )
+        return _compose_shared_plus_candidate_conditioned_scores(
+            base_scores=base_scores,
+            shared_residual_scores=shared_residual_scores,
+            conditioned_residual_scores=conditioned_residual_scores,
+            shared_scale=residual_scale,
+            candidate_residual_scale=candidate_residual_scale,
+        )
+
+    shared_residual_scores = _shared_residual_scores(
         runtime,
         example_cache,
         memory_source_cache=memory_source_cache,
     )
-    shared_residual_scores = runtime.score_candidates(shared_memory_summary, example_cache.candidate_states)
     return _compose_shared_plus_candidate_delta_scores(
         base_scores=base_scores,
         shared_residual_scores=shared_residual_scores,
@@ -418,10 +618,13 @@ def _score_multiple_choice_example(
     *,
     decision_mode: str,
     memory_control: str,
+    candidate_memory_control: str,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_residual_scale: float,
     candidate_delta_scale: float,
     candidate_delta_gate_tau: float,
+    repair_anchor: RepairAnchor | None,
 ) -> dict[str, Any]:
     evaluator = _build_task_evaluator(example_cache.example)
     score_components = _score_choice_components(
@@ -429,8 +632,10 @@ def _score_multiple_choice_example(
         example_cache,
         decision_mode=decision_mode,
         memory_control=memory_control,
+        candidate_memory_control=candidate_memory_control,
         cache_lookup=cache_lookup,
         residual_scale=residual_scale,
+        candidate_residual_scale=candidate_residual_scale,
         candidate_delta_scale=candidate_delta_scale,
         candidate_delta_gate_tau=candidate_delta_gate_tau,
     )
@@ -503,6 +708,17 @@ def _score_multiple_choice_example(
         "base_top_competitor_text": example_cache.candidate_texts[base_competitor_index],
         "shared_top_competitor_text": example_cache.candidate_texts[shared_competitor_index],
         "final_top_competitor_text": example_cache.candidate_texts[final_competitor_index],
+        "candidate_branch_memory_control": candidate_memory_control,
+        "candidate_conditioned_residual_scores": [float(value) for value in conditioned_residual_scores.tolist()],
+        "anchor_shared_choice_scores": []
+        if repair_anchor is None
+        else [float(value) for value in repair_anchor.choice_scores.tolist()],
+        "anchor_shared_margin": float("nan") if repair_anchor is None else float(repair_anchor.margin),
+        "anchor_shared_predicted_label": "" if repair_anchor is None else str(repair_anchor.predicted_label),
+        "repair_competitor_label": "" if repair_anchor is None else str(repair_anchor.competitor_label),
+        "repair_weight": 0.0 if repair_anchor is None else float(repair_anchor.repair_weight),
+        "repair_active": False if repair_anchor is None else bool(repair_anchor.repair_active),
+        "repair_bucket": "" if repair_anchor is None else str(repair_anchor.repair_bucket),
         "gold_label": gold_label,
         "gold_text": example_cache.candidate_texts[gold_index],
         "predicted_correct": bool(final_predicted_index == gold_index),
@@ -541,9 +757,11 @@ def _choice_ce_plus_margin_support_loss(
     *,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_residual_scale: float,
     candidate_delta_scale: float,
     candidate_delta_gate_tau: float,
     memory_control: str,
+    candidate_memory_control: str,
     margin_value: float,
     decision_mode: str,
 ) -> tuple[torch.Tensor, float]:
@@ -552,8 +770,10 @@ def _choice_ce_plus_margin_support_loss(
         example_cache,
         decision_mode=decision_mode,
         memory_control=memory_control,
+        candidate_memory_control=candidate_memory_control,
         cache_lookup=cache_lookup,
         residual_scale=residual_scale,
+        candidate_residual_scale=candidate_residual_scale,
         candidate_delta_scale=candidate_delta_scale,
         candidate_delta_gate_tau=candidate_delta_gate_tau,
     )
@@ -582,6 +802,43 @@ def _choice_ce_plus_margin_support_loss(
     )
     accuracy = float(int(torch.argmax(final_scores).item()) == gold_index)
     return ce_loss + margin_loss, accuracy
+
+
+def _choice_repair_ce_margin_support_loss(
+    runtime: MemoryRuntime,
+    example_cache: PilotExampleCache,
+    *,
+    repair_anchor: RepairAnchor,
+    cache_lookup: dict[str, PilotExampleCache],
+    residual_scale: float,
+    candidate_residual_scale: float,
+    candidate_delta_scale: float,
+    candidate_delta_gate_tau: float,
+    memory_control: str,
+    candidate_memory_control: str,
+    margin_value: float,
+    decision_mode: str,
+) -> tuple[torch.Tensor, float]:
+    score_components = _score_choice_components(
+        runtime,
+        example_cache,
+        decision_mode=decision_mode,
+        memory_control=memory_control,
+        candidate_memory_control=candidate_memory_control,
+        cache_lookup=cache_lookup,
+        residual_scale=residual_scale,
+        candidate_residual_scale=candidate_residual_scale,
+        candidate_delta_scale=candidate_delta_scale,
+        candidate_delta_gate_tau=candidate_delta_gate_tau,
+    )
+    final_scores = score_components["final_choice_scores"]
+    return _choice_repair_ce_margin_from_scores(
+        final_scores,
+        gold_index=repair_anchor.gold_index,
+        competitor_index=repair_anchor.competitor_index,
+        repair_active=repair_anchor.repair_active,
+        margin_value=margin_value,
+    )
 
 
 def _continuation_retrieval_support_loss(
@@ -620,8 +877,10 @@ def _aggregate_evaluation(
     *,
     decision_mode: str,
     memory_control: str,
+    candidate_memory_control: str,
     cache_lookup: dict[str, PilotExampleCache],
     residual_scale: float,
+    candidate_residual_scale: float,
     candidate_delta_scale: float,
     candidate_delta_gate_tau: float,
     residual_calibration_mode: str,
@@ -629,6 +888,7 @@ def _aggregate_evaluation(
     seed: int,
     support_ids: list[str],
     support_objective: str,
+    repair_anchor_lookup: dict[str, RepairAnchor],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     task_scores: list[float] = []
     task_proxy_scores: list[float] = []
@@ -641,10 +901,13 @@ def _aggregate_evaluation(
             example_cache,
             decision_mode=decision_mode,
             memory_control=memory_control,
+            candidate_memory_control=candidate_memory_control,
             cache_lookup=cache_lookup,
             residual_scale=residual_scale,
+            candidate_residual_scale=candidate_residual_scale,
             candidate_delta_scale=candidate_delta_scale,
             candidate_delta_gate_tau=candidate_delta_gate_tau,
+            repair_anchor=repair_anchor_lookup.get(str(example_cache.example["id"])),
         )
         task_scores.append(float(payload["task_score"]))
         task_proxy_scores.append(float(payload["task_proxy_score"]))
@@ -658,6 +921,7 @@ def _aggregate_evaluation(
                 "training_stage": "stage_c_real_pilot",
                 "decision_mode": decision_mode,
                 "memory_control_mode": memory_control,
+                "candidate_branch_memory_control": candidate_memory_control,
                 "choice_objective": support_objective,
                 "residual_calibration_mode": residual_calibration_mode,
                 "effective_residual_scale": float(residual_scale),
@@ -723,12 +987,15 @@ def _resolve_effective_residual_scale(
     *,
     decision_mode: str,
     memory_control: str,
+    candidate_memory_control: str,
     cache_lookup: dict[str, PilotExampleCache],
     configured_residual_scale: float,
     calibration_mode: str,
     calibration_alpha_grid: list[float],
+    candidate_residual_scale: float,
     candidate_delta_scale: float,
     candidate_delta_gate_tau: float,
+    repair_anchor_lookup: dict[str, RepairAnchor],
 ) -> tuple[float, dict[str, float]]:
     if decision_mode == "base_only" or calibration_mode == "none" or not support_caches:
         return float(configured_residual_scale), {
@@ -749,10 +1016,13 @@ def _resolve_effective_residual_scale(
                     example_cache,
                     decision_mode=decision_mode,
                     memory_control=memory_control,
+                    candidate_memory_control=candidate_memory_control,
                     cache_lookup=cache_lookup,
                     residual_scale=float(alpha),
+                    candidate_residual_scale=candidate_residual_scale,
                     candidate_delta_scale=candidate_delta_scale,
                     candidate_delta_gate_tau=candidate_delta_gate_tau,
+                    repair_anchor=repair_anchor_lookup.get(str(example_cache.example["id"])),
                 )
                 task_scores.append(float(payload["task_score"]))
                 task_proxy_scores.append(float(payload["task_proxy_score"]))
@@ -782,11 +1052,18 @@ def run_stage_c_real_pilot(
 ) -> dict[str, Any]:
     decision_mode = _resolve_decision_mode(config)
     memory_control = _resolve_memory_control(config)
+    candidate_memory_control = _resolve_candidate_memory_control(
+        config,
+        decision_mode=decision_mode,
+        default_memory_control=memory_control,
+    )
     support_objective = _resolve_choice_objective(config)
     residual_calibration_mode = _resolve_residual_calibration_mode(config)
     residual_scale = float(config["runtime"].get("stage_c_choice_residual_scale", 1.0))
+    candidate_residual_scale = _resolve_candidate_residual_scale(config)
     candidate_delta_scale = _resolve_candidate_delta_scale(config)
     candidate_delta_gate_tau = _resolve_candidate_delta_gate_tau(config)
+    repair_anchor_margin_threshold = _resolve_repair_anchor_margin_threshold(config)
     calibration_alpha_grid = _resolve_residual_calibration_alpha_grid(
         config,
         configured_residual_scale=residual_scale,
@@ -847,6 +1124,16 @@ def run_stage_c_real_pilot(
     calibration_caches = [cache_lookup[str(example["id"])] for example in calibration_examples]
     eval_caches = [cache_lookup[str(example["id"])] for example in eval_examples]
     support_ids = [str(example["id"]) for example in support_examples]
+    repair_anchor_lookup = (
+        _build_repair_anchor_lookup(
+            runtime,
+            cache_lookup,
+            residual_scale=residual_scale,
+            margin_threshold=repair_anchor_margin_threshold,
+        )
+        if support_objective == "choice_repair_ce_margin"
+        else {}
+    )
 
     profiler = ProfileTracker(
         output_dir=output_dir,
@@ -869,12 +1156,15 @@ def run_stage_c_real_pilot(
             calibration_caches or support_caches,
             decision_mode=decision_mode,
             memory_control=memory_control,
+            candidate_memory_control=candidate_memory_control,
             cache_lookup=cache_lookup,
             configured_residual_scale=residual_scale,
             calibration_mode=residual_calibration_mode,
             calibration_alpha_grid=calibration_alpha_grid,
+            candidate_residual_scale=candidate_residual_scale,
             candidate_delta_scale=candidate_delta_scale,
             candidate_delta_gate_tau=candidate_delta_gate_tau,
+            repair_anchor_lookup=repair_anchor_lookup,
         )
         calibration_history.append(
             {
@@ -894,8 +1184,10 @@ def run_stage_c_real_pilot(
             eval_caches,
             decision_mode=decision_mode,
             memory_control=memory_control,
+            candidate_memory_control=candidate_memory_control,
             cache_lookup=cache_lookup,
             residual_scale=effective_residual_scale,
+            candidate_residual_scale=candidate_residual_scale,
             candidate_delta_scale=candidate_delta_scale,
             candidate_delta_gate_tau=candidate_delta_gate_tau,
             residual_calibration_mode=residual_calibration_mode,
@@ -903,6 +1195,7 @@ def run_stage_c_real_pilot(
             seed=seed,
             support_ids=support_ids,
             support_objective=support_objective,
+            repair_anchor_lookup=repair_anchor_lookup,
         )
         for example_cache in eval_caches:
             profiler.add_tokens(runtime.backbone.count_tokens(_resolve_story_text(example_cache.example)))
@@ -912,6 +1205,7 @@ def run_stage_c_real_pilot(
         row = {
             "decision_mode": decision_mode,
             "memory_control_mode": memory_control,
+            "candidate_branch_memory_control": candidate_memory_control,
             "choice_objective": support_objective,
             "residual_calibration_mode": residual_calibration_mode,
             "query_learning_mode": query_learning_mode,
@@ -920,6 +1214,7 @@ def run_stage_c_real_pilot(
             "trainable_parameter_count": trainable_parameter_count,
             "step": step,
             "effective_residual_scale": float(effective_residual_scale),
+            "candidate_residual_scale": float(candidate_residual_scale),
             "candidate_delta_scale": float(candidate_delta_scale),
             "candidate_delta_gate_tau": float(candidate_delta_gate_tau),
             "support_examples": len(support_caches),
@@ -930,6 +1225,10 @@ def run_stage_c_real_pilot(
             "support_calibration_task_score": float(calibration_row["task_score"]),
             "support_calibration_task_proxy_score": float(calibration_row["task_proxy_score"]),
             "support_calibration_task_margin": float(calibration_row["task_margin"]),
+            "repair_active_examples": sum(int(bool(row["repair_active"])) for row in case_rows),
+            "repair_active_rate": (
+                sum(int(bool(row["repair_active"])) for row in case_rows) / max(1, len(case_rows))
+            ),
             **eval_metrics,
         }
         curve_rows.append(row)
@@ -945,17 +1244,34 @@ def run_stage_c_real_pilot(
         support_accuracies: list[float] = []
         for example_cache in support_caches:
             profiler.add_tokens(runtime.backbone.count_tokens(_resolve_story_text(example_cache.example)))
-            profiler.add_tokens(runtime.backbone.count_tokens(example_cache.candidate_texts[0]))
-            profiler.add_tokens(runtime.backbone.count_tokens(example_cache.candidate_texts[1]))
+            for candidate_text in example_cache.candidate_texts:
+                profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
             if support_objective == "choice_ce_plus_margin":
                 support_loss, support_accuracy = _choice_ce_plus_margin_support_loss(
                     runtime,
                     example_cache,
                     cache_lookup=cache_lookup,
                     residual_scale=effective_residual_scale,
+                    candidate_residual_scale=candidate_residual_scale,
                     candidate_delta_scale=candidate_delta_scale,
                     candidate_delta_gate_tau=candidate_delta_gate_tau,
                     memory_control=memory_control,
+                    candidate_memory_control=candidate_memory_control,
+                    margin_value=choice_margin,
+                    decision_mode=decision_mode,
+                )
+            elif support_objective == "choice_repair_ce_margin":
+                support_loss, support_accuracy = _choice_repair_ce_margin_support_loss(
+                    runtime,
+                    example_cache,
+                    repair_anchor=repair_anchor_lookup[str(example_cache.example["id"])],
+                    cache_lookup=cache_lookup,
+                    residual_scale=effective_residual_scale,
+                    candidate_residual_scale=candidate_residual_scale,
+                    candidate_delta_scale=candidate_delta_scale,
+                    candidate_delta_gate_tau=candidate_delta_gate_tau,
+                    memory_control=memory_control,
+                    candidate_memory_control=candidate_memory_control,
                     margin_value=choice_margin,
                     decision_mode=decision_mode,
                 )
@@ -985,6 +1301,7 @@ def run_stage_c_real_pilot(
             fieldnames=[
                 "decision_mode",
                 "memory_control_mode",
+                "candidate_branch_memory_control",
                 "choice_objective",
                 "residual_calibration_mode",
                 "query_learning_mode",
@@ -993,6 +1310,7 @@ def run_stage_c_real_pilot(
                 "trainable_parameter_count",
                 "step",
                 "effective_residual_scale",
+                "candidate_residual_scale",
                 "candidate_delta_scale",
                 "candidate_delta_gate_tau",
                 "support_examples",
@@ -1003,6 +1321,8 @@ def run_stage_c_real_pilot(
                 "support_calibration_task_score",
                 "support_calibration_task_proxy_score",
                 "support_calibration_task_margin",
+                "repair_active_examples",
+                "repair_active_rate",
                 "objective_accuracy",
                 "task_score",
                 "task_metric_name",
@@ -1024,6 +1344,7 @@ def run_stage_c_real_pilot(
             "seed": seed,
             "decision_mode": decision_mode,
             "memory_control_mode": memory_control,
+            "candidate_branch_memory_control": candidate_memory_control,
             "choice_objective": support_objective,
             "residual_calibration_mode": residual_calibration_mode,
             "trainable_module": trainable_module,
@@ -1041,6 +1362,7 @@ def run_stage_c_real_pilot(
         "training_stage": "stage_c_real_pilot",
         "decision_mode": decision_mode,
         "memory_control_mode": memory_control,
+        "candidate_branch_memory_control": candidate_memory_control,
         "choice_objective": support_objective,
         "residual_calibration_mode": residual_calibration_mode,
         "query_learning_mode": query_learning_mode,
@@ -1055,8 +1377,10 @@ def run_stage_c_real_pilot(
         "eval_examples": len(eval_caches),
         "pilot_split": str(config["task"].get("pilot_split", config["task"].get("smoke_subset", ""))),
         "stage_c_choice_residual_scale": residual_scale,
+        "stage_c_candidate_residual_scale": candidate_residual_scale,
         "stage_c_candidate_delta_scale": candidate_delta_scale,
         "stage_c_candidate_delta_gate_tau": candidate_delta_gate_tau,
+        "stage_c_repair_anchor_margin_threshold": repair_anchor_margin_threshold,
         "stage_c_residual_calibration_alpha_grid": calibration_alpha_grid,
         "stage_c_choice_margin": choice_margin,
         "pilot_support_learning_rate": support_learning_rate,
@@ -1075,6 +1399,7 @@ def run_stage_c_real_pilot(
         "adapt_curve_path": str(adapt_curve_path.resolve()),
         "task_case_dump_path": str(task_case_dump_path.resolve()),
         "task_case_dump_rows": len(task_case_rows),
+        "repair_active_case_rows": sum(int(bool(row["repair_active"])) for row in task_case_rows),
         "adapted_queries_checkpoint": str((output_dir / "queries_adapted.pt").resolve()),
         "support_calibration_path": str((output_dir / "support_calibration.json").resolve()),
         **profile_metrics,

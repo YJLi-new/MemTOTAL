@@ -93,13 +93,18 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 _REAL_PILOT_ARM_KEYS = {
-    "A": "base_only|real|continuation_retrieval",
-    "B": "shared_summary_late_fusion|real|continuation_retrieval",
-    "C": "candidate_conditioned_late_fusion|real|continuation_retrieval",
-    "D": "candidate_conditioned_late_fusion|shuffled|continuation_retrieval",
-    "E": "candidate_conditioned_late_fusion|real|choice_ce_plus_margin",
-    "F": "shared_plus_candidate_delta_late_fusion|real|continuation_retrieval",
-    "G": "shared_plus_candidate_delta_late_fusion|shuffled|continuation_retrieval",
+    "A": "base_only|real|continuation_retrieval|real",
+    "B": "shared_summary_late_fusion|real|continuation_retrieval|real",
+    "C": "candidate_conditioned_late_fusion|real|continuation_retrieval|real",
+    "D": "candidate_conditioned_late_fusion|shuffled|continuation_retrieval|shuffled",
+    "E": "candidate_conditioned_late_fusion|real|choice_ce_plus_margin|real",
+    "F": "shared_plus_candidate_delta_late_fusion|real|continuation_retrieval|real",
+    "G": "shared_plus_candidate_delta_late_fusion|shuffled|continuation_retrieval|shuffled",
+    "B_old": "shared_summary_late_fusion|real|continuation_retrieval|real",
+    "B_new": "shared_summary_late_fusion|real|choice_repair_ce_margin|real",
+    "R_real": "shared_plus_candidate_conditioned_late_fusion|real|choice_repair_ce_margin|real",
+    "R_shuffle": "shared_plus_candidate_conditioned_late_fusion|real|choice_repair_ce_margin|shuffled",
+    "R_zero": "shared_plus_candidate_conditioned_late_fusion|real|choice_repair_ce_margin|zero",
 }
 _DEFAULT_COMPARE_ALIASES = ["A", "B", "C", "D", "E"]
 _DEFAULT_COMPARE_PAIRS = ["A->B", "A->C", "C->D", "C->E"]
@@ -205,15 +210,20 @@ def _collect_stage_c_real_pilot_runs(root: Path) -> dict[str, list[tuple[dict[st
         metrics = json.loads(metrics_path.read_text())
         if metrics.get("training_stage") != "stage_c_real_pilot":
             continue
-        key = "|".join(
-            [
-                str(metrics.get("decision_mode")),
-                str(metrics.get("memory_control_mode")),
-                str(metrics.get("choice_objective")),
-            ]
-        )
+        key = _real_pilot_arm_lookup_key(metrics)
         runs_by_key.setdefault(key, []).append((metrics, metrics_path.parent))
     return runs_by_key
+
+
+def _real_pilot_arm_lookup_key(metrics: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            str(metrics.get("decision_mode")),
+            str(metrics.get("memory_control_mode", "real")),
+            str(metrics.get("choice_objective")),
+            str(metrics.get("candidate_branch_memory_control", metrics.get("memory_control_mode", "real"))),
+        ]
+    )
 
 
 def _pick_real_pilot_run(
@@ -317,6 +327,43 @@ def _resolve_memory_control_pair(config: dict[str, Any] | None) -> tuple[str, st
     return parts[0], parts[1]
 
 
+def _resolve_zero_control_pair(config: dict[str, Any] | None) -> tuple[str, str] | None:
+    raw_spec = None if config is None else config.get("runtime", {}).get("zero_control_pair")
+    if raw_spec is None:
+        return None
+    if isinstance(raw_spec, str):
+        parts = [part.strip() for part in raw_spec.split("->") if part.strip()]
+    else:
+        parts = [str(part).strip() for part in raw_spec]
+    if len(parts) != 2 or any(part not in _REAL_PILOT_ARM_KEYS for part in parts):
+        raise ValueError("runtime.zero_control_pair must specify exactly two supported aliases.")
+    return parts[0], parts[1]
+
+
+def _resolve_gate_alias(config: dict[str, Any] | None, key: str) -> str | None:
+    if config is None:
+        return None
+    value = config.get("runtime", {}).get(key)
+    if value is None:
+        return None
+    alias = str(value).strip()
+    if alias not in _REAL_PILOT_ARM_KEYS:
+        raise ValueError(f"runtime.{key} must reference a supported alias, got {alias!r}")
+    return alias
+
+
+def _resolve_gate_threshold_int(config: dict[str, Any] | None, key: str, default: int) -> int:
+    if config is None:
+        return default
+    return int(config.get("runtime", {}).get(key, default))
+
+
+def _resolve_gate_threshold_float(config: dict[str, Any] | None, key: str, default: float) -> float:
+    if config is None:
+        return default
+    return float(config.get("runtime", {}).get(key, default))
+
+
 def _resolve_pilot_split_name(config: dict[str, Any] | None, *, default: str) -> str:
     if config is None:
         return default
@@ -338,6 +385,9 @@ def _build_arm_summary_row(alias: str, metrics: dict[str, Any], run_dir: Path) -
         "mode": "analysis",
         "decision_mode": str(metrics["decision_mode"]),
         "memory_control_mode": str(metrics["memory_control_mode"]),
+        "candidate_branch_memory_control": str(
+            metrics.get("candidate_branch_memory_control", metrics.get("memory_control_mode", "real"))
+        ),
         "choice_objective": str(metrics["choice_objective"]),
         "primary_metric": "best_adapt_task_score",
         "primary_score": float(metrics["best_adapt_task_score"]),
@@ -833,37 +883,12 @@ def run_stage_c_real_pilot_compare(
     for left_alias, right_alias in pair_specs:
         left_rows = selected_rows_by_alias[left_alias]
         right_rows = selected_rows_by_alias[right_alias]
-        common_ids = sorted(set(left_rows) & set(right_rows))
         if dry_run:
-            common_ids = common_ids[: min(8, len(common_ids))]
-        flip_count = 0
-        regression_count = 0
-        task_gain_total = 0.0
-        proxy_gain_total = 0.0
-        margin_gain_total = 0.0
-        for example_id in common_ids:
-            left_row = left_rows[example_id]
-            right_row = right_rows[example_id]
-            left_correct = bool(left_row["predicted_correct"])
-            right_correct = bool(right_row["predicted_correct"])
-            flip_count += int((not left_correct) and right_correct)
-            regression_count += int(left_correct and (not right_correct))
-            task_gain_total += float(right_row["task_score"]) - float(left_row["task_score"])
-            proxy_gain_total += float(right_row["task_proxy_score"]) - float(left_row["task_proxy_score"])
-            margin_gain_total += float(right_row["final_margin"]) - float(left_row["final_margin"])
-        pair_rows.append(
-            {
-                "left_alias": left_alias,
-                "right_alias": right_alias,
-                "paired_examples": len(common_ids),
-                "flip_count": flip_count,
-                "regression_count": regression_count,
-                "flip_count_delta": flip_count - regression_count,
-                "mean_task_gain": task_gain_total / max(1, len(common_ids)),
-                "mean_proxy_gain": proxy_gain_total / max(1, len(common_ids)),
-                "mean_margin_gain": margin_gain_total / max(1, len(common_ids)),
-            }
-        )
+            common_ids = sorted(set(left_rows) & set(right_rows))
+            sample_ids = set(common_ids[: min(8, len(common_ids))])
+            left_rows = {example_id: row for example_id, row in left_rows.items() if example_id in sample_ids}
+            right_rows = {example_id: row for example_id, row in right_rows.items() if example_id in sample_ids}
+        pair_rows.append(_pairwise_summary_row(left_alias, right_alias, left_rows, right_rows))
 
     flip_rows: list[dict[str, Any]] = []
     flip_left_alias, flip_right_alias = _resolve_flip_compare_aliases(config)
@@ -915,25 +940,134 @@ def run_stage_c_real_pilot_compare(
                 }
             )
 
+    repair_bucket_summary_rows: list[dict[str, Any]] = []
+    repair_bucket_keys = sorted(
+        {
+            str(row.get("repair_bucket", ""))
+            for alias_rows in selected_rows_by_alias.values()
+            for row in alias_rows.values()
+            if str(row.get("repair_bucket", ""))
+        }
+    )
+    for alias, alias_rows in selected_rows_by_alias.items():
+        for bucket in repair_bucket_keys:
+            bucket_rows = [row for row in alias_rows.values() if str(row.get("repair_bucket", "")) == bucket]
+            if not bucket_rows:
+                continue
+            repair_bucket_summary_rows.append(
+                {
+                    "alias": alias,
+                    "repair_bucket": bucket,
+                    "examples": len(bucket_rows),
+                    "task_score": sum(float(row["task_score"]) for row in bucket_rows) / len(bucket_rows),
+                    "task_proxy_score": sum(float(row["task_proxy_score"]) for row in bucket_rows) / len(bucket_rows),
+                    "task_margin": sum(float(row["final_margin"]) for row in bucket_rows) / len(bucket_rows),
+                    "repair_active_rate": sum(int(bool(row.get("repair_active", False))) for row in bucket_rows)
+                    / len(bucket_rows),
+                }
+            )
+
     arm_summary_path = output_dir / "arm_summary.csv"
     pairwise_path = output_dir / "arm_pairwise_compare.csv"
     flip_cases_path = output_dir / "flip_cases.csv"
     bucket_summary_path = output_dir / "bucket_summary.csv"
+    repair_bucket_summary_path = output_dir / "repair_bucket_summary.csv"
     memory_control_gap_path = output_dir / "memory_control_gap.csv"
+    real_vs_shuffle_gap_path = output_dir / "real_vs_shuffle_gap.csv"
+    real_vs_zero_gap_path = output_dir / "real_vs_zero_gap.csv"
     write_summary_csv(arm_summary_path, arm_summary_rows)
     write_sanity_plot(output_dir / "summary.svg", arm_summary_rows)
     _write_csv(pairwise_path, pair_rows)
     _write_csv(flip_cases_path, flip_rows)
     _write_csv(bucket_summary_path, bucket_summary_rows)
+    _write_csv(repair_bucket_summary_path, repair_bucket_summary_rows)
     memory_left_alias, memory_right_alias = _resolve_memory_control_pair(config)
-    _write_csv(
-        memory_control_gap_path,
-        [
-            row
+    memory_control_gap_rows = [
+        {
+            **row,
+            **_pair_alignment_summary(
+                row["left_alias"],
+                row["right_alias"],
+                selected_rows_by_alias[row["left_alias"]],
+                selected_rows_by_alias[row["right_alias"]],
+            ),
+        }
+        for row in pair_rows
+        if row["left_alias"] == memory_left_alias and row["right_alias"] == memory_right_alias
+    ]
+    _write_csv(memory_control_gap_path, memory_control_gap_rows)
+    _write_csv(real_vs_shuffle_gap_path, memory_control_gap_rows)
+    zero_control_pair = _resolve_zero_control_pair(config)
+    real_vs_zero_gap_rows: list[dict[str, Any]] = []
+    if zero_control_pair is not None:
+        real_vs_zero_gap_rows = [
+            {
+                **row,
+                **_pair_alignment_summary(
+                    row["left_alias"],
+                    row["right_alias"],
+                    selected_rows_by_alias[row["left_alias"]],
+                    selected_rows_by_alias[row["right_alias"]],
+                ),
+            }
             for row in pair_rows
-            if row["left_alias"] == memory_left_alias and row["right_alias"] == memory_right_alias
-        ],
-    )
+            if row["left_alias"] == zero_control_pair[0] and row["right_alias"] == zero_control_pair[1]
+        ]
+    _write_csv(real_vs_zero_gap_path, real_vs_zero_gap_rows)
+
+    pair_rows_by_key = {(row["left_alias"], row["right_alias"]): row for row in pair_rows}
+    gate_primary_alias = _resolve_gate_alias(config, "gate_primary_alias")
+    gate_shuffle_alias = _resolve_gate_alias(config, "gate_shuffle_alias")
+    gate_zero_alias = _resolve_gate_alias(config, "gate_zero_alias")
+    gate_anchor_alias = _resolve_gate_alias(config, "gate_anchor_alias")
+    gate_min_flip_gain = _resolve_gate_threshold_int(config, "gate_min_flip_gain", 2)
+    gate_max_regression_count = _resolve_gate_threshold_int(config, "gate_max_regression_count", 1)
+    gate_min_alignment_rate = _resolve_gate_threshold_float(config, "gate_min_alignment_rate", 0.6)
+    gate_passed = False
+    gate_summary: dict[str, Any] = {}
+    if all(alias is not None for alias in (gate_primary_alias, gate_shuffle_alias, gate_zero_alias, gate_anchor_alias)):
+        real_vs_shuffle = pair_rows_by_key.get((gate_shuffle_alias, gate_primary_alias), {})
+        real_vs_zero = pair_rows_by_key.get((gate_zero_alias, gate_primary_alias), {})
+        anchor_vs_real = pair_rows_by_key.get((gate_anchor_alias, gate_primary_alias), {})
+        real_vs_shuffle_alignment = next(iter(memory_control_gap_rows), {})
+        real_vs_zero_alignment = next(iter(real_vs_zero_gap_rows), {})
+        gate_passed = bool(
+            real_vs_shuffle
+            and real_vs_zero
+            and anchor_vs_real
+            and int(real_vs_shuffle.get("flip_count_delta", 0)) >= gate_min_flip_gain
+            and int(real_vs_zero.get("flip_count_delta", 0)) >= gate_min_flip_gain
+            and float(anchor_vs_real.get("mean_task_gain", 0.0)) >= 0.0
+            and int(anchor_vs_real.get("regression_count", 0)) <= gate_max_regression_count
+            and float(real_vs_shuffle_alignment.get("anchor_wrong_alignment_rate", 0.0)) >= gate_min_alignment_rate
+            and float(real_vs_shuffle_alignment.get("anchor_wrong_weighted_alignment", 0.0)) > 0.0
+        )
+        gate_summary = {
+            "gate_primary_alias": gate_primary_alias,
+            "gate_shuffle_alias": gate_shuffle_alias,
+            "gate_zero_alias": gate_zero_alias,
+            "gate_anchor_alias": gate_anchor_alias,
+            "gate_min_flip_gain": gate_min_flip_gain,
+            "gate_max_regression_count": gate_max_regression_count,
+            "gate_min_alignment_rate": gate_min_alignment_rate,
+            "gate_real_vs_shuffle_flip_count_delta": int(real_vs_shuffle.get("flip_count_delta", 0)),
+            "gate_real_vs_zero_flip_count_delta": int(real_vs_zero.get("flip_count_delta", 0)),
+            "gate_anchor_vs_real_regression_count": int(anchor_vs_real.get("regression_count", 0)),
+            "gate_anchor_vs_real_mean_task_gain": float(anchor_vs_real.get("mean_task_gain", 0.0)),
+            "gate_real_vs_shuffle_alignment_rate": float(
+                real_vs_shuffle_alignment.get("anchor_wrong_alignment_rate", 0.0)
+            ),
+            "gate_real_vs_shuffle_weighted_alignment": float(
+                real_vs_shuffle_alignment.get("anchor_wrong_weighted_alignment", 0.0)
+            ),
+            "gate_real_vs_zero_alignment_rate": float(
+                real_vs_zero_alignment.get("anchor_wrong_alignment_rate", 0.0)
+            ),
+            "gate_real_vs_zero_weighted_alignment": float(
+                real_vs_zero_alignment.get("anchor_wrong_weighted_alignment", 0.0)
+            ),
+            "gate_passed": gate_passed,
+        }
     report_title = "Stage C Real Pilot Compare"
     if config is not None:
         report_title = str(config.get("runtime", {}).get("report_title", report_title))
@@ -966,6 +1100,29 @@ def run_stage_c_real_pilot_compare(
             f"proxy={row['task_proxy_score']:.4f}, "
             f"margin={row['task_margin']:.4f}"
         )
+    if repair_bucket_summary_rows:
+        report_lines.append("")
+        report_lines.append("## Repair Bucket Summary")
+        for row in repair_bucket_summary_rows:
+            report_lines.append(
+                f"- {row['alias']} / {row['repair_bucket']}: "
+                f"task_score={row['task_score']:.4f}, "
+                f"margin={row['task_margin']:.4f}, "
+                f"repair_active_rate={row['repair_active_rate']:.4f}"
+            )
+    if gate_summary:
+        report_lines.append("")
+        report_lines.append("## Gate")
+        report_lines.append(f"- gate_passed={gate_summary['gate_passed']}")
+        report_lines.append(
+            f"- real_vs_shuffle_flip_count_delta={gate_summary['gate_real_vs_shuffle_flip_count_delta']}, "
+            f"real_vs_zero_flip_count_delta={gate_summary['gate_real_vs_zero_flip_count_delta']}, "
+            f"anchor_vs_real_regression_count={gate_summary['gate_anchor_vs_real_regression_count']}"
+        )
+        report_lines.append(
+            f"- real_vs_shuffle_alignment_rate={gate_summary['gate_real_vs_shuffle_alignment_rate']:.4f}, "
+            f"real_vs_shuffle_weighted_alignment={gate_summary['gate_real_vs_shuffle_weighted_alignment']:.4f}"
+        )
     (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
     write_json(
         output_dir / "metrics.json",
@@ -975,9 +1132,13 @@ def run_stage_c_real_pilot_compare(
             "pairwise_compare_csv": str(pairwise_path.resolve()),
             "flip_cases_csv": str(flip_cases_path.resolve()),
             "bucket_summary_csv": str(bucket_summary_path.resolve()),
+            "repair_bucket_summary_csv": str(repair_bucket_summary_path.resolve()),
             "memory_control_gap_csv": str(memory_control_gap_path.resolve()),
+            "real_vs_shuffle_gap_csv": str(real_vs_shuffle_gap_path.resolve()),
+            "real_vs_zero_gap_csv": str(real_vs_zero_gap_path.resolve()),
             "pair_count": len(pair_rows),
             "flip_cases": len(flip_rows),
+            **gate_summary,
         },
     )
 
@@ -998,6 +1159,77 @@ def _resolve_primary_control_task(config: dict[str, Any] | None) -> bool:
     if config is None:
         return False
     return bool(config.get("runtime", {}).get("primary_control_task", False))
+
+
+def _pairwise_summary_row(
+    left_alias: str,
+    right_alias: str,
+    left_rows: dict[str, dict[str, Any]],
+    right_rows: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    common_ids = sorted(set(left_rows) & set(right_rows))
+    flip_count = 0
+    regression_count = 0
+    task_gain_total = 0.0
+    proxy_gain_total = 0.0
+    margin_gain_total = 0.0
+    for example_id in common_ids:
+        left_row = left_rows[example_id]
+        right_row = right_rows[example_id]
+        left_correct = bool(left_row["predicted_correct"])
+        right_correct = bool(right_row["predicted_correct"])
+        flip_count += int((not left_correct) and right_correct)
+        regression_count += int(left_correct and (not right_correct))
+        task_gain_total += float(right_row["task_score"]) - float(left_row["task_score"])
+        proxy_gain_total += float(right_row["task_proxy_score"]) - float(left_row["task_proxy_score"])
+        margin_gain_total += float(right_row["final_margin"]) - float(left_row["final_margin"])
+    count = max(1, len(common_ids))
+    return {
+        "left_alias": left_alias,
+        "right_alias": right_alias,
+        "paired_examples": len(common_ids),
+        "flip_count": flip_count,
+        "regression_count": regression_count,
+        "flip_count_delta": flip_count - regression_count,
+        "mean_task_gain": task_gain_total / count,
+        "mean_proxy_gain": proxy_gain_total / count,
+        "mean_margin_gain": margin_gain_total / count,
+    }
+
+
+def _pair_alignment_summary(
+    left_alias: str,
+    right_alias: str,
+    left_rows: dict[str, dict[str, Any]],
+    right_rows: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    common_ids = sorted(set(left_rows) & set(right_rows))
+    anchor_wrong_examples = 0
+    align_count = 0
+    weighted_total = 0.0
+    for example_id in common_ids:
+        left_row = left_rows[example_id]
+        right_row = right_rows[example_id]
+        repair_bucket = str(left_row.get("repair_bucket", right_row.get("repair_bucket", "")))
+        if repair_bucket != "anchor_wrong":
+            continue
+        needed_fix = -float(left_row.get("anchor_shared_margin", right_row.get("anchor_shared_margin", 0.0)))
+        content_push = float(right_row["final_margin"]) - float(left_row["final_margin"])
+        anchor_wrong_examples += 1
+        if content_push > 0.0:
+            align_count += 1
+        weighted_total += (content_push * needed_fix) / max(abs(needed_fix), 1e-8)
+    return {
+        "left_alias": left_alias,
+        "right_alias": right_alias,
+        "anchor_wrong_examples": anchor_wrong_examples,
+        "anchor_wrong_alignment_rate": (
+            align_count / anchor_wrong_examples if anchor_wrong_examples else 0.0
+        ),
+        "anchor_wrong_weighted_alignment": (
+            weighted_total / anchor_wrong_examples if anchor_wrong_examples else 0.0
+        ),
+    }
 
 
 def _content_audit_summary_row(

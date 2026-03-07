@@ -281,3 +281,50 @@ pairwise：
 - 但当前这条 `candidate` residual family 已经可以开始判：它的主体效应来自 branch form，不来自 real-memory content。
 - 因此，下一步不该直接做 raw routing / sign selection，也不该继续放大这条 `shared + candidate delta`。
 - 如果后续还要继续做 candidate-specific `Stage C`，应该从新的 residual family 重新开始，并且先过 `FEVER` 再回 `Story Cloze`。
+
+## 第五轮补充：FEVER-first repair objective
+
+这轮按更严格的判因口径，没有继续修 `shared + candidate delta`，而是直接把 candidate 分支放到真正的 `choice_repair_ce_margin` 下，再看它会不会第一次出现 real-memory 内容效应。
+
+fresh 矩阵只跑 `FEVER fixed64`：
+
+- 历史 `B-old = shared_summary + continuation_retrieval`
+- fresh `B-newObj = shared_summary + choice_repair_ce_margin`
+- fresh `R-real = shared + candidate_conditioned + repair objective + real memory`
+- fresh `R-shuffle = ... + shuffled memory`
+- fresh `R-zero = ... + zero memory`
+
+关键路径：
+
+- `runs/review/m3-fever-real-pilot-qwen25/`
+- `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/`
+
+结果：
+
+- `B-old = 0.75`
+- `B-newObj = 0.75`
+- `R-real = 0.25`
+- `R-shuffle = 0.25`
+- `R-zero = 0.25`
+
+pairwise：
+
+- `B-old -> B-newObj`: `flip_count_delta=0`
+- `B-newObj -> R-real`: `flip_count_delta=-32`
+- `R-shuffle -> R-real`: `flip_count_delta=0`
+- `R-zero -> R-real`: `flip_count_delta=0`
+
+gate：
+
+- `gate_passed=false`
+- `real_vs_shuffle_alignment_rate=0.5625`
+- `real_vs_zero_flip_count_delta=0`
+- `anchor_vs_real_regression_count=48`
+
+这轮给出的新结论非常硬：
+
+- 单纯把 objective 从 `continuation_retrieval` 换成 repair，并不会让 shared baseline 变强；
+- 更关键的是，candidate-conditioned 分支在 repair objective 下仍然没有 real-memory 内容效应：
+  - `R-real` 没有优于 `R-shuffle`
+  - `R-real` 也没有优于 `R-zero`
+- 因而这条 `candidate-conditioned residual family` 现在可以停止继续修补了；如果后续还要做 candidate-specific `Stage C`，应直接换 residual family，而不是继续在 current family 上叠 router / sign selector。
