@@ -352,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
                 "lightthinker_thought_sketch": getattr(baseline_output, "thought_sketch", None) if use_baseline else None,
                 "candidate_scores": candidate_scores,
                 "gating_mode": None if use_baseline else runtime.reader.gating_mode,
+                "query_residual_scale": None if use_baseline else runtime.reader.query_residual_scale,
                 "gates": None if use_baseline else [float(value) for value in forward.gating.squeeze(0).tolist()],
                 "mean_gate": gate_mean,
                 "active_queries": active_queries,
@@ -379,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         "evaluator_type": evaluator.evaluator_type,
         "mean_similarity": sum(similarities) / len(similarities),
         "gating_mode": "disabled" if use_baseline else runtime.reader.gating_mode,
+        "query_residual_scale": None if use_baseline else runtime.reader.query_residual_scale,
         "mean_gate": sum(gate_means) / len(gate_means),
         "mean_active_queries": sum(active_query_counts) / len(active_query_counts),
         "mean_segment_gate": (

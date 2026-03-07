@@ -86,6 +86,7 @@ def _run_bootstrap_train(args: argparse.Namespace, config: dict) -> int:
         "final_query_grad_norm": events[-1]["query_grad_norm"],
         "loss_has_grad": events[-1]["loss_has_grad"],
         "gating_mode": runtime.reader.gating_mode,
+        "query_residual_scale": runtime.reader.query_residual_scale,
         "mean_gate": sum(item["mean_gate"] for item in events) / len(events),
         "mean_active_queries": sum(item["active_queries"] for item in events) / len(events),
         "mean_segments_per_example": sum(item["num_segments"] for item in events) / len(events),

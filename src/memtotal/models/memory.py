@@ -115,10 +115,12 @@ class MemoryReader(ManagedMemoryModule):
         num_heads: int = 4,
         condition_on_context: bool = True,
         dropout: float = 0.0,
+        query_residual_scale: float = 0.0,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.num_queries = num_queries
+        self.query_residual_scale = float(query_residual_scale)
         resolved_gating_mode = gating_mode or ("learned" if use_query_gating else "off")
         if resolved_gating_mode not in {"off", "random", "learned"}:
             raise ValueError(
@@ -203,8 +205,13 @@ class MemoryReader(ManagedMemoryModule):
             readouts = readouts * gates.unsqueeze(-1)
         else:
             gates = torch.ones(batch_size, self.num_queries, device=memory.device)
+        normalized_readouts = self.readout_norm(readouts)
+        if self.query_residual_scale != 0.0:
+            normalized_readouts = normalized_readouts + (
+                self.query_residual_scale * queries * gates.unsqueeze(-1)
+            )
         return {
-            "readouts": self.readout_norm(readouts),
+            "readouts": normalized_readouts,
             "attention": attention,
             "gates": gates,
             "queries": queries,

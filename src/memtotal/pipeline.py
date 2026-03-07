@@ -66,6 +66,7 @@ class MemoryRuntime(nn.Module):
             num_heads=reader_cfg.get("num_heads", 4),
             condition_on_context=reader_cfg.get("condition_on_context", True),
             dropout=reader_cfg.get("dropout", 0.0),
+            query_residual_scale=float(reader_cfg.get("query_residual_scale", 0.0)),
         )
         self.fuser = MemoryFuser(
             embed_dim=embed_dim,

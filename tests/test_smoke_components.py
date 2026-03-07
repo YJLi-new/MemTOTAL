@@ -113,6 +113,34 @@ class SmokeComponentTest(unittest.TestCase):
         self.assertEqual(list(outputs["readouts"].shape), [1, 2, 8])
         self.assertTrue(torch.allclose(outputs["attention"][:, :, 2:], torch.zeros(1, 2, 2), atol=1e-6))
 
+    def test_reader_query_residual_preserves_query_signal(self) -> None:
+        reader = MemoryReader(
+            embed_dim=4,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=2,
+            condition_on_context=False,
+            query_residual_scale=1.0,
+        )
+        with torch.no_grad():
+            reader.cross_attn.in_proj_weight.zero_()
+            reader.cross_attn.in_proj_bias.zero_()
+            reader.cross_attn.out_proj.weight.zero_()
+            reader.cross_attn.out_proj.bias.zero_()
+            reader.readout_norm.weight.fill_(1.0)
+            reader.readout_norm.bias.zero_()
+            reader.queries.copy_(
+                torch.tensor(
+                    [
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                    ]
+                )
+            )
+        memory = torch.zeros(1, 3, 4)
+        outputs = reader.read(memory)
+        self.assertGreater(float(outputs["readouts"].abs().sum().item()), 0.0)
+
     def test_writer_freeze_save_and_load(self) -> None:
         writer = MemoryWriter(
             embed_dim=8,
