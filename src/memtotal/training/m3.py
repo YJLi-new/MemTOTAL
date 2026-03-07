@@ -167,6 +167,34 @@ def _count_unique_parameters(parameters: list[torch.nn.Parameter]) -> int:
     return total
 
 
+def _parameter_grad_norm(parameters: list[torch.nn.Parameter]) -> float:
+    total = 0.0
+    for parameter in parameters:
+        if parameter.grad is None:
+            continue
+        total += float(parameter.grad.detach().pow(2).sum().item())
+    return total ** 0.5
+
+
+def _snapshot_parameter_tensors(parameters: list[torch.nn.Parameter]) -> list[torch.Tensor]:
+    return [parameter.detach().clone() for parameter in parameters]
+
+
+def _parameter_update_stats(
+    before: list[torch.Tensor],
+    after: list[torch.nn.Parameter],
+) -> tuple[float, float]:
+    max_abs = 0.0
+    total = 0.0
+    for previous, current in zip(before, after):
+        delta = current.detach() - previous
+        if delta.numel() == 0:
+            continue
+        max_abs = max(max_abs, float(delta.abs().max().item()))
+        total += float(delta.pow(2).sum().item())
+    return max_abs, total ** 0.5
+
+
 def _stage_b_trainable_parameters(
     runtime: MemoryRuntime,
     trainable_target: str,
@@ -934,6 +962,7 @@ def run_stage_c(
     shots_list = [int(shot) for shot in config["runtime"]["adapt_shots"]]
     max_steps = 1 if dry_run else int(config["runtime"]["adapt_steps"])
     adapt_lr = float(config["runtime"]["adapt_learning_rate"])
+    adaptation_effective_threshold = float(config["runtime"].get("adaptation_effective_threshold", 1e-7))
     profiler = ProfileTracker(output_dir=output_dir, device=str(config["runtime"]["device"]), event_name="train")
     curve_rows: list[dict[str, object]] = []
     best_runtime = copy.deepcopy(runtime)
@@ -941,6 +970,12 @@ def run_stage_c(
     support_updates = 0
     support_examples_touched = 0
     query_examples_touched = 0
+    support_grad_norms: list[float] = []
+    support_update_max_abs: list[float] = []
+    support_update_l2: list[float] = []
+    latest_support_grad_norm = 0.0
+    latest_support_update_max_abs = 0.0
+    latest_support_update_l2 = 0.0
 
     for shot in shots_list:
         current_runtime = copy.deepcopy(runtime)
@@ -998,6 +1033,9 @@ def run_stage_c(
                     "objective_accuracy": objective_accuracy,
                     "task_score": task_score,
                     "task_metric_name": task_metric_name,
+                    "preceding_support_grad_norm": latest_support_grad_norm,
+                    "preceding_support_update_max_abs": latest_support_update_max_abs,
+                    "preceding_support_update_l2": latest_support_update_l2,
                     "query_loss": objective_loss,
                     "query_accuracy": objective_accuracy,
                 }
@@ -1036,9 +1074,18 @@ def run_stage_c(
                     ]
                 ).mean()
             optimizer.zero_grad()
+            before_update = _snapshot_parameter_tensors(current_adapt_parameters)
             support_loss.backward()
+            latest_support_grad_norm = _parameter_grad_norm(current_adapt_parameters)
             optimizer.step()
+            latest_support_update_max_abs, latest_support_update_l2 = _parameter_update_stats(
+                before_update,
+                current_adapt_parameters,
+            )
             support_updates += 1
+            support_grad_norms.append(latest_support_grad_norm)
+            support_update_max_abs.append(latest_support_update_max_abs)
+            support_update_l2.append(latest_support_update_l2)
             for example in support_examples:
                 profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
                 profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
@@ -1062,6 +1109,9 @@ def run_stage_c(
                 "objective_accuracy",
                 "task_score",
                 "task_metric_name",
+                "preceding_support_grad_norm",
+                "preceding_support_update_max_abs",
+                "preceding_support_update_l2",
                 "query_loss",
                 "query_accuracy",
             ],
@@ -1107,6 +1157,22 @@ def run_stage_c(
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
+        "mean_support_grad_norm": (
+            sum(support_grad_norms) / len(support_grad_norms) if support_grad_norms else 0.0
+        ),
+        "max_support_grad_norm": max(support_grad_norms) if support_grad_norms else 0.0,
+        "mean_support_update_max_abs": (
+            sum(support_update_max_abs) / len(support_update_max_abs) if support_update_max_abs else 0.0
+        ),
+        "max_support_update_max_abs": max(support_update_max_abs) if support_update_max_abs else 0.0,
+        "mean_support_update_l2": (
+            sum(support_update_l2) / len(support_update_l2) if support_update_l2 else 0.0
+        ),
+        "max_support_update_l2": max(support_update_l2) if support_update_l2 else 0.0,
+        "adaptation_effective_threshold": adaptation_effective_threshold,
+        "adaptation_effective": (
+            max(support_update_max_abs) >= adaptation_effective_threshold if support_update_max_abs else False
+        ),
         "target_domain": manifest["target_domain"],
         **profile_metrics,
     }
@@ -1131,6 +1197,14 @@ def run_stage_c(
         "adapt_learning_rate": adapt_lr,
         "adapt_steps": max_steps,
         "adapt_shots": shots_list,
+        "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
+        "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
+        "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],
+        "max_support_update_max_abs": adapt_cost["max_support_update_max_abs"],
+        "mean_support_update_l2": adapt_cost["mean_support_update_l2"],
+        "max_support_update_l2": adapt_cost["max_support_update_l2"],
+        "adaptation_effective_threshold": adaptation_effective_threshold,
+        "adaptation_effective": adapt_cost["adaptation_effective"],
         "zero_shot_query_loss": zero_shot_row["query_loss"],
         "zero_shot_query_accuracy": zero_shot_row["query_accuracy"],
         "zero_shot_objective_loss": zero_shot_row["objective_loss"],

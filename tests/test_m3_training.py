@@ -461,6 +461,10 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_c_metrics["adapt_learning_rate"], 0.2)
             self.assertEqual(stage_c_metrics["adapt_steps"], 3)
             self.assertEqual(stage_c_metrics["adapt_shots"], [0, 3])
+            self.assertIn("mean_support_grad_norm", stage_c_metrics)
+            self.assertIn("max_support_update_max_abs", stage_c_metrics)
+            self.assertIn("adaptation_effective_threshold", stage_c_metrics)
+            self.assertIn("adaptation_effective", stage_c_metrics)
 
             with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
                 rows = list(csv.DictReader(handle))
@@ -469,6 +473,8 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("objective_loss", rows[0])
             self.assertIn("query_candidate_pool_size", rows[0])
             self.assertIn("support_candidate_pool_size", rows[0])
+            self.assertIn("preceding_support_grad_norm", rows[0])
+            self.assertIn("preceding_support_update_max_abs", rows[0])
             self.assertEqual({row["query_objective"] for row in rows}, {"continuation_retrieval"})
 
 

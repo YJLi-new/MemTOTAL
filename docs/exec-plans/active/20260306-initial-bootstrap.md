@@ -217,6 +217,7 @@
 - 2026-03-07 03:20 UTC: 已补齐 `Stage B/C` 的 runtime hyperparameter 记账：`metrics.json` 现在会显式写出 `retrieval_negative_count / meta_episodes / inner_steps / inner_learning_rate / meta_learning_rate / adapt_learning_rate / adapt_steps / adapt_shots`。这次修正不改变训练逻辑，目标是让后续 benchmark-native probe 直接可比，而不是必须回看 `config.snapshot.yaml`。
 - 2026-03-07 04:05 UTC: 已新增 benchmark-native `Stage B probe` harness：`src/memtotal/analysis/m3_probe.py`、`configs/exp/m3_stage_b_probe_summary.yaml`、`scripts/run_m3_core4_stage_b_probe_suite.sh`。该 harness 现在会把原始 probe runs 放到数据盘，把 `probe_summary.csv/.svg` 与 `best_by_backbone` 写回仓库，并通过 `config.snapshot + seed` 校验旧 run 是否可复用。
 - 2026-03-07 04:05 UTC: probe suite `results/generated/m3-core4-stage-b-probe-suite-v2/metrics.json` 当前显示：qwen25 的最佳 Stage B 预算是 canonical `meta_episodes=16, meta_learning_rate=0.05`，qwen3 的最佳 Stage B 预算是 canonical `meta_episodes=6, meta_learning_rate=0.05`。据此，`configs/exp/m3_stage_b_core4_qwen25_smoke.yaml` 已从 `meta_episodes=6 -> 12 -> 16` 收口到当前更稳的 qwen25 canonical。
+- 2026-03-07 04:15 UTC: 已为 benchmark-native `Stage C` 补齐适配诊断：`runs/verify/m3-core4-qwen25/stage-c/metrics.json` 与 `adapt_curve.csv` 现在会显式写出 `support_grad_norm / support_update_max_abs / support_update_l2 / adaptation_effective`。当前 qwen25 canonical 已被标记为 `adaptation_effective=False`，并记录 `mean_support_grad_norm=2.0708178345536896e-08`、`max_support_update_max_abs=9.313225746154785e-10`。
 
 ## Surprises & Discoveries
 
