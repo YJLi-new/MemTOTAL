@@ -47,6 +47,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                     "adapt_learning_rate": 0.2,
                     "adapt_steps": 3,
                     "target_eval_repeats": 3,
+                    "target_episode_repeats": 3,
                     "zero_shot_task_score": zero_shot_task_score,
                     "best_adapt_task_score": best_adapt_task_score,
                     "task_metric_name": "accuracy",
@@ -91,6 +92,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             self.assertEqual(rows[0]["backbone"], "Qwen2.5-1.5B-Instruct")
             self.assertEqual(rows[0]["seed"], 1)
             self.assertEqual(rows[0]["target_eval_repeats"], 3)
+            self.assertEqual(rows[0]["target_episode_repeats"], 3)
             self.assertAlmostEqual(float(rows[0]["task_gain"]), 0.25)
             self.assertAlmostEqual(float(rows[1]["task_gain"]), -0.25)
 
@@ -155,6 +157,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                 0.5,
             )
             self.assertEqual(metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_eval_repeats"], [3])
+            self.assertEqual(metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_episode_repeats"], [3])
             self.assertEqual(metrics["by_backbone"]["Qwen3-8B"]["worst_seed"], 21)
             self.assertAlmostEqual(metrics["by_backbone"]["Qwen3-8B"]["mean_task_gain"], -0.25)
 

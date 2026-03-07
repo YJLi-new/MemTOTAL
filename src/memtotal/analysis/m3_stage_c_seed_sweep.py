@@ -62,6 +62,7 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
                 "adapt_learning_rate": metrics.get("adapt_learning_rate"),
                 "adapt_steps": metrics.get("adapt_steps"),
                 "target_eval_repeats": metrics.get("target_eval_repeats"),
+                "target_episode_repeats": metrics.get("target_episode_repeats"),
                 "zero_shot_task_score": zero_shot_task_score,
                 "best_adapt_task_score": best_adapt_task_score,
                 "task_gain": best_adapt_task_score - zero_shot_task_score,
@@ -97,6 +98,7 @@ def write_stage_c_seed_sweep_csv(output_path: str | Path, rows: list[dict[str, o
         "adapt_learning_rate",
         "adapt_steps",
         "target_eval_repeats",
+        "target_episode_repeats",
         "zero_shot_task_score",
         "best_adapt_task_score",
         "task_gain",
@@ -174,7 +176,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
             f"<text x='{center_x + half_bar + 16}' y='{top + 16}' font-size='12' font-family='monospace'>{value:.3f} score={score_label}</text>"
         )
         parts.append(
-            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} reps={row.get('target_eval_repeats') or 1}</text>"
+            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} episodes={row.get('target_episode_repeats') or 1} queries={row.get('target_eval_repeats') or 1}</text>"
         )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -210,6 +212,9 @@ def run_m3_stage_c_seed_sweep_summary(
             "mean_task_gain": sum(float(row["task_gain"]) for row in backbone_rows) / len(backbone_rows),
             "mean_proxy_gain": sum(float(row["proxy_gain"]) for row in backbone_rows) / len(backbone_rows),
             "target_eval_repeats": sorted({int(row.get("target_eval_repeats") or 1) for row in backbone_rows}),
+            "target_episode_repeats": sorted(
+                {int(row.get("target_episode_repeats") or 1) for row in backbone_rows}
+            ),
             "best_seed": best_row["seed"],
             "best_task_gain": best_row["task_gain"],
             "worst_seed": worst_row["seed"],
