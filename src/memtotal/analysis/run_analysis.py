@@ -8,6 +8,7 @@ from memtotal.analysis.baseline_budget import run_baseline_budget_audit
 from memtotal.analysis.failure_checks import run_m3_failure_checks
 from memtotal.analysis.m3_gradient_audit import run_m3_stage_c_gradient_audit
 from memtotal.analysis.m3_probe import run_m3_stage_b_probe_summary
+from memtotal.analysis.m3_stage_c_probe import run_m3_stage_c_probe_summary
 from memtotal.analysis.reporting import collect_metrics, write_sanity_plot, write_summary_csv
 from memtotal.utils.config import load_config
 from memtotal.utils.io import initialize_run_artifacts, write_json
@@ -72,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             output_dir=output_dir,
             resume=args.resume,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "m3_stage_c_probe_summary":
+        if not args.input_root:
+            raise ValueError("--input_root is required for m3_stage_c_probe_summary mode.")
+        run_m3_stage_c_probe_summary(
+            output_dir=output_dir,
+            input_root=args.input_root,
             dry_run=args.dry_run,
         )
         return 0

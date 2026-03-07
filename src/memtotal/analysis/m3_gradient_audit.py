@@ -11,10 +11,13 @@ from memtotal.pipeline import MemoryRuntime
 from memtotal.training.m3 import (
     _build_meta_context,
     _classification_loss,
+    _configure_stage_c_trainables,
     _continuation_retrieval_loss,
+    _count_unique_parameters,
     _resolve_artifact_path,
     _resolve_expected_stage_c_query_learning_mode,
     _resolve_retrieval_negative_count,
+    _resolve_stage_c_adaptation_target,
 )
 from memtotal.utils.io import write_json
 from memtotal.utils.profiling import ProfileTracker
@@ -107,6 +110,9 @@ def run_m3_stage_c_gradient_audit(
             f"but resume artifact provides {actual_query_learning_mode}."
         )
 
+    adaptation_target = _resolve_stage_c_adaptation_target(config)
+    adaptable_parameters, trainable_module = _configure_stage_c_trainables(runtime, adaptation_target)
+    trainable_parameter_count = _count_unique_parameters(adaptable_parameters)
     runtime.writer.unfreeze()
     runtime.reader.unfreeze()
     runtime.fuser.unfreeze()
@@ -201,8 +207,12 @@ def run_m3_stage_c_gradient_audit(
     metrics = {
         "mode": "analysis",
         "analysis_mode": "m3_stage_c_gradient_audit",
+        "backbone": str(config["backbone"]["name"]),
         "query_learning_mode": actual_query_learning_mode,
         "query_objective": query_objective,
+        "adaptation_target": adaptation_target,
+        "trainable_module": trainable_module,
+        "trainable_parameter_count": trainable_parameter_count,
         "target_domain": manifest["target_domain"],
         "support_loss": float(support_loss.item()),
         "queries_grad_norm": query_grad_norm,

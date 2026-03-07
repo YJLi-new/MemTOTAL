@@ -70,6 +70,9 @@ class M3GradientAuditTest(unittest.TestCase):
 
             metrics = json.loads(audit_dir.joinpath("metrics.json").read_text())
             self.assertEqual(metrics["analysis_mode"], "m3_stage_c_gradient_audit")
+            self.assertEqual(metrics["backbone"], "Qwen2.5-1.5B-Instruct")
+            self.assertEqual(metrics["adaptation_target"], "q_only")
+            self.assertEqual(metrics["trainable_module"], "reader.queries")
             self.assertIn("queries_grad_norm", metrics)
             self.assertIn("fuser_grad_norm", metrics)
             self.assertIn("writer_grad_norm", metrics)
