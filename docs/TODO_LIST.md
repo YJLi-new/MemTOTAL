@@ -432,8 +432,12 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 当前 low-bandwidth residual family 不是整体死亡，因为 `shared_summary residual` 在 FEVER 上是 load-bearing 的
   - 旧的 `candidate_conditioned late fusion` 已被判定为坏分支；新的 `shared + candidate delta` 只把它修到了“不会完全乱来”
   - 但当前 candidate 增量仍然没有显出 real-memory 内容效应，因为 `real` 与 `shuffled` 仍重合
-  - 下一步不该继续做更大 sweep，而应直接做 case-conditional routing / sign selection
-  - 在 candidate 增量先于 `FEVER` 上同时满足 `优于 G` 且 `不伤害 B` 之前，不回到 `Story Cloze`，也不上 `Qwen3-8B`
+  - 因而不能直接跳到 routing / sign selection，因为还没有先证明 `F-G` 是可用的 memory-only signal
+  - 已补完 `F-G` content audit：`Story Cloze` 上 `B + (F-G)=0.2`、`oracle_per_case_alpha_content=0.2`；`FEVER` 上 `B + (F-G)=0.75`、`oracle_per_case_alpha_content=0.75`
+  - `FEVER` 上虽然 `best_of_BF=0.78125`，但 `best_of_B_plus_content=0.75`，说明补出来的那一点来自 branch form，而不是 real-memory content
+  - 当前 candidate residual family 的主体效应来自 branch form，不来自 memory content
+  - 下一步不该继续修这条 `shared + candidate delta`，也不该直接上 pairwise / routing / qwen3
+  - 若后续仍要继续做 candidate-specific `Stage C`，应从新的 residual family 重新开始，并且先在 `FEVER` 上过 capability gate，再回 `Story Cloze`
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

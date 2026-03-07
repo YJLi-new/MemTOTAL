@@ -1,0 +1,25 @@
+includes:
+  - ../tasks/benchmarks/pilots/story_cloze_fixed100.yaml
+
+experiment:
+  name: stage_c_real_pilot_content_audit_story
+  stage: M3-story-cloze-real-pilot
+  method_variant: stage-c-real-pilot-content-audit-story
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  analysis_mode: stage_c_real_pilot_content_audit
+  required_arm_aliases:
+    - A
+    - B
+    - F
+    - G
+  report_title: Story Cloze Real Pilot Content Audit
+  branch_fate_min_flip_gain: 2
+  branch_fate_min_alignment_rate: 0.6
+  primary_control_task: false

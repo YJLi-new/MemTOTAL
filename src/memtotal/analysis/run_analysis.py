@@ -19,6 +19,7 @@ from memtotal.analysis.m3_stage_c_seed_sweep import run_m3_stage_c_seed_sweep_su
 from memtotal.analysis.story_cloze_real_pilot import (
     run_fever_real_fixed_set_builder,
     run_fever_real_pilot_split,
+    run_stage_c_real_pilot_content_audit,
     run_stage_c_real_pilot_compare,
     run_stage_c_real_pilot_oracle_audit,
     run_story_cloze_real_fixed_set_builder,
@@ -212,6 +213,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args.input_root:
             raise ValueError("--input_root is required for stage_c_real_pilot_oracle_audit mode.")
         run_stage_c_real_pilot_oracle_audit(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "stage_c_real_pilot_content_audit":
+        if not args.input_root:
+            raise ValueError("--input_root is required for stage_c_real_pilot_content_audit mode.")
+        run_stage_c_real_pilot_content_audit(
             config=config,
             output_dir=output_dir,
             input_root=args.input_root,

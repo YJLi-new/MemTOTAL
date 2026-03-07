@@ -9,9 +9,12 @@ from pathlib import Path
 import torch
 
 from memtotal.analysis.story_cloze_real_pilot import (
+    _compute_choice_outcome,
     _pick_oracle_alpha_case,
+    _pick_oracle_alpha_from_anchor,
     run_fever_real_fixed_set_builder,
     run_fever_real_pilot_split,
+    run_stage_c_real_pilot_content_audit,
     run_stage_c_real_pilot_compare,
     run_stage_c_real_pilot_oracle_audit,
     run_story_cloze_real_fixed_set_builder,
@@ -557,6 +560,28 @@ class StoryClozeRealPilotAnalysisTest(unittest.TestCase):
         self.assertEqual(best["alpha"], 0.5)
         self.assertTrue(best["predicted_correct"])
 
+    def test_compute_choice_outcome_returns_margin_and_probability(self):
+        outcome = _compute_choice_outcome(
+            choice_scores=[0.2, 1.1, -0.4],
+            candidate_labels=["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"],
+            gold_label="REFUTES",
+        )
+        self.assertEqual(outcome["predicted_label"], "REFUTES")
+        self.assertTrue(outcome["predicted_correct"])
+        self.assertGreater(outcome["task_proxy_score"], 0.0)
+        self.assertGreater(outcome["final_margin"], 0.0)
+
+    def test_pick_oracle_alpha_from_anchor_prefers_smallest_successful_abs_scale(self):
+        best = _pick_oracle_alpha_from_anchor(
+            anchor_scores=[0.0, 0.4],
+            delta_scores=[1.0, 0.0],
+            candidate_labels=["A", "B"],
+            gold_label="A",
+            alpha_grid=[0.25, 0.5, 1.0, 2.0],
+        )
+        self.assertEqual(best["alpha"], 0.5)
+        self.assertTrue(best["predicted_correct"])
+
     def test_oracle_audit_writes_summary_and_case_deltas(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -631,6 +656,95 @@ class StoryClozeRealPilotAnalysisTest(unittest.TestCase):
             self.assertEqual(float(by_alias["A"]["task_score"]), 0.0)
             self.assertEqual(float(by_alias["oracle_per_case_alpha"]["task_score"]), 1.0)
             self.assertTrue((output_dir / "oracle_case_deltas.csv").exists())
+
+    def test_content_audit_writes_branch_fate_and_content_oracles(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            input_root = root / "runs"
+            arm_specs = {
+                "A": [0.0, 1.0],
+                "B": [0.2, 0.8],
+                "F": [0.9, 0.7],
+                "G": [0.1, 0.9],
+            }
+            for alias, choice_scores in arm_specs.items():
+                run_dir = input_root / alias
+                run_dir.mkdir(parents=True)
+                predicted_index = 0 if choice_scores[0] > choice_scores[1] else 1
+                predicted_label = ["A", "B"][predicted_index]
+                correct = predicted_label == "A"
+                (run_dir / "metrics.json").write_text(
+                    json.dumps(
+                        {
+                            "training_stage": "stage_c_real_pilot",
+                            "decision_mode": {
+                                "A": "base_only",
+                                "B": "shared_summary_late_fusion",
+                                "F": "shared_plus_candidate_delta_late_fusion",
+                                "G": "shared_plus_candidate_delta_late_fusion",
+                            }[alias],
+                            "memory_control_mode": "shuffled" if alias == "G" else "real",
+                            "choice_objective": "continuation_retrieval",
+                            "pilot_split": "fixed100",
+                            "eval_dataset_path": str(root / "fixed100.jsonl"),
+                            "best_adapt_step": 0,
+                            "best_adapt_task_score": float(correct),
+                            "zero_shot_task_score": float(correct),
+                            "best_adapt_task_proxy_score": 0.5,
+                            "best_adapt_task_margin": choice_scores[0] - choice_scores[1],
+                            "task_case_dump_path": str(run_dir / "task_case_dump.jsonl"),
+                        }
+                    )
+                )
+                (run_dir / "task_case_dump.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "step": 0,
+                            "example_id": "id-1",
+                            "predicted_correct": correct,
+                            "task_score": float(correct),
+                            "task_proxy_score": 0.5,
+                            "final_margin": choice_scores[0] - choice_scores[1],
+                            "final_choice_scores": choice_scores,
+                            "gold_label": "A",
+                            "final_predicted_label": predicted_label,
+                            "choices": [
+                                {"label": "A", "text": "good"},
+                                {"label": "B", "text": "bad"},
+                            ],
+                            "story": "story",
+                            "gold_text": "good",
+                            "screening_bucket": "improving_but_unflipped",
+                        }
+                    )
+                    + "\n"
+                )
+            output_dir = root / "analysis"
+            output_dir.mkdir()
+            run_stage_c_real_pilot_content_audit(
+                config={
+                    "task": {"dataset_path": str(root / "fixed100.jsonl")},
+                    "runtime": {
+                        "branch_fate_min_flip_gain": 1,
+                        "branch_fate_min_alignment_rate": 0.5,
+                    },
+                },
+                output_dir=output_dir,
+                input_root=input_root,
+                dry_run=False,
+            )
+            self.assertTrue((output_dir / "content_effect_case_dump.csv").exists())
+            self.assertTrue((output_dir / "content_alignment_summary.csv").exists())
+            self.assertTrue((output_dir / "content_oracle_summary.csv").exists())
+            metrics = json.loads((output_dir / "branch_fate_metrics.json").read_text())
+            self.assertEqual(metrics["best_of_B_plus_content_flip_gain"], 1)
+            self.assertTrue(metrics["continue_candidate_branch"])
+            with (output_dir / "content_oracle_summary.csv").open() as handle:
+                rows = list(csv.DictReader(handle))
+            by_alias = {row["alias"]: row for row in rows}
+            self.assertEqual(float(by_alias["B"]["task_score"]), 0.0)
+            self.assertEqual(float(by_alias["F"]["task_score"]), 1.0)
+            self.assertEqual(float(by_alias["B_plus_content"]["task_score"]), 1.0)
 
 
 if __name__ == "__main__":

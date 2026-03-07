@@ -58,12 +58,20 @@
   - `B -> F`: `flip_count_delta=-5`
   - `C -> F`: `flip_count_delta=27`
   - `F -> G`: `flip_count_delta=0`
+- 这轮新增的 `F-G` content audit 已经把问题进一步收紧：
+  - `Story Cloze` 上，`B + (F-G)` 仍然是 `0.2`
+  - `Story Cloze` 上，`oracle_per_case_alpha_content` 仍然是 `0.2`
+  - `Story Cloze` 上，`content_alignment_rate_shared_wrong=0.3375`
+  - `FEVER` 上，`B + (F-G)` 仍然是 `0.75`
+  - `FEVER` 上，`oracle_per_case_alpha_content` 仍然是 `0.75`
+  - `FEVER` 上，`best_of_BF=0.78125` 只说明 branch form 还能补一点 `B` 的盲点，不说明 memory 内容在起作用
+  - 两个任务上 `continue_candidate_branch=false`
 - 当前最合理的结论不是“memory idea 不行”，而是：
-  - `Story Cloze` 更像 artifact-heavy stress test
-  - 旧的 `candidate_conditioned late fusion` 实例化是坏的；新的 `shared + candidate delta` 只把它修到了“不会完全乱来”
-  - 当前 candidate 增量分支仍然没有显出 real-memory 内容效应，因为 `real` 与 `shuffled` 仍然完全重合
-  - `FEVER` 上真正 load-bearing 的仍然是 `shared_summary residual`
-  - 现阶段不该继续做更大的 `candidate-conditioned` sweep，也不该直接上 `Qwen3-8B`
+  - `Story Cloze` 仍是 artifact-heavy stress test，不适合作为唯一生死判官
+  - `shared_summary residual` 在 `FEVER` 上仍是明确的正 control
+  - 当前这条 `candidate` residual family 的主体效应来自 branch form，而不是 real-memory content
+  - 因而下一步不该直接做 raw routing / sign selection，也不该继续扩大 `candidate-conditioned` sweep 或上 `Qwen3-8B`
+  - 如果后续还要回到 candidate-specific `Stage C`，应从新的 residual family 重新开始，而不是继续修这条 `shared + candidate delta`
 
 ## 关键结果路径
 
@@ -79,11 +87,15 @@
   - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/report.md`
   - `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/oracle_summary.csv`
   - `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/oracle_case_deltas.csv`
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/content-audit/report.md`
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/content-audit/content_oracle_summary.csv`
 - FEVER control pilot 原始运行：
   - `runs/review/m3-fever-real-pilot-qwen25/`
 - FEVER control pilot 汇总：
   - `results/generated/review/m3-fever-real-pilot-qwen25/`
   - `results/generated/review/m3-fever-real-pilot-qwen25/compare/arm_pairwise_compare.csv`
+  - `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/report.md`
+  - `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_oracle_summary.csv`
 
 ## 现在最重要的下一步
 
@@ -91,6 +103,6 @@
 - 不直接进入更大的 `candidate-conditioned` sweep，也不直接上 `Qwen3-8B`。
 - 下一轮更值得做的是：
   - 先保留 `FEVER` 作为正 control，不再继续扩 story sweep
-  - 不再把精力放在“再调一个全局 alpha”上，而是直接做 case-conditional routing / sign selection
-  - 下一轮应优先尝试“只在 shared 不确定时才启用 candidate 增量”的条件门控，而不是继续让 candidate 分支常开
-  - 只有当新的 candidate 增量分支先在 `FEVER` 上同时满足 `优于 G` 且 `不伤害 B`，再回到 `Story Cloze`
+  - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为这轮 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
+  - 下一轮如果继续探索 candidate-specific `Stage C`，应该优先设计新的 residual family，再先拿 `FEVER` 做 capability probe
+  - `Story Cloze` 只保留为后续 stress test，不再作为当前 candidate 分支的主开发面

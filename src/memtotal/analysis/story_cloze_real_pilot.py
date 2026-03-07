@@ -8,6 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from memtotal.analysis.reporting import write_sanity_plot, write_summary_csv
 from memtotal.data import load_jsonl_dataset
 from memtotal.utils.io import write_json, write_jsonl
@@ -980,6 +982,499 @@ def run_stage_c_real_pilot_compare(
     )
 
 
+def _resolve_branch_fate_min_flip_gain(config: dict[str, Any] | None) -> int:
+    if config is None:
+        return 2
+    return int(config.get("runtime", {}).get("branch_fate_min_flip_gain", 2))
+
+
+def _resolve_branch_fate_min_alignment_rate(config: dict[str, Any] | None) -> float:
+    if config is None:
+        return 0.6
+    return float(config.get("runtime", {}).get("branch_fate_min_alignment_rate", 0.6))
+
+
+def _resolve_primary_control_task(config: dict[str, Any] | None) -> bool:
+    if config is None:
+        return False
+    return bool(config.get("runtime", {}).get("primary_control_task", False))
+
+
+def _content_audit_summary_row(
+    *,
+    alias: str,
+    rows: list[dict[str, Any]],
+    primary_metric: str = "task_score",
+) -> dict[str, Any]:
+    count = max(1, len(rows))
+    task_score = sum(float(row["task_score"]) for row in rows) / count
+    return {
+        "alias": alias,
+        "mode": "analysis",
+        "run_dir": alias,
+        "primary_metric": primary_metric,
+        "primary_score": task_score,
+        "task_score": task_score,
+        "task_proxy_score": sum(float(row["task_proxy_score"]) for row in rows) / count,
+        "task_margin": sum(float(row["final_margin"]) for row in rows) / count,
+    }
+
+
+def _append_content_alignment_rows(
+    output_rows: list[dict[str, Any]],
+    *,
+    case_rows: list[dict[str, Any]],
+    population: str,
+) -> None:
+    if population == "all":
+        selected = list(case_rows)
+    elif population == "base_wrong":
+        selected = [row for row in case_rows if not bool(row["base_correct"])]
+    elif population == "shared_wrong":
+        selected = [row for row in case_rows if not bool(row["shared_correct"])]
+    else:
+        raise ValueError(f"Unsupported content audit population: {population}")
+    if not selected:
+        return
+    bucket_values = ["ALL", *sorted({str(row["screening_bucket"]) for row in selected if str(row["screening_bucket"])})]
+    shared_effect_values = ["ALL", *sorted({str(row["shared_effect_bucket"]) for row in selected})]
+    margin_band_values = ["ALL", *sorted({str(row["shared_margin_band"]) for row in selected})]
+    for bucket in bucket_values:
+        for shared_effect_bucket in shared_effect_values:
+            for margin_band in margin_band_values:
+                if bucket == "ALL" and shared_effect_bucket == "ALL" and margin_band == "ALL":
+                    subset = selected
+                else:
+                    subset = [
+                        row
+                        for row in selected
+                        if (bucket == "ALL" or str(row["screening_bucket"]) == bucket)
+                        and (shared_effect_bucket == "ALL" or str(row["shared_effect_bucket"]) == shared_effect_bucket)
+                        and (margin_band == "ALL" or str(row["shared_margin_band"]) == margin_band)
+                    ]
+                if not subset:
+                    continue
+                alignment_rows = [row for row in subset if not bool(row["shared_correct"])]
+                alignment_examples = len(alignment_rows)
+                output_rows.append(
+                    {
+                        "population": population,
+                        "bucket": bucket,
+                        "shared_effect_bucket": shared_effect_bucket,
+                        "margin_band": margin_band,
+                        "examples": len(subset),
+                        "alignment_examples": alignment_examples,
+                        "content_alignment_rate": (
+                            sum(int(row["content_alignment_sign"] > 0) for row in alignment_rows) / alignment_examples
+                            if alignment_examples
+                            else 0.0
+                        ),
+                        "weighted_content_alignment": (
+                            sum(float(row["weighted_content_alignment"]) for row in alignment_rows) / alignment_examples
+                            if alignment_examples
+                            else 0.0
+                        ),
+                        "mean_delta_shared": sum(float(row["delta_shared"]) for row in subset) / len(subset),
+                        "mean_delta_candidate_total": sum(float(row["delta_candidate_total"]) for row in subset)
+                        / len(subset),
+                        "mean_delta_content": sum(float(row["delta_content"]) for row in subset) / len(subset),
+                        "mean_delta_branch": sum(float(row["delta_branch"]) for row in subset) / len(subset),
+                    }
+                )
+
+
+def run_stage_c_real_pilot_content_audit(
+    *,
+    config: dict[str, Any] | None,
+    output_dir: Path,
+    input_root: str | Path,
+    dry_run: bool,
+) -> None:
+    root = Path(input_root).resolve()
+    default_dataset_filename = "fixed100.jsonl"
+    if config is not None:
+        default_dataset_filename = Path(str(config["task"]["dataset_path"])).name
+    audit_config = {
+        "task": {} if config is None else dict(config.get("task", {})),
+        "runtime": {} if config is None else dict(config.get("runtime", {})),
+    }
+    audit_config["runtime"]["required_arm_aliases"] = ["A", "B", "F", "G"]
+    runs, selected_rows_by_alias, _arm_summary_rows = _load_selected_rows_by_alias(
+        input_root=root,
+        config=audit_config,
+        default_pilot_split="fixed100",
+        default_dataset_filename=default_dataset_filename,
+    )
+    common_ids = sorted(
+        set(selected_rows_by_alias["A"])
+        & set(selected_rows_by_alias["B"])
+        & set(selected_rows_by_alias["F"])
+        & set(selected_rows_by_alias["G"])
+    )
+    if dry_run:
+        common_ids = common_ids[: min(16, len(common_ids))]
+    alpha_grid = _resolve_oracle_alpha_grid(config)
+
+    case_rows: list[dict[str, Any]] = []
+    bucket_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for example_id in common_ids:
+        row_a = selected_rows_by_alias["A"][example_id]
+        row_b = selected_rows_by_alias["B"][example_id]
+        row_f = selected_rows_by_alias["F"][example_id]
+        row_g = selected_rows_by_alias["G"][example_id]
+        choices = row_b.get("choices", [])
+        candidate_labels = [str(choice["label"]) for choice in choices]
+        gold_label = str(row_b["gold_label"])
+
+        scores_a = [float(value) for value in row_a["final_choice_scores"]]
+        scores_b = [float(value) for value in row_b["final_choice_scores"]]
+        scores_f = [float(value) for value in row_f["final_choice_scores"]]
+        scores_g = [float(value) for value in row_g["final_choice_scores"]]
+        shared_effect_scores = [right - left for left, right in zip(scores_a, scores_b, strict=True)]
+        candidate_total_scores = [right - left for left, right in zip(scores_b, scores_f, strict=True)]
+        content_effect_scores = [right - left for left, right in zip(scores_g, scores_f, strict=True)]
+        branch_effect_scores = [right - left for left, right in zip(scores_b, scores_g, strict=True)]
+        scores_b_plus_content = [
+            base_score + content_score
+            for base_score, content_score in zip(scores_b, content_effect_scores, strict=True)
+        ]
+
+        outcome_a = _compute_choice_outcome(
+            choice_scores=scores_a,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
+        outcome_b = _compute_choice_outcome(
+            choice_scores=scores_b,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
+        outcome_f = _compute_choice_outcome(
+            choice_scores=scores_f,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
+        outcome_g = _compute_choice_outcome(
+            choice_scores=scores_g,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
+        outcome_b_plus_content = _compute_choice_outcome(
+            choice_scores=scores_b_plus_content,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
+        oracle_alpha_content = _pick_oracle_alpha_from_anchor(
+            anchor_scores=scores_b,
+            delta_scores=content_effect_scores,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+            alpha_grid=alpha_grid,
+        )
+
+        base_correct = bool(outcome_a["predicted_correct"])
+        shared_correct = bool(outcome_b["predicted_correct"])
+        f_correct = bool(outcome_f["predicted_correct"])
+        g_correct = bool(outcome_g["predicted_correct"])
+        b_plus_content_correct = bool(outcome_b_plus_content["predicted_correct"])
+        best_of_bf_correct = f_correct or shared_correct
+        best_of_b_plus_content_correct = b_plus_content_correct or shared_correct
+        best_of_bf_source = "F" if f_correct and (not shared_correct) else "B"
+        best_of_b_plus_content_source = (
+            "B_plus_content"
+            if b_plus_content_correct and (not shared_correct)
+            else "B"
+        )
+
+        delta_shared = float(outcome_b["final_margin"] - outcome_a["final_margin"])
+        delta_candidate_total = float(outcome_f["final_margin"] - outcome_b["final_margin"])
+        delta_content = float(outcome_f["final_margin"] - outcome_g["final_margin"])
+        delta_branch = float(outcome_g["final_margin"] - outcome_b["final_margin"])
+        needed_fix = float(-outcome_b["final_margin"])
+        content_push = float(outcome_b_plus_content["final_margin"] - outcome_b["final_margin"])
+        if shared_correct:
+            content_alignment_sign = 0
+            weighted_content_alignment = 0.0
+        else:
+            if content_push > 0.0:
+                content_alignment_sign = 1
+            elif content_push < 0.0:
+                content_alignment_sign = -1
+            else:
+                content_alignment_sign = 0
+            weighted_content_alignment = _safe_weighted_alignment(needed_fix, content_push)
+
+        case_payload = {
+            "example_id": example_id,
+            "benchmark_id": str(row_b.get("benchmark_id", "")),
+            "screening_bucket": _resolve_first_nonempty_field(
+                row_b,
+                row_f,
+                row_g,
+                row_a,
+                field="screening_bucket",
+            ),
+            "shared_effect_bucket": _resolve_shared_effect_bucket(base_correct, shared_correct),
+            "shared_margin_band": _resolve_margin_band(float(outcome_b["final_margin"])),
+            "base_correct": base_correct,
+            "shared_correct": shared_correct,
+            "F_correct": f_correct,
+            "G_correct": g_correct,
+            "b_plus_content_correct": b_plus_content_correct,
+            "best_of_bf_correct": bool(best_of_bf_correct),
+            "best_of_bf_source": best_of_bf_source,
+            "best_of_b_plus_content_correct": bool(best_of_b_plus_content_correct),
+            "best_of_b_plus_content_source": best_of_b_plus_content_source,
+            "oracle_alpha_content": float(oracle_alpha_content["alpha"]),
+            "oracle_alpha_content_correct": bool(oracle_alpha_content["predicted_correct"]),
+            "oracle_alpha_content_selection_reason": str(oracle_alpha_content["selection_reason"]),
+            "margin_A": float(outcome_a["final_margin"]),
+            "margin_B": float(outcome_b["final_margin"]),
+            "margin_F": float(outcome_f["final_margin"]),
+            "margin_G": float(outcome_g["final_margin"]),
+            "margin_B_plus_content": float(outcome_b_plus_content["final_margin"]),
+            "delta_shared": delta_shared,
+            "delta_candidate_total": delta_candidate_total,
+            "delta_content": delta_content,
+            "delta_branch": delta_branch,
+            "needed_fix": needed_fix,
+            "content_push_alpha1": content_push,
+            "content_alignment_sign": int(content_alignment_sign),
+            "weighted_content_alignment": float(weighted_content_alignment),
+            "base_predicted_label": str(outcome_a["predicted_label"]),
+            "shared_predicted_label": str(outcome_b["predicted_label"]),
+            "F_predicted_label": str(outcome_f["predicted_label"]),
+            "G_predicted_label": str(outcome_g["predicted_label"]),
+            "b_plus_content_predicted_label": str(outcome_b_plus_content["predicted_label"]),
+            "oracle_alpha_content_predicted_label": str(oracle_alpha_content["predicted_label"]),
+            "base_choice_scores": json.dumps(scores_a),
+            "shared_choice_scores": json.dumps(scores_b),
+            "F_choice_scores": json.dumps(scores_f),
+            "G_choice_scores": json.dumps(scores_g),
+            "content_effect_scores": json.dumps(content_effect_scores),
+            "branch_effect_scores": json.dumps(branch_effect_scores),
+            "shared_effect_scores": json.dumps(shared_effect_scores),
+            "candidate_total_scores": json.dumps(candidate_total_scores),
+            "b_plus_content_choice_scores": json.dumps(scores_b_plus_content),
+            "oracle_alpha_content_choice_scores": json.dumps(oracle_alpha_content["choice_scores"]),
+            "context_preview": _resolve_context_preview(row_b),
+            "gold_text": str(row_b.get("gold_text", "")),
+        }
+        case_rows.append(case_payload)
+        bucket_rows[str(case_payload["screening_bucket"])].append(case_payload)
+
+    count = max(1, len(case_rows))
+    summary_rows = [
+        _content_audit_summary_row(alias="A", rows=[{
+            "task_score": float(row["base_correct"]),
+            "task_proxy_score": float(selected_rows_by_alias["A"][row["example_id"]]["task_proxy_score"]),
+            "final_margin": float(row["margin_A"]),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="B", rows=[{
+            "task_score": float(row["shared_correct"]),
+            "task_proxy_score": float(selected_rows_by_alias["B"][row["example_id"]]["task_proxy_score"]),
+            "final_margin": float(row["margin_B"]),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="F", rows=[{
+            "task_score": float(row["F_correct"]),
+            "task_proxy_score": float(selected_rows_by_alias["F"][row["example_id"]]["task_proxy_score"]),
+            "final_margin": float(row["margin_F"]),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="G", rows=[{
+            "task_score": float(row["G_correct"]),
+            "task_proxy_score": float(selected_rows_by_alias["G"][row["example_id"]]["task_proxy_score"]),
+            "final_margin": float(row["margin_G"]),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="B_plus_content", rows=[{
+            "task_score": float(row["b_plus_content_correct"]),
+            "task_proxy_score": _compute_choice_outcome(
+                choice_scores=json.loads(row["b_plus_content_choice_scores"]),
+                candidate_labels=[str(choice["label"]) for choice in selected_rows_by_alias["B"][row["example_id"]]["choices"]],
+                gold_label=str(selected_rows_by_alias["B"][row["example_id"]]["gold_label"]),
+            )["task_proxy_score"],
+            "final_margin": float(row["margin_B_plus_content"]),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="oracle_best_of_BF", rows=[{
+            "task_score": float(row["best_of_bf_correct"]),
+            "task_proxy_score": (
+                float(selected_rows_by_alias["F"][row["example_id"]]["task_proxy_score"])
+                if row["best_of_bf_source"] == "F"
+                else float(selected_rows_by_alias["B"][row["example_id"]]["task_proxy_score"])
+            ),
+            "final_margin": (
+                float(row["margin_F"])
+                if row["best_of_bf_source"] == "F"
+                else float(row["margin_B"])
+            ),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="oracle_best_of_B_plus_content", rows=[{
+            "task_score": float(row["best_of_b_plus_content_correct"]),
+            "task_proxy_score": (
+                _compute_choice_outcome(
+                    choice_scores=json.loads(row["b_plus_content_choice_scores"]),
+                    candidate_labels=[str(choice["label"]) for choice in selected_rows_by_alias["B"][row["example_id"]]["choices"]],
+                    gold_label=str(selected_rows_by_alias["B"][row["example_id"]]["gold_label"]),
+                )["task_proxy_score"]
+                if row["best_of_b_plus_content_source"] == "B_plus_content"
+                else float(selected_rows_by_alias["B"][row["example_id"]]["task_proxy_score"])
+            ),
+            "final_margin": (
+                float(row["margin_B_plus_content"])
+                if row["best_of_b_plus_content_source"] == "B_plus_content"
+                else float(row["margin_B"])
+            ),
+        } for row in case_rows]),
+        _content_audit_summary_row(alias="oracle_per_case_alpha_content", rows=[{
+            "task_score": float(row["oracle_alpha_content_correct"]),
+            "task_proxy_score": _compute_choice_outcome(
+                choice_scores=json.loads(row["oracle_alpha_content_choice_scores"]),
+                candidate_labels=[str(choice["label"]) for choice in selected_rows_by_alias["B"][row["example_id"]]["choices"]],
+                gold_label=str(selected_rows_by_alias["B"][row["example_id"]]["gold_label"]),
+            )["task_proxy_score"],
+            "final_margin": float(
+                _compute_choice_outcome(
+                    choice_scores=json.loads(row["oracle_alpha_content_choice_scores"]),
+                    candidate_labels=[str(choice["label"]) for choice in selected_rows_by_alias["B"][row["example_id"]]["choices"]],
+                    gold_label=str(selected_rows_by_alias["B"][row["example_id"]]["gold_label"]),
+                )["final_margin"]
+            ),
+        } for row in case_rows]),
+    ]
+
+    bucket_summary_rows: list[dict[str, Any]] = []
+    for bucket in sorted(bucket_rows):
+        rows = bucket_rows[bucket]
+        bucket_count = max(1, len(rows))
+        bucket_summary_rows.append(
+            {
+                "bucket": bucket,
+                "examples": len(rows),
+                "B_task_score": sum(float(row["shared_correct"]) for row in rows) / bucket_count,
+                "F_task_score": sum(float(row["F_correct"]) for row in rows) / bucket_count,
+                "G_task_score": sum(float(row["G_correct"]) for row in rows) / bucket_count,
+                "B_plus_content_task_score": sum(float(row["b_plus_content_correct"]) for row in rows) / bucket_count,
+                "oracle_best_of_BF_task_score": sum(float(row["best_of_bf_correct"]) for row in rows) / bucket_count,
+                "oracle_best_of_B_plus_content_task_score": sum(
+                    float(row["best_of_b_plus_content_correct"]) for row in rows
+                )
+                / bucket_count,
+                "oracle_per_case_alpha_content_task_score": sum(
+                    float(row["oracle_alpha_content_correct"]) for row in rows
+                )
+                / bucket_count,
+                "best_of_BF_flip_gain": sum(
+                    int((not bool(row["shared_correct"])) and bool(row["best_of_bf_correct"])) for row in rows
+                ),
+                "best_of_B_plus_content_flip_gain": sum(
+                    int((not bool(row["shared_correct"])) and bool(row["best_of_b_plus_content_correct"]))
+                    for row in rows
+                ),
+                "oracle_per_case_alpha_content_flip_gain": sum(
+                    int((not bool(row["shared_correct"])) and bool(row["oracle_alpha_content_correct"]))
+                    for row in rows
+                ),
+            }
+        )
+
+    alignment_summary_rows: list[dict[str, Any]] = []
+    for population in ("all", "base_wrong", "shared_wrong"):
+        _append_content_alignment_rows(
+            alignment_summary_rows,
+            case_rows=case_rows,
+            population=population,
+        )
+
+    content_effect_path = output_dir / "content_effect_case_dump.csv"
+    content_alignment_path = output_dir / "content_alignment_summary.csv"
+    content_oracle_summary_path = output_dir / "content_oracle_summary.csv"
+    content_oracle_by_bucket_path = output_dir / "content_oracle_by_bucket.csv"
+    content_oracle_case_deltas_path = output_dir / "content_oracle_case_deltas.csv"
+    write_summary_csv(content_oracle_summary_path, summary_rows)
+    write_sanity_plot(output_dir / "summary.svg", summary_rows)
+    _write_csv(content_effect_path, case_rows)
+    _write_csv(content_alignment_path, alignment_summary_rows)
+    _write_csv(content_oracle_by_bucket_path, bucket_summary_rows)
+    _write_csv(content_oracle_case_deltas_path, case_rows)
+
+    best_of_bf_flip_gain = sum(
+        int((not bool(row["shared_correct"])) and bool(row["best_of_bf_correct"])) for row in case_rows
+    )
+    best_of_b_plus_content_flip_gain = sum(
+        int((not bool(row["shared_correct"])) and bool(row["best_of_b_plus_content_correct"])) for row in case_rows
+    )
+    oracle_per_case_alpha_content_flip_gain = sum(
+        int((not bool(row["shared_correct"])) and bool(row["oracle_alpha_content_correct"])) for row in case_rows
+    )
+    shared_wrong_rows = [row for row in case_rows if not bool(row["shared_correct"])]
+    shared_wrong_count = len(shared_wrong_rows)
+    content_alignment_rate_shared_wrong = (
+        sum(int(row["content_alignment_sign"] > 0) for row in shared_wrong_rows) / shared_wrong_count
+        if shared_wrong_count
+        else 0.0
+    )
+    weighted_alignment_shared_wrong = (
+        sum(float(row["weighted_content_alignment"]) for row in shared_wrong_rows) / shared_wrong_count
+        if shared_wrong_count
+        else 0.0
+    )
+    min_flip_gain = _resolve_branch_fate_min_flip_gain(config)
+    min_alignment_rate = _resolve_branch_fate_min_alignment_rate(config)
+    branch_fate_payload = {
+        "analysis_mode": "stage_c_real_pilot_content_audit",
+        "examples": len(case_rows),
+        "primary_control_task": _resolve_primary_control_task(config),
+        "summary_csv": str(content_oracle_summary_path.resolve()),
+        "content_effect_case_dump_csv": str(content_effect_path.resolve()),
+        "content_alignment_summary_csv": str(content_alignment_path.resolve()),
+        "content_oracle_by_bucket_csv": str(content_oracle_by_bucket_path.resolve()),
+        "content_oracle_case_deltas_csv": str(content_oracle_case_deltas_path.resolve()),
+        "best_of_BF_flip_gain": best_of_bf_flip_gain,
+        "best_of_B_plus_content_flip_gain": best_of_b_plus_content_flip_gain,
+        "oracle_per_case_alpha_content_flip_gain": oracle_per_case_alpha_content_flip_gain,
+        "content_alignment_rate_shared_wrong": content_alignment_rate_shared_wrong,
+        "weighted_content_alignment_shared_wrong": weighted_alignment_shared_wrong,
+        "branch_fate_min_flip_gain": min_flip_gain,
+        "branch_fate_min_alignment_rate": min_alignment_rate,
+        "continue_candidate_branch": bool(
+            best_of_b_plus_content_flip_gain >= min_flip_gain
+            and content_alignment_rate_shared_wrong >= min_alignment_rate
+        ),
+    }
+    write_json(output_dir / "branch_fate_metrics.json", branch_fate_payload)
+    report_title = "Stage C Real Pilot Content Audit"
+    if config is not None:
+        report_title = str(config.get("runtime", {}).get("report_title", report_title))
+    report_lines = [
+        f"# {report_title}",
+        "",
+        f"- examples={len(case_rows)}",
+        f"- best_of_BF_flip_gain={best_of_bf_flip_gain}",
+        f"- best_of_B_plus_content_flip_gain={best_of_b_plus_content_flip_gain}",
+        f"- oracle_per_case_alpha_content_flip_gain={oracle_per_case_alpha_content_flip_gain}",
+        f"- content_alignment_rate_shared_wrong={content_alignment_rate_shared_wrong:.4f}",
+        f"- weighted_content_alignment_shared_wrong={weighted_alignment_shared_wrong:.4f}",
+        f"- continue_candidate_branch={branch_fate_payload['continue_candidate_branch']}",
+        "",
+        "## Summary",
+    ]
+    for row in summary_rows:
+        report_lines.append(
+            f"- {row['alias']}: task_score={row['task_score']:.4f}, "
+            f"proxy={row['task_proxy_score']:.4f}, margin={row['task_margin']:.4f}"
+        )
+    report_lines.append("")
+    report_lines.append("## By Bucket")
+    for row in bucket_summary_rows:
+        report_lines.append(
+            f"- {row['bucket']}: B={row['B_task_score']:.4f}, "
+            f"F={row['F_task_score']:.4f}, G={row['G_task_score']:.4f}, "
+            f"B_plus_content={row['B_plus_content_task_score']:.4f}, "
+            f"oracle_alpha={row['oracle_per_case_alpha_content_task_score']:.4f}"
+        )
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
+    write_json(output_dir / "metrics.json", branch_fate_payload)
+
+
 def _resolve_oracle_alpha_grid(config: dict[str, Any] | None) -> list[float]:
     raw_grid = None if config is None else config.get("runtime", {}).get("stage_c_oracle_alpha_grid")
     if raw_grid is None:
@@ -996,6 +1491,33 @@ def _resolve_oracle_alpha_grid(config: dict[str, Any] | None) -> list[float]:
         seen.add(value)
         ordered.append(value)
     return ordered
+
+
+def _compute_choice_outcome(
+    *,
+    choice_scores: list[float],
+    candidate_labels: list[str],
+    gold_label: str,
+) -> dict[str, Any]:
+    if not candidate_labels:
+        raise ValueError("candidate_labels must not be empty.")
+    if len(choice_scores) != len(candidate_labels):
+        raise ValueError("choice_scores and candidate_labels must have the same length.")
+    gold_index = candidate_labels.index(gold_label)
+    predicted_index = max(range(len(choice_scores)), key=lambda index: choice_scores[index])
+    predicted_label = candidate_labels[predicted_index]
+    score_tensor = torch.tensor(choice_scores, dtype=torch.float32)
+    probabilities = torch.softmax(score_tensor, dim=0)
+    return {
+        "gold_index": gold_index,
+        "predicted_index": predicted_index,
+        "predicted_label": predicted_label,
+        "predicted_correct": bool(predicted_label == gold_label),
+        "task_score": float(predicted_label == gold_label),
+        "task_proxy_score": float(probabilities[gold_index].item()),
+        "final_margin": _score_margin(choice_scores, gold_index=gold_index),
+        "choice_scores": [float(value) for value in choice_scores],
+    }
 
 
 def _compute_scores_from_alpha(
@@ -1030,7 +1552,6 @@ def _pick_oracle_alpha_case(
     choices = candidate_row.get("choices", [])
     candidate_labels = [str(choice["label"]) for choice in choices]
     gold_label = str(candidate_row["gold_label"])
-    gold_index = candidate_labels.index(gold_label)
     alpha_rows: list[dict[str, Any]] = []
     for alpha in alpha_grid:
         choice_scores = _compute_scores_from_alpha(
@@ -1038,16 +1559,15 @@ def _pick_oracle_alpha_case(
             residual_scores=residual_scores,
             alpha=float(alpha),
         )
-        predicted_index = max(range(len(choice_scores)), key=lambda index: choice_scores[index])
-        predicted_label = candidate_labels[predicted_index]
+        outcome = _compute_choice_outcome(
+            choice_scores=choice_scores,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
         alpha_rows.append(
             {
                 "alpha": float(alpha),
-                "choice_scores": choice_scores,
-                "predicted_index": predicted_index,
-                "predicted_label": predicted_label,
-                "predicted_correct": bool(predicted_label == gold_label),
-                "final_margin": _score_margin(choice_scores, gold_index=gold_index),
+                **outcome,
             }
         )
     correct_rows = [row for row in alpha_rows if bool(row["predicted_correct"])]
@@ -1078,6 +1598,88 @@ def _pick_oracle_alpha_case(
         "candidate_labels": candidate_labels,
         "gold_label": gold_label,
     }
+
+
+def _pick_oracle_alpha_from_anchor(
+    *,
+    anchor_scores: list[float],
+    delta_scores: list[float],
+    candidate_labels: list[str],
+    gold_label: str,
+    alpha_grid: list[float],
+) -> dict[str, Any]:
+    alpha_rows: list[dict[str, Any]] = []
+    for alpha in alpha_grid:
+        choice_scores = _compute_scores_from_alpha(
+            base_scores=anchor_scores,
+            residual_scores=delta_scores,
+            alpha=float(alpha),
+        )
+        outcome = _compute_choice_outcome(
+            choice_scores=choice_scores,
+            candidate_labels=candidate_labels,
+            gold_label=gold_label,
+        )
+        alpha_rows.append(
+            {
+                "alpha": float(alpha),
+                **outcome,
+            }
+        )
+    correct_rows = [row for row in alpha_rows if bool(row["predicted_correct"])]
+    if correct_rows:
+        best_row = min(
+            correct_rows,
+            key=lambda row: (
+                abs(float(row["alpha"])),
+                0 if float(row["alpha"]) >= 0.0 else 1,
+                abs(float(row["alpha"]) - 1.0),
+            ),
+        )
+        selection_reason = "correct_min_abs"
+    else:
+        best_row = max(
+            alpha_rows,
+            key=lambda row: (
+                float(row["final_margin"]),
+                -abs(float(row["alpha"])),
+                1 if float(row["alpha"]) >= 0.0 else 0,
+                -abs(float(row["alpha"]) - 1.0),
+            ),
+        )
+        selection_reason = "best_margin_when_all_wrong"
+    return {
+        **best_row,
+        "selection_reason": selection_reason,
+        "candidate_labels": list(candidate_labels),
+        "gold_label": gold_label,
+    }
+
+
+def _resolve_margin_band(margin_value: float) -> str:
+    if margin_value < 0.0:
+        return "near_threshold" if margin_value >= -0.1 else "far_negative"
+    return "non_negative"
+
+
+def _resolve_shared_effect_bucket(base_correct: bool, shared_correct: bool) -> str:
+    if (not base_correct) and shared_correct:
+        return "shared_helped"
+    if base_correct and (not shared_correct):
+        return "shared_hurt"
+    return "shared_neutral"
+
+
+def _safe_weighted_alignment(needed_fix: float, content_push: float) -> float:
+    return float((content_push * needed_fix) / (abs(needed_fix) + 1e-8))
+
+
+def _resolve_first_nonempty_field(*rows: dict[str, Any], field: str) -> str:
+    for row in rows:
+        value = str(row.get(field, "")).strip()
+        if value:
+            return value
+    return ""
 
 
 def run_stage_c_real_pilot_oracle_audit(

@@ -135,7 +135,7 @@
   - 当前结论是负的：hard `fixed100` 上五条臂全部停在 `task_score=0.2`
   - `A -> C` 只有极小 `mean_margin_gain=0.0016285324096679688`，而 `C -> D` 与 `C -> E` 的 `mean_task_gain` 都是 `0.0`
   - 之后新增的 `shared_plus_candidate_delta_late_fusion` 也已完成双任务 real replay：它在 `Story Cloze` 上只带来极小 proxy/margin 改善，在 `FEVER` 上虽明显优于旧 `candidate_conditioned` 分支，但仍低于 `shared_summary residual`，且 `real` 与 `shuffled` 仍重合
-  - 因此，当前结论已进一步收紧为：candidate 增量分支还没有 real-memory 内容效应；下一步需要 case-conditional routing / sign selection，而不是继续扩大 sweep
+  - 之后又补了 `content audit`：直接用 `B/F/G` 构造 `B + (F-G)` 与 `oracle_per_case_alpha_content`。当前 `Story Cloze` 上这两者仍然都是 `0.2`，`FEVER` 上也都停在 `0.75`；因此，当前结论已进一步收紧为：candidate 增量分支的主体效应来自 branch form，不来自 real-memory content。后续不应直接上 routing / sign selection，而应把这条 residual family 先降级为失败分支
   - `runtime.retrieval_loss_type` 现支持 `cross_entropy / margin_pairwise / cross_entropy_plus_margin`，`runtime.retrieval_margin_value` 控制 pairwise margin；fresh 5-seed 对照显示 `cross_entropy_plus_margin` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain` 与 `mean_margin_gain`，因此当前 canonical `Stage C` 已切到 `cross_entropy_plus_margin + margin=0.1`
   - `runtime.target_support_selection_policy` 现支持 `plain / label_diverse_if_possible`；fresh fair-holdout 对照显示它不是当前主杠杆，因此 canonical 仍保留 `plain`
   - `runtime.target_support_weighting` 现支持 `uniform / proxy_softmax / proxy_top1`；当前 canonical 仍保留 `uniform`，因为 fresh support-weight sweep 尚未观察到对 official `task_score` 的稳定改善

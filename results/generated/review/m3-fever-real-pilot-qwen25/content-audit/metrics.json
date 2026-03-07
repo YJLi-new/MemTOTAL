@@ -1,0 +1,18 @@
+{
+  "analysis_mode": "stage_c_real_pilot_content_audit",
+  "best_of_BF_flip_gain": 2,
+  "best_of_B_plus_content_flip_gain": 0,
+  "branch_fate_min_alignment_rate": 0.6,
+  "branch_fate_min_flip_gain": 2,
+  "content_alignment_rate_shared_wrong": 0.625,
+  "content_alignment_summary_csv": "/root/mydir/MemTOTAL/results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_alignment_summary.csv",
+  "content_effect_case_dump_csv": "/root/mydir/MemTOTAL/results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_effect_case_dump.csv",
+  "content_oracle_by_bucket_csv": "/root/mydir/MemTOTAL/results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_oracle_by_bucket.csv",
+  "content_oracle_case_deltas_csv": "/root/mydir/MemTOTAL/results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_oracle_case_deltas.csv",
+  "continue_candidate_branch": false,
+  "examples": 64,
+  "oracle_per_case_alpha_content_flip_gain": 0,
+  "primary_control_task": true,
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_oracle_summary.csv",
+  "weighted_content_alignment_shared_wrong": 6.478140382561664e-08
+}

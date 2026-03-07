@@ -209,5 +209,75 @@ pairwise：
 
 - 现在不能说 candidate 增量路径已经成功。
 - 更准确的说法是：它把旧坏分支修到了“不会完全胡来”，但还没有成为 load-bearing 的 memory 通道。
-- 当前真正该做的，不是再扫更大 sweep，而是直接做 case-conditional routing / sign selection。
-- 只有当新的 candidate 增量分支先在 `FEVER` 上同时满足“优于 `G` 且不伤害 `B`”，才值得再回到 `Story Cloze`。
+- 这时还不能直接跳到 routing / sign selection，因为先要判断 `F-G` 里到底还有没有真实 memory 内容效应。
+
+## 第四轮补充：content audit（先审判 `F-G`）
+
+这轮没有再训练，也没有再重跑 qwen。只复用了现有 `A/B/F/G` review bundle，新增了两组 analysis-only 审计：
+
+- `results/generated/review/m3-story-cloze-real-pilot-qwen25/content-audit/`
+- `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/`
+
+核心不是再看 `F` 本身，而是拆三段：
+
+- `delta_candidate_total = F - B`
+- `delta_content = F - G`
+- `delta_branch = G - B`
+
+并额外构造一个离线 synthetic arm：
+
+- `B_plus_content = B + (F - G)`
+
+### Story Cloze content audit
+
+结果：
+
+- `B = 0.2`
+- `F = 0.2`
+- `G = 0.2`
+- `B_plus_content = 0.2`
+- `oracle_best_of_BF = 0.2`
+- `oracle_per_case_alpha_content = 0.2`
+
+关键指标：
+
+- `best_of_BF_flip_gain = 0`
+- `best_of_B_plus_content_flip_gain = 0`
+- `oracle_per_case_alpha_content_flip_gain = 0`
+- `content_alignment_rate_shared_wrong = 0.3375`
+
+这说明：
+
+- 当前 `Story Cloze` 上，candidate 分支里几乎没有可用的 `memory-only` 内容信号。
+- 不是 “gate 还不够聪明”，而是 `F-G` 这条量本身就没有给出能翻转 official decision 的内容效应。
+
+### FEVER content audit
+
+结果：
+
+- `B = 0.75`
+- `F = 0.671875`
+- `G = 0.671875`
+- `B_plus_content = 0.75`
+- `oracle_best_of_BF = 0.78125`
+- `oracle_per_case_alpha_content = 0.75`
+
+关键指标：
+
+- `best_of_BF_flip_gain = 2`
+- `best_of_B_plus_content_flip_gain = 0`
+- `oracle_per_case_alpha_content_flip_gain = 0`
+- `content_alignment_rate_shared_wrong = 0.625`
+
+这说明：
+
+- `F` 相对 `B` 的少量补充，不来自 `real-memory content`，而更像来自 branch form 本身。
+- 一旦把 `G` 当 control variate 显式减掉，`B + (F-G)` 不会比 `B` 更好。
+- 换句话说，当前 candidate 分支还没有通过最基本的“真实内容效应”判别。
+
+## 现在最稳妥的总结论
+
+- `memory idea` 还不能判死，因为 `shared_summary residual` 在 `FEVER` 上仍然是明确正 control。
+- 但当前这条 `candidate` residual family 已经可以开始判：它的主体效应来自 branch form，不来自 real-memory content。
+- 因此，下一步不该直接做 raw routing / sign selection，也不该继续放大这条 `shared + candidate delta`。
+- 如果后续还要继续做 candidate-specific `Stage C`，应该从新的 residual family 重新开始，并且先过 `FEVER` 再回 `Story Cloze`。
