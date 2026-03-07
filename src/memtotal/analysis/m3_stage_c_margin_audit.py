@@ -16,6 +16,28 @@ def _write_csv(output_path: Path, rows: list[dict[str, object]], fieldnames: lis
             writer.writerow(row)
 
 
+def _summarize_margin_rows(rows: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "seed_count": len(rows),
+        "mean_zero_shot_task_margin": sum(float(row["zero_shot_task_margin"]) for row in rows) / len(rows),
+        "mean_final_task_margin": sum(float(row["final_task_margin"]) for row in rows) / len(rows),
+        "mean_total_margin_gain": sum(float(row["total_margin_gain"]) for row in rows) / len(rows),
+        "mean_zero_shot_margin_gap_to_flip": sum(
+            float(row["zero_shot_margin_gap_to_flip"]) for row in rows
+        )
+        / len(rows),
+        "mean_final_margin_gap_to_flip": sum(
+            float(row["final_margin_gap_to_flip"]) for row in rows
+        )
+        / len(rows),
+        "mean_margin_gap_closed": sum(float(row["margin_gap_closed"]) for row in rows) / len(rows),
+        "margin_improves_rate": sum(1.0 if row["margin_improves"] else 0.0 for row in rows) / len(rows),
+        "cross_zero_margin_rate": sum(1.0 if row["crosses_zero_margin"] else 0.0 for row in rows)
+        / len(rows),
+        "target_split_policies": sorted({str(row["target_split_policy"]) for row in rows}),
+    }
+
+
 def collect_stage_c_margin_rows(input_root: str | Path) -> list[dict[str, object]]:
     curve_rows = collect_stage_c_curve_rows(input_root)
     runs: dict[tuple[str, int], list[dict[str, object]]] = {}
@@ -133,32 +155,23 @@ def run_m3_stage_c_margin_audit(
     by_backbone: dict[str, dict[str, object]] = {}
     for backbone in sorted({str(row["backbone"]) for row in rows}):
         backbone_rows = [row for row in rows if str(row["backbone"]) == backbone]
-        by_backbone[backbone] = {
-            "seed_count": len(backbone_rows),
-            "mean_zero_shot_task_margin": sum(float(row["zero_shot_task_margin"]) for row in backbone_rows)
-            / len(backbone_rows),
-            "mean_final_task_margin": sum(float(row["final_task_margin"]) for row in backbone_rows)
-            / len(backbone_rows),
-            "mean_total_margin_gain": sum(float(row["total_margin_gain"]) for row in backbone_rows)
-            / len(backbone_rows),
-            "mean_zero_shot_margin_gap_to_flip": sum(
-                float(row["zero_shot_margin_gap_to_flip"]) for row in backbone_rows
-            )
-            / len(backbone_rows),
-            "mean_final_margin_gap_to_flip": sum(
-                float(row["final_margin_gap_to_flip"]) for row in backbone_rows
-            )
-            / len(backbone_rows),
-            "mean_margin_gap_closed": sum(float(row["margin_gap_closed"]) for row in backbone_rows)
-            / len(backbone_rows),
-            "margin_improves_rate": sum(1.0 if row["margin_improves"] else 0.0 for row in backbone_rows)
-            / len(backbone_rows),
-            "cross_zero_margin_rate": sum(
-                1.0 if row["crosses_zero_margin"] else 0.0 for row in backbone_rows
-            )
-            / len(backbone_rows),
-            "target_split_policies": sorted({str(row["target_split_policy"]) for row in backbone_rows}),
-        }
+        by_backbone[backbone] = _summarize_margin_rows(backbone_rows)
+
+    by_backbone_negative_only: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        backbone_rows = [row for row in rows if str(row["backbone"]) == backbone]
+        negative_rows = [row for row in backbone_rows if float(row["zero_shot_task_margin"]) < 0.0]
+        if not negative_rows:
+            continue
+        by_backbone_negative_only[backbone] = _summarize_margin_rows(negative_rows)
+
+    by_backbone_non_negative_only: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        backbone_rows = [row for row in rows if str(row["backbone"]) == backbone]
+        non_negative_rows = [row for row in backbone_rows if float(row["zero_shot_task_margin"]) >= 0.0]
+        if not non_negative_rows:
+            continue
+        by_backbone_non_negative_only[backbone] = _summarize_margin_rows(non_negative_rows)
 
     metrics = {
         "mode": "analysis",
@@ -168,6 +181,8 @@ def run_m3_stage_c_margin_audit(
         "audit_csv": str(audit_csv.resolve()),
         "audit_svg": str(audit_svg.resolve()),
         "by_backbone": by_backbone,
+        "by_backbone_negative_only": by_backbone_negative_only,
+        "by_backbone_non_negative_only": by_backbone_non_negative_only,
     }
     write_json(output_dir / "metrics.json", metrics)
     return metrics

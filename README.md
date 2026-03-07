@@ -11,4 +11,5 @@
 - 最新补充结论：`hard_by_continuation` 不够强，但新加的 `hard_by_current_model` 已经在两档 backbone 上都给出当前最高的 proxy gain：qwen25 从 `1.106e-5` 提到 `2.561e-5`，qwen3 从 `3.389e-5` 提到 `4.391e-5`。因此 canonical probe 现切到 `source_plus_support_bank + hard_by_current_model`；但要明确，这一轮 5-seed official `mean_task_gain` 仍然是 `0.0`，所以它是“当前最强 proxy 杠杆”，还不是“已经打通 official gain”的解法。
 - 最新新增结论：把 canonical 切到 `hard_by_current_model` 后重跑 `curve suite / step saturation audit`，official `step0->final` 仍然是 `0.0`；但 proxy 会随着 steps 单调上升。也就是说，现在的内循环不是没学到东西，而是 gain 还没跨过 multiple-choice 的 rank-flip 阈值。
 - 最新补充结论：进一步做 `margin / rank-flip audit` 后，`cross_zero_margin_rate` 在两档 backbone 上都还是 `0.0`，而 `margin_improves_rate` 都是 `0.6`。这说明后续 steps 现在主要是在把已接近正确或已经正确的 case 再拉开一点，还没有真正救回原本错的 case。
+- 最新补充结论：再把 `margin audit` 拆成 `negative_only` 之后，当前更清楚了。两档 backbone 各只有 `2` 个负 margin seeds；qwen25 只有 `1/2` 在缩小 gap，平均只关掉 `1.88e-5`，qwen3 也是 `1/2`，而且平均 gap 还略微变差。也就是说，当前 canonical gain 还没有稳定集中到真正错的 seeds 上。
 - 当前只支持两个 backbone：`Qwen2.5-1.5B-Instruct`、`Qwen3-8B`。

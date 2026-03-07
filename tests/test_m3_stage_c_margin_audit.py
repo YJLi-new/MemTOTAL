@@ -120,7 +120,15 @@ class M3StageCMarginAuditTest(unittest.TestCase):
                 0.0,
             )
             self.assertEqual(
+                metrics["by_backbone_negative_only"]["Qwen2.5-1.5B-Instruct"]["seed_count"],
+                1,
+            )
+            self.assertEqual(
                 metrics["by_backbone"]["Qwen3-8B"]["cross_zero_margin_rate"],
+                1.0,
+            )
+            self.assertEqual(
+                metrics["by_backbone_negative_only"]["Qwen3-8B"]["cross_zero_margin_rate"],
                 1.0,
             )
 
