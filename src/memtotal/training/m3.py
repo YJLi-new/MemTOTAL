@@ -135,6 +135,16 @@ def _resolve_target_support_negative_pool(config: dict) -> str:
     return pool
 
 
+def _resolve_target_support_negative_sampler(config: dict) -> str:
+    sampler = str(config["runtime"].get("target_support_negative_sampler", "deterministic_id"))
+    if sampler not in {"deterministic_id", "hard_by_continuation"}:
+        raise ValueError(
+            f"Unsupported runtime.target_support_negative_sampler={sampler}. "
+            "Expected one of deterministic_id, hard_by_continuation."
+        )
+    return sampler
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -473,13 +483,32 @@ def _resolve_retrieval_candidates(
     candidate_pool: list[dict[str, Any]],
     *,
     negative_count: int,
+    runtime: MemoryRuntime | None = None,
+    negative_sampler: str = "deterministic_id",
 ) -> list[dict[str, Any]]:
     negatives = [
         row
         for row in sorted(candidate_pool, key=lambda item: str(item["id"]))
         if str(row["id"]) != str(example["id"])
     ]
-    selected_negatives = negatives[: min(negative_count, len(negatives))]
+    if negative_sampler == "hard_by_continuation" and negatives:
+        if runtime is None:
+            raise ValueError("runtime is required when negative_sampler='hard_by_continuation'.")
+        positive_state = runtime.backbone.summarize_texts([str(example["continuation"])]).squeeze(0)
+        candidate_states = runtime.backbone.summarize_texts(
+            [str(row["continuation"]) for row in negatives]
+        )
+        positive_state = F.normalize(positive_state.unsqueeze(0), dim=1).squeeze(0)
+        candidate_states = F.normalize(candidate_states, dim=1)
+        scores = torch.mv(candidate_states, positive_state)
+        ranked_negatives = sorted(
+            zip(scores.tolist(), (str(row["id"]) for row in negatives), negatives, strict=False),
+            key=lambda item: (item[0], item[1]),
+            reverse=True,
+        )
+        selected_negatives = [item[2] for item in ranked_negatives[: min(negative_count, len(ranked_negatives))]]
+    else:
+        selected_negatives = negatives[: min(negative_count, len(negatives))]
     return [example, *selected_negatives]
 
 
@@ -557,6 +586,7 @@ def _build_stage_c_episode_states(
     target_support_bank_size_spec: str | int,
     retrieval_negative_count: int,
     target_support_negative_pool: str,
+    target_support_negative_sampler: str,
 ) -> list[dict[str, object]]:
     episode_states: list[dict[str, object]] = []
     source_negative_examples = _flatten_domains(grouped_examples, list(manifest["source_domains"]))
@@ -603,6 +633,7 @@ def _build_stage_c_episode_states(
                 "query_candidate_pool": query_candidate_pool,
                 "support_candidate_pool": support_candidate_pool,
                 "target_support_bank_size": support_bank_size,
+                "target_support_negative_sampler": target_support_negative_sampler,
             }
         )
     return episode_states
@@ -664,11 +695,14 @@ def _continuation_retrieval_loss(
     *,
     candidate_pool: list[dict[str, Any]],
     negative_count: int,
+    negative_sampler: str = "deterministic_id",
 ) -> tuple[torch.Tensor, float]:
     candidate_examples = _resolve_retrieval_candidates(
         example,
         candidate_pool,
         negative_count=negative_count,
+        runtime=runtime,
+        negative_sampler=negative_sampler,
     )
     forward = runtime.forward_example(example)
     memory_summary = runtime.summarize_memory_short(forward.memory_short)
@@ -1226,6 +1260,7 @@ def run_stage_c(
     target_split_policy = _resolve_target_split_policy(config)
     target_support_bank_size_spec = _resolve_target_support_bank_size_spec(config)
     target_support_negative_pool = _resolve_target_support_negative_pool(config)
+    target_support_negative_sampler = _resolve_target_support_negative_sampler(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1288,6 +1323,7 @@ def run_stage_c(
             target_support_bank_size_spec=target_support_bank_size_spec,
             retrieval_negative_count=retrieval_negative_count,
             target_support_negative_pool=target_support_negative_pool,
+            target_support_negative_sampler=target_support_negative_sampler,
         )
         if target_episode_policy == "aggregate_support":
             shared_runtime = copy.deepcopy(runtime)
@@ -1396,6 +1432,7 @@ def run_stage_c(
                         sum(int(state["target_support_bank_size"]) for state in episode_states) / len(episode_states)
                     ),
                     "target_support_negative_pool": target_support_negative_pool,
+                    "target_support_negative_sampler": target_support_negative_sampler,
                     "evaluated_target_episodes": len(episode_states),
                     "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": (
@@ -1460,6 +1497,7 @@ def run_stage_c(
                                     example,
                                     candidate_pool=support_candidate_pool,
                                     negative_count=retrieval_negative_count,
+                                    negative_sampler=target_support_negative_sampler,
                                 )[0]
                                 for example in support_examples
                             ]
@@ -1515,6 +1553,7 @@ def run_stage_c(
                                     example,
                                     candidate_pool=support_candidate_pool,
                                     negative_count=retrieval_negative_count,
+                                    negative_sampler=target_support_negative_sampler,
                                 )[0]
                                 for example in support_examples
                             ]
@@ -1564,6 +1603,7 @@ def run_stage_c(
                 "target_split_policy",
                 "target_support_bank_size",
                 "target_support_negative_pool",
+                "target_support_negative_sampler",
                 "evaluated_target_episodes",
                 "evaluated_query_examples",
                 "query_candidate_pool_size",
@@ -1601,6 +1641,7 @@ def run_stage_c(
             "target_split_policy": target_split_policy,
             "target_support_bank_size": target_support_bank_size_spec,
             "target_support_negative_pool": target_support_negative_pool,
+            "target_support_negative_sampler": target_support_negative_sampler,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -1632,6 +1673,7 @@ def run_stage_c(
         "target_split_policy": target_split_policy,
         "target_support_bank_size": target_support_bank_size_spec,
         "target_support_negative_pool": target_support_negative_pool,
+        "target_support_negative_sampler": target_support_negative_sampler,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1683,6 +1725,7 @@ def run_stage_c(
         "target_split_policy": target_split_policy,
         "target_support_bank_size": target_support_bank_size_spec,
         "target_support_negative_pool": target_support_negative_pool,
+        "target_support_negative_sampler": target_support_negative_sampler,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],

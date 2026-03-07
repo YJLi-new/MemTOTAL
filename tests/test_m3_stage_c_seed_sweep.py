@@ -53,6 +53,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                     "target_split_policy": "random",
                     "target_support_bank_size": "auto",
                     "target_support_negative_pool": "support_bank",
+                    "target_support_negative_sampler": "deterministic_id",
                     "support_updates": 3,
                     "support_examples_touched": 9,
                     "zero_shot_task_score": zero_shot_task_score,
@@ -105,6 +106,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             self.assertEqual(rows[0]["target_split_policy"], "random")
             self.assertEqual(rows[0]["target_support_bank_size"], "auto")
             self.assertEqual(rows[0]["target_support_negative_pool"], "support_bank")
+            self.assertEqual(rows[0]["target_support_negative_sampler"], "deterministic_id")
             self.assertEqual(rows[0]["support_updates"], 3)
             self.assertEqual(rows[0]["support_examples_touched"], 9)
             self.assertAlmostEqual(float(rows[0]["task_gain"]), 0.25)
@@ -193,6 +195,10 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                 ["support_bank"],
             )
             self.assertEqual(
+                metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_support_negative_samplers"],
+                ["deterministic_id"],
+            )
+            self.assertEqual(
                 metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["mean_support_updates"],
                 3.0,
             )
@@ -218,6 +224,12 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             )
             self.assertEqual(
                 metrics["by_backbone_support_negative_pool"]["Qwen2.5-1.5B-Instruct::negatives=support_bank"]["seed_count"],
+                2,
+            )
+            self.assertEqual(
+                metrics[
+                    "by_backbone_support_negative_sampler"
+                ]["Qwen2.5-1.5B-Instruct::negative_sampler=deterministic_id"]["seed_count"],
                 2,
             )
             self.assertEqual(metrics["by_backbone"]["Qwen3-8B"]["worst_seed"], 21)

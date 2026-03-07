@@ -23,7 +23,11 @@ from memtotal.data import (
     validate_meta_split,
 )
 from memtotal.pipeline import MemoryRuntime
-from memtotal.training.m3 import _continuation_retrieval_loss, _resolve_episode_support_weights
+from memtotal.training.m3 import (
+    _continuation_retrieval_loss,
+    _resolve_episode_support_weights,
+    _resolve_retrieval_candidates,
+)
 from memtotal.training.run_train import main as train_main
 from memtotal.utils.config import load_config
 
@@ -198,6 +202,26 @@ class M3TrainingTest(unittest.TestCase):
             self.assertTrue(loss.requires_grad)
             self.assertGreaterEqual(accuracy, 0.0)
             self.assertLessEqual(accuracy, 1.0)
+
+    def test_resolve_retrieval_candidates_supports_hard_negative_sampler(self) -> None:
+        config = load_config(ROOT / "configs/exp/m3_stage_b_core4_qwen25_smoke.yaml")
+        runtime = MemoryRuntime(config=config, seed=31)
+        example = {"id": "anchor", "continuation": "alpha beta"}
+        candidate_pool = [
+            example,
+            {"id": "far-a", "continuation": "omega psi"},
+            {"id": "near", "continuation": "alpha beta"},
+            {"id": "far-b", "continuation": "kappa lambda"},
+        ]
+        resolved = _resolve_retrieval_candidates(
+            example,
+            candidate_pool,
+            negative_count=2,
+            runtime=runtime,
+            negative_sampler="hard_by_continuation",
+        )
+        self.assertEqual(resolved[0]["id"], "anchor")
+        self.assertEqual(resolved[1]["id"], "near")
 
     def test_resolve_episode_support_weights_supports_weighting_modes(self) -> None:
         self.assertEqual(
@@ -487,6 +511,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_c_metrics["target_split_policy"], "random")
             self.assertEqual(stage_c_metrics["target_support_bank_size"], "auto")
             self.assertEqual(stage_c_metrics["target_support_negative_pool"], "source_plus_support_bank")
+            self.assertEqual(stage_c_metrics["target_support_negative_sampler"], "deterministic_id")
             self.assertEqual(stage_c_metrics["checkpoint_target_episode_policy"], "shared_aggregate")
             self.assertIn("mean_support_grad_norm", stage_c_metrics)
             self.assertIn("max_support_update_max_abs", stage_c_metrics)
@@ -508,6 +533,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("target_split_policy", rows[0])
             self.assertIn("target_support_bank_size", rows[0])
             self.assertIn("target_support_negative_pool", rows[0])
+            self.assertIn("target_support_negative_sampler", rows[0])
             self.assertIn("evaluated_target_episodes", rows[0])
             self.assertIn("evaluated_query_examples", rows[0])
             self.assertIn("query_candidate_pool_size", rows[0])
