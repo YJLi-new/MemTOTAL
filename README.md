@@ -12,4 +12,5 @@
 - 最新新增结论：把 canonical 切到 `hard_by_current_model` 后重跑 `curve suite / step saturation audit`，official `step0->final` 仍然是 `0.0`；但 proxy 会随着 steps 单调上升。也就是说，现在的内循环不是没学到东西，而是 gain 还没跨过 multiple-choice 的 rank-flip 阈值。
 - 最新补充结论：进一步做 `margin / rank-flip audit` 后，`cross_zero_margin_rate` 在两档 backbone 上都还是 `0.0`，而 `margin_improves_rate` 都是 `0.6`。这说明后续 steps 现在主要是在把已接近正确或已经正确的 case 再拉开一点，还没有真正救回原本错的 case。
 - 最新补充结论：再把 `margin audit` 拆成 `negative_only` 之后，当前更清楚了。两档 backbone 各只有 `2` 个负 margin seeds；qwen25 只有 `1/2` 在缩小 gap，平均只关掉 `1.88e-5`，qwen3 也是 `1/2`，而且平均 gap 还略微变差。也就是说，当前 canonical gain 还没有稳定集中到真正错的 seeds 上。
+- 最新补充结论：继续做 `negative-seed shot/step curve audit` 后，当前负 margin seeds 上 `shot` 本身几乎没有纯作用，`shot=0/1/2/3` 的 `gap-to-flip` 完全一样；真正有变化的是 inner-loop `step`。而且两档 backbone 方向相反：qwen25 会极弱地缩小 gap，qwen3 反而会继续放大 gap。
 - 当前只支持两个 backbone：`Qwen2.5-1.5B-Instruct`、`Qwen3-8B`。
