@@ -88,6 +88,16 @@ def _resolve_target_episode_policy(config: dict) -> str:
     return policy
 
 
+def _resolve_target_support_weighting(config: dict) -> str:
+    weighting = str(config["runtime"].get("target_support_weighting", "uniform"))
+    if weighting not in {"uniform", "proxy_softmax", "proxy_top1"}:
+        raise ValueError(
+            f"Unsupported runtime.target_support_weighting={weighting}. "
+            "Expected one of uniform, proxy_softmax, proxy_top1."
+        )
+    return weighting
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -505,6 +515,24 @@ def _build_stage_c_episode_states(
             }
         )
     return episode_states
+
+
+def _resolve_episode_support_weights(
+    episode_proxy_scores: list[float],
+    *,
+    weighting: str,
+) -> list[float]:
+    if not episode_proxy_scores:
+        return []
+    if weighting == "uniform":
+        uniform = 1.0 / len(episode_proxy_scores)
+        return [uniform for _ in episode_proxy_scores]
+    if weighting == "proxy_top1":
+        best_index = max(range(len(episode_proxy_scores)), key=lambda idx: episode_proxy_scores[idx])
+        return [1.0 if idx == best_index else 0.0 for idx in range(len(episode_proxy_scores))]
+    logits = torch.tensor(episode_proxy_scores, dtype=torch.float32)
+    weights = torch.softmax(logits, dim=0)
+    return [float(value.item()) for value in weights]
 
 
 def _continuation_retrieval_loss(
@@ -1071,6 +1099,7 @@ def run_stage_c(
     target_eval_repeats = _resolve_target_eval_repeats(config)
     target_episode_repeats = _resolve_target_episode_repeats(config)
     target_episode_policy = _resolve_target_episode_policy(config)
+    target_support_weighting = _resolve_target_support_weighting(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1145,11 +1174,13 @@ def run_stage_c(
             eval_task_proxy_scores: list[float] = []
             eval_task_proxy_names: list[str] = []
             eval_task_margins: list[float] = []
+            episode_proxy_scores: list[float] = []
             evaluated_query_examples = 0
             for episode_state in episode_states:
                 current_runtime = episode_state["runtime"]
                 eval_query_sets = episode_state["eval_query_sets"]
                 query_candidate_pool = episode_state["query_candidate_pool"]
+                episode_task_proxy_scores: list[float] = []
                 for query_examples in eval_query_sets:
                     for example in query_examples:
                         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
@@ -1194,6 +1225,12 @@ def run_stage_c(
                     eval_task_proxy_scores.append(task_proxy_score)
                     eval_task_proxy_names.append(task_proxy_name)
                     eval_task_margins.append(task_margin)
+                    episode_task_proxy_scores.append(task_proxy_score)
+                episode_proxy_scores.append(
+                    sum(episode_task_proxy_scores) / len(episode_task_proxy_scores)
+                    if episode_task_proxy_scores
+                    else 0.0
+                )
             objective_loss = sum(eval_objective_losses) / len(eval_objective_losses)
             objective_accuracy = sum(eval_objective_accuracies) / len(eval_objective_accuracies)
             task_score = sum(eval_task_scores) / len(eval_task_scores)
@@ -1221,6 +1258,7 @@ def run_stage_c(
                     "target_eval_repeats": target_eval_repeats,
                     "target_episode_repeats": target_episode_repeats,
                     "target_episode_policy": target_episode_policy,
+                    "target_support_weighting": target_support_weighting,
                     "evaluated_target_episodes": len(episode_states),
                     "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": (
@@ -1257,12 +1295,16 @@ def run_stage_c(
                 shared_runtime = episode_states[0]["runtime"]
                 current_adapt_parameters, _ = _configure_stage_c_trainables(shared_runtime, adaptation_target)
                 optimizer = torch.optim.SGD(current_adapt_parameters, lr=adapt_lr)
-                support_terms: list[torch.Tensor] = []
-                for episode_state in episode_states:
+                episode_support_losses: list[torch.Tensor] = []
+                episode_support_weights = _resolve_episode_support_weights(
+                    episode_proxy_scores,
+                    weighting=target_support_weighting,
+                )
+                for episode_index, episode_state in enumerate(episode_states):
                     support_examples = episode_state["support_examples"]
                     support_candidate_pool = episode_state["support_candidate_pool"]
                     if query_objective == "label_prototype":
-                        support_terms.extend(
+                        episode_support_loss = torch.stack(
                             [
                                 _classification_loss(
                                     shared_runtime,
@@ -1272,9 +1314,9 @@ def run_stage_c(
                                 )
                                 for example in support_examples
                             ]
-                        )
+                        ).mean()
                     else:
-                        support_terms.extend(
+                        episode_support_loss = torch.stack(
                             [
                                 _continuation_retrieval_loss(
                                     shared_runtime,
@@ -1284,14 +1326,17 @@ def run_stage_c(
                                 )[0]
                                 for example in support_examples
                             ]
-                        )
+                        ).mean()
+                    episode_support_losses.append(
+                        episode_support_loss * float(episode_support_weights[episode_index])
+                    )
                     for example in support_examples:
                         profiler.add_tokens(runtime.backbone.count_tokens(example["segment"]))
                         profiler.add_tokens(runtime.backbone.count_tokens(example["continuation"]))
                         support_examples_touched += 1
                 optimizer.zero_grad()
                 before_update = _snapshot_parameter_tensors(current_adapt_parameters)
-                support_loss = torch.stack(support_terms).mean()
+                support_loss = torch.stack(episode_support_losses).sum()
                 support_loss.backward()
                 episode_grad_norm = _parameter_grad_norm(current_adapt_parameters)
                 optimizer.step()
@@ -1378,6 +1423,7 @@ def run_stage_c(
                 "target_eval_repeats",
                 "target_episode_repeats",
                 "target_episode_policy",
+                "target_support_weighting",
                 "evaluated_target_episodes",
                 "evaluated_query_examples",
                 "query_candidate_pool_size",
@@ -1411,6 +1457,7 @@ def run_stage_c(
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
             "target_episode_policy": target_episode_policy,
+            "target_support_weighting": target_support_weighting,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -1438,6 +1485,7 @@ def run_stage_c(
         "target_eval_repeats": target_eval_repeats,
         "target_episode_repeats": target_episode_repeats,
         "target_episode_policy": target_episode_policy,
+        "target_support_weighting": target_support_weighting,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1485,6 +1533,7 @@ def run_stage_c(
         "target_eval_repeats": target_eval_repeats,
         "target_episode_repeats": target_episode_repeats,
         "target_episode_policy": target_episode_policy,
+        "target_support_weighting": target_support_weighting,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],

@@ -23,7 +23,7 @@ from memtotal.data import (
     validate_meta_split,
 )
 from memtotal.pipeline import MemoryRuntime
-from memtotal.training.m3 import _continuation_retrieval_loss
+from memtotal.training.m3 import _continuation_retrieval_loss, _resolve_episode_support_weights
 from memtotal.training.run_train import main as train_main
 from memtotal.utils.config import load_config
 
@@ -198,6 +198,20 @@ class M3TrainingTest(unittest.TestCase):
             self.assertTrue(loss.requires_grad)
             self.assertGreaterEqual(accuracy, 0.0)
             self.assertLessEqual(accuracy, 1.0)
+
+    def test_resolve_episode_support_weights_supports_weighting_modes(self) -> None:
+        self.assertEqual(
+            _resolve_episode_support_weights([0.2, 0.4, 0.6], weighting="uniform"),
+            [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
+        )
+        self.assertEqual(
+            _resolve_episode_support_weights([0.2, 0.9, 0.6], weighting="proxy_top1"),
+            [0.0, 1.0, 0.0],
+        )
+        softmax_weights = _resolve_episode_support_weights([0.1, 0.2, 0.4], weighting="proxy_softmax")
+        self.assertAlmostEqual(sum(softmax_weights), 1.0)
+        self.assertGreater(softmax_weights[2], softmax_weights[1])
+        self.assertGreater(softmax_weights[1], softmax_weights[0])
 
     def test_m3_stage_sequence_writes_expected_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -469,6 +483,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_c_metrics["target_eval_repeats"], 3)
             self.assertEqual(stage_c_metrics["target_episode_repeats"], 3)
             self.assertEqual(stage_c_metrics["target_episode_policy"], "aggregate_support")
+            self.assertEqual(stage_c_metrics["target_support_weighting"], "uniform")
             self.assertEqual(stage_c_metrics["checkpoint_target_episode_policy"], "shared_aggregate")
             self.assertIn("mean_support_grad_norm", stage_c_metrics)
             self.assertIn("max_support_update_max_abs", stage_c_metrics)
@@ -486,6 +501,7 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("target_eval_repeats", rows[0])
             self.assertIn("target_episode_repeats", rows[0])
             self.assertIn("target_episode_policy", rows[0])
+            self.assertIn("target_support_weighting", rows[0])
             self.assertIn("evaluated_target_episodes", rows[0])
             self.assertIn("evaluated_query_examples", rows[0])
             self.assertIn("query_candidate_pool_size", rows[0])

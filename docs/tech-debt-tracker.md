@@ -27,6 +27,8 @@
 - 因此，上一轮看起来像“aggregate_support 把 qwen3 拉稳了”的现象，现在已能明确判定主要来自 target seed 不同，而不是 policy 本身。当前真正剩下的 tech debt 是 target-seed 方差本身，而不是 Stage C target episode policy 的选择。
 - fresh `results/generated/m3-core4-stage-c-qonly-episode-budget-sweep-v1/metrics.json` 现在又把另一个误区排掉了：在当前 core4 smoke 上，`target_episode_repeats` 不是“越大越稳”。相同 5-seed 下，qwen25 当前是 `ep1=0.08888888888888889 > ep3=0.02222222222222222 > ep5=-0.013333333333333336`；qwen3 当前是 `ep1=0.022222222222222233 > ep5=0.013333333333333358 > ep3=0.007407407407407407`。这说明更多 target episodes 已开始稀释 few-shot 适配信号。
 - 因而，当前 M3 smoke 最真实的 tech debt 已从“挑 policy”继续收缩成“如何降低 target-seed 方差，同时避免 episode aggregation 把 support signal 过度平均掉”。下一步应优先拆 target split / support weighting，而不是继续盲加 `target_episode_repeats`。
+- fresh `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 现在又把 `support weighting` 这条线排掉了：在固定 `aggregate_support + ep3` 的 5-seed 口径下，`uniform / proxy_softmax / proxy_top1` 的 official `mean_task_gain` 基本完全一样。当前 qwen25 三档都约为 `-0.11111111111111112`，qwen3 三档都为 `-0.022222222222222233`；只有 proxy 有 1e-6 量级波动。
+- 因此，当前最真实的 tech debt 已进一步收缩成 target split / support set 本身，而不是 support aggregation 的权重形式。下一步应优先拆“哪些 support/query 例子被抽到了”，而不是继续调 `target_support_weighting`。
 - Stage C 适配对象消融现已完成，但在 canonical toy smoke 上仍表现为 `Q-only` 基本不动、`W-only/W+Q` 只降低 loss 而不提升 accuracy；后续需要更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
 - Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
 - `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。

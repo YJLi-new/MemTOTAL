@@ -245,6 +245,9 @@
 - 2026-03-07 05:09 UTC: 因此，上一轮看起来像“换 policy 稳住 qwen3”的现象，现在已能明确判定主要来自 seed 差异而非 policy 本身。新的 canonical 决策是保留 `aggregate_support`，理由不是它更强，而是它在当前 smoke 上与 `independent` 等价、但 target-side 更新成本更低。当前剩余 blocker 已收口到 target-seed 方差本身。
 - 2026-03-07 05:16 UTC: 已新增 `scripts/run_m3_core4_stage_c_qonly_episode_budget_sweep.sh`，并将 `src/memtotal/analysis/m3_stage_c_seed_sweep.py` 进一步扩展为输出 `by_backbone_episode_budget`。fresh `results/generated/m3-core4-stage-c-qonly-episode-budget-sweep-v1/metrics.json` 当前记录：在 `aggregate_support` 下，相同 5-seed target pack 上 `target_episode_repeats=1` 反而是两档 backbone 的最佳均值，qwen25 当前 `ep1=0.08888888888888889 > ep3=0.02222222222222222 > ep5=-0.013333333333333336`，qwen3 当前 `ep1=0.022222222222222233 > ep5=0.013333333333333358 > ep3=0.007407407407407407`。
 - 2026-03-07 05:16 UTC: 这说明当前 core4 smoke 的 target-side 问题已不是“episode budget 太小”，而是“episode aggregation 会开始稀释 support signal”。下一步应优先检查 target split / support weighting，而不是继续把 canonical `target_episode_repeats` 往上加。
+- 2026-03-07 05:25 UTC: 已把 `runtime.target_support_weighting in {uniform, proxy_softmax, proxy_top1}` 接进 `src/memtotal/training/m3.py`、`adapt_curve.csv`、`metrics.json` 和 `src/memtotal/analysis/m3_stage_c_seed_sweep.py`。当前 canonical `m3_stage_c_core4_{qwen25,qwen3}_smoke.yaml` 显式固定为 `target_support_weighting=uniform`。
+- 2026-03-07 05:25 UTC: 已新增 `scripts/run_m3_core4_stage_c_qonly_support_weight_sweep.sh`。fresh `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 当前记录：在固定 `aggregate_support + ep3` 的 5-seed 口径下，`uniform / proxy_softmax / proxy_top1` 的 official `mean_task_gain` 基本完全一致，qwen25 三档都约为 `-0.11111111111111112`，qwen3 三档都为 `-0.022222222222222233`。
+- 2026-03-07 05:25 UTC: 因此，当前 support-weighting 也已经从 blocker 列表中拿掉。新的下一步是直接检查 target split / support-query 抽样结构，而不是继续调 aggregation 权重。
 
 ## Surprises & Discoveries
 

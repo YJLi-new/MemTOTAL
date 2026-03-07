@@ -24,6 +24,7 @@ runtime:
   target_eval_repeats: 3
   target_episode_repeats: 3
   target_episode_policy: aggregate_support
+  target_support_weighting: uniform
   adapt_shots:
     - 0
     - 3
