@@ -52,6 +52,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                     "target_support_weighting": "uniform",
                     "target_split_policy": "random",
                     "target_support_bank_size": "auto",
+                    "target_support_negative_pool": "support_bank",
                     "support_updates": 3,
                     "support_examples_touched": 9,
                     "zero_shot_task_score": zero_shot_task_score,
@@ -103,6 +104,7 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             self.assertEqual(rows[0]["target_support_weighting"], "uniform")
             self.assertEqual(rows[0]["target_split_policy"], "random")
             self.assertEqual(rows[0]["target_support_bank_size"], "auto")
+            self.assertEqual(rows[0]["target_support_negative_pool"], "support_bank")
             self.assertEqual(rows[0]["support_updates"], 3)
             self.assertEqual(rows[0]["support_examples_touched"], 9)
             self.assertAlmostEqual(float(rows[0]["task_gain"]), 0.25)
@@ -187,6 +189,10 @@ class M3StageCSeedSweepTest(unittest.TestCase):
                 ["auto"],
             )
             self.assertEqual(
+                metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["target_support_negative_pools"],
+                ["support_bank"],
+            )
+            self.assertEqual(
                 metrics["by_backbone"]["Qwen2.5-1.5B-Instruct"]["mean_support_updates"],
                 3.0,
             )
@@ -208,6 +214,10 @@ class M3StageCSeedSweepTest(unittest.TestCase):
             )
             self.assertEqual(
                 metrics["by_backbone_support_bank_size"]["Qwen2.5-1.5B-Instruct::bank=auto"]["seed_count"],
+                2,
+            )
+            self.assertEqual(
+                metrics["by_backbone_support_negative_pool"]["Qwen2.5-1.5B-Instruct::negatives=support_bank"]["seed_count"],
                 2,
             )
             self.assertEqual(metrics["by_backbone"]["Qwen3-8B"]["worst_seed"], 21)

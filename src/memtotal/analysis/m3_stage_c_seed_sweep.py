@@ -75,6 +75,7 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
                 "target_support_weighting": metrics.get("target_support_weighting"),
                 "target_split_policy": metrics.get("target_split_policy"),
                 "target_support_bank_size": metrics.get("target_support_bank_size"),
+                "target_support_negative_pool": metrics.get("target_support_negative_pool"),
                 "support_updates": metrics.get("support_updates", adapt_cost.get("support_updates")),
                 "support_examples_touched": metrics.get(
                     "support_examples_touched",
@@ -120,6 +121,7 @@ def write_stage_c_seed_sweep_csv(output_path: str | Path, rows: list[dict[str, o
         "target_support_weighting",
         "target_split_policy",
         "target_support_bank_size",
+        "target_support_negative_pool",
         "support_updates",
         "support_examples_touched",
         "zero_shot_task_score",
@@ -254,6 +256,9 @@ def run_m3_stage_c_seed_sweep_summary(
             "target_support_bank_sizes": sorted(
                 {str(row.get("target_support_bank_size") or "auto") for row in group_rows}
             ),
+            "target_support_negative_pools": sorted(
+                {str(row.get("target_support_negative_pool") or "support_bank") for row in group_rows}
+            ),
             "best_seed": best_row["seed"],
             "best_task_gain": best_row["task_gain"],
             "worst_seed": worst_row["seed"],
@@ -336,6 +341,25 @@ def run_m3_stage_c_seed_sweep_summary(
                 continue
             by_backbone_support_bank_size[f"{backbone}::bank={bank_size}"] = _summarize(grouped_rows)
 
+    by_backbone_support_negative_pool: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        for negative_pool in sorted(
+            {
+                str(row.get("target_support_negative_pool") or "support_bank")
+                for row in rows
+                if str(row["backbone"]) == backbone
+            }
+        ):
+            grouped_rows = [
+                row
+                for row in rows
+                if str(row["backbone"]) == backbone
+                and str(row.get("target_support_negative_pool") or "support_bank") == negative_pool
+            ]
+            if not grouped_rows:
+                continue
+            by_backbone_support_negative_pool[f"{backbone}::negatives={negative_pool}"] = _summarize(grouped_rows)
+
     metrics = {
         "mode": "analysis",
         "analysis_mode": "m3_stage_c_seed_sweep_summary",
@@ -349,6 +373,7 @@ def run_m3_stage_c_seed_sweep_summary(
         "by_backbone_support_weighting": by_backbone_support_weighting,
         "by_backbone_target_split": by_backbone_target_split,
         "by_backbone_support_bank_size": by_backbone_support_bank_size,
+        "by_backbone_support_negative_pool": by_backbone_support_negative_pool,
     }
     write_json(output_dir / "metrics.json", metrics)
     return metrics

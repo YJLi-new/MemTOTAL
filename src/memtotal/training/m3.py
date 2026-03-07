@@ -125,6 +125,16 @@ def _resolve_target_support_bank_size_spec(config: dict) -> str | int:
     return spec_text
 
 
+def _resolve_target_support_negative_pool(config: dict) -> str:
+    pool = str(config["runtime"].get("target_support_negative_pool", "support_bank"))
+    if pool not in {"support_bank", "source_plus_support_bank"}:
+        raise ValueError(
+            f"Unsupported runtime.target_support_negative_pool={pool}. "
+            "Expected one of support_bank, source_plus_support_bank."
+        )
+    return pool
+
+
 def _resolve_artifact_path(resume: str | None, expected_name: str) -> Path:
     if not resume:
         raise ValueError(f"This stage requires --resume pointing to '{expected_name}' or its parent run dir.")
@@ -546,8 +556,10 @@ def _build_stage_c_episode_states(
     target_split_policy: str,
     target_support_bank_size_spec: str | int,
     retrieval_negative_count: int,
+    target_support_negative_pool: str,
 ) -> list[dict[str, object]]:
     episode_states: list[dict[str, object]] = []
+    source_negative_examples = _flatten_domains(grouped_examples, list(manifest["source_domains"]))
     for episode_index in range(target_episode_repeats):
         episode_seed = seed + (episode_index * 16127)
         support_bank_size = _compute_target_support_bank_size(
@@ -580,6 +592,8 @@ def _build_stage_c_episode_states(
             seed=episode_seed + 7919,
         )
         support_candidate_pool = list(candidate_support_examples)
+        if target_support_negative_pool == "source_plus_support_bank":
+            support_candidate_pool.extend(source_negative_examples)
         episode_states.append(
             {
                 "episode_seed": episode_seed,
@@ -1211,6 +1225,7 @@ def run_stage_c(
     target_support_weighting = _resolve_target_support_weighting(config)
     target_split_policy = _resolve_target_split_policy(config)
     target_support_bank_size_spec = _resolve_target_support_bank_size_spec(config)
+    target_support_negative_pool = _resolve_target_support_negative_pool(config)
     runtime = MemoryRuntime(config=config, seed=seed)
     runtime.writer.load_from(writer_path)
     state = torch.load(queries_path, map_location="cpu")
@@ -1272,6 +1287,7 @@ def run_stage_c(
             target_split_policy=target_split_policy,
             target_support_bank_size_spec=target_support_bank_size_spec,
             retrieval_negative_count=retrieval_negative_count,
+            target_support_negative_pool=target_support_negative_pool,
         )
         if target_episode_policy == "aggregate_support":
             shared_runtime = copy.deepcopy(runtime)
@@ -1379,6 +1395,7 @@ def run_stage_c(
                     "target_support_bank_size": (
                         sum(int(state["target_support_bank_size"]) for state in episode_states) / len(episode_states)
                     ),
+                    "target_support_negative_pool": target_support_negative_pool,
                     "evaluated_target_episodes": len(episode_states),
                     "evaluated_query_examples": evaluated_query_examples,
                     "query_candidate_pool_size": (
@@ -1546,6 +1563,7 @@ def run_stage_c(
                 "target_support_weighting",
                 "target_split_policy",
                 "target_support_bank_size",
+                "target_support_negative_pool",
                 "evaluated_target_episodes",
                 "evaluated_query_examples",
                 "query_candidate_pool_size",
@@ -1582,6 +1600,7 @@ def run_stage_c(
             "target_support_weighting": target_support_weighting,
             "target_split_policy": target_split_policy,
             "target_support_bank_size": target_support_bank_size_spec,
+            "target_support_negative_pool": target_support_negative_pool,
             "adaptation_target": adaptation_target,
             "trainable_module": trainable_module,
             "writer_checkpoint": str((adapted_writer_path or writer_path).resolve()),
@@ -1612,6 +1631,7 @@ def run_stage_c(
         "target_support_weighting": target_support_weighting,
         "target_split_policy": target_split_policy,
         "target_support_bank_size": target_support_bank_size_spec,
+        "target_support_negative_pool": target_support_negative_pool,
         "support_updates": support_updates,
         "support_examples_touched": support_examples_touched,
         "query_examples_touched": query_examples_touched,
@@ -1662,6 +1682,7 @@ def run_stage_c(
         "target_support_weighting": target_support_weighting,
         "target_split_policy": target_split_policy,
         "target_support_bank_size": target_support_bank_size_spec,
+        "target_support_negative_pool": target_support_negative_pool,
         "mean_support_grad_norm": adapt_cost["mean_support_grad_norm"],
         "max_support_grad_norm": adapt_cost["max_support_grad_norm"],
         "mean_support_update_max_abs": adapt_cost["mean_support_update_max_abs"],
