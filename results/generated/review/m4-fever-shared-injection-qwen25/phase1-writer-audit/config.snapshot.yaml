@@ -1,0 +1,84 @@
+task:
+  name: fever_real_screen248
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: real_screen248
+  pilot_split: screen248
+  dataset_path: data/benchmarks/pilots/fever/screen-eval248.jsonl
+  support_dataset_path: data/benchmarks/pilots/fever/pilot-support8.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/m4_fever_qwen25_phase1_writer_audit.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/exp/m4_fever_qwen25_phase01_common.yaml
+method:
+  name: general-writer-adaptable-reader-transformer-bootstrap
+  embed_dim: auto
+  writer:
+    arch: transformer
+    memory_slots: 8
+    hidden_dim: null
+    num_heads: 4
+    transformer_layers: 2
+    dropout: 0.0
+  reader:
+    num_queries: 4
+    gating_mode: false
+    query_residual_scale: 1.0
+    num_heads: 4
+    condition_on_context: true
+    dropout: 0.0
+    conditioning:
+      domain_key: domain
+      include_task_name: true
+  fuser:
+    arch: resampler
+    short_slots: 2
+    hidden_dim: null
+    num_heads: 4
+    dropout: 0.0
+  injector:
+    mode: prefix
+    enabled: true
+    position: segment
+  segmenter:
+    mode: delimiter
+    delimiter: '||'
+experiment:
+  name: m4_fever_qwen25_phase1_writer_audit
+  stage: M4-gate-recovery
+  method_variant: fever-phase1-writer-audit
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+runtime:
+  training_stage: shared_injection_pilot
+  shared_injection_arm: base_only
+  writer_memory_control: real
+  pilot_arm_alias: A
+  pilot_prompt_variant: inline_short_labels
+  pilot_support_serialization: flat_raw8
+  pilot_support_examples: 8
+  pilot_train_steps: 64
+  pilot_writer_learning_rate: 0.002
+  pilot_projector_learning_rate: 0.01
+  pilot_projector_warmup_steps: 16
+  pilot_snapshot_steps:
+  - 0
+  - 16
+  - 32
+  - 64
+  stage_c_choice_margin: 0.1
+  device: cuda
+  analysis_mode: m4_writer_information_audit
+  probe_seed: 8201
+  audit_label_macro_f1_min: 0.4
+  audit_label_macro_f1_gap: 0.05
+  audit_binary_auroc_min: 0.6
+  audit_binary_auroc_gap: 0.05

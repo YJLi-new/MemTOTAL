@@ -239,13 +239,12 @@
   - 不上 KL
   - 不做 candidate-conditioned / pair-conditioned injection
 - 当前 fresh `FEVER` 结果显示这条线还没走到真正 injection 训练：
-  - `pilot-A-base-only = 0.25`
-  - `pilot-T-teacher-text = 0.25`
-  - `teacher_margin` 明显差于 `base_margin`
-  - `writer-audit` 当前也未通过 `phase1_gate`
+  - `Phase 0` 在 `screen248` 上失败，`A_winner` 与 `T_winner` 都塌缩到全预测 `SUPPORTS`
+  - `Phase 1 writer audit` 已给出正信号：`label_probe_passed=true`、`semantic_probe_passed=true`
+  - `Phase 2` 真实 injection 因 `phase0_gate_passed=false` 被有意跳过，但 dry-run 技术链路已打通
 - 因而，当前 immediate blocker 不是“如何继续调 injected prefix”，而是：
   - support bank 显式序列化 / prompt 还没让 frozen qwen 受益
-  - 当前 writer family 还没在 `FEVER` 上产出足够可读的任务信息
+  - 当前 writer family 已经开始显露可读任务信息，但这些信息还没被 prompt/support surface 正确解锁
 
 ## M3 Failure Checks
 

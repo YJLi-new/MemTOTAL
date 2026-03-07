@@ -13,54 +13,41 @@ export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
+mkdir -p "${RUN_ROOT}" "${RESULT_ROOT}"
+
 ./scripts/prepare_local_qwen25_model.sh \
   "Qwen/Qwen2.5-1.5B-Instruct" \
   "/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct" \
   "${HF_HOME}"
 
-./scripts/run_train.sh \
-  --config configs/exp/m4_fever_qwen25_base_only.yaml \
+./scripts/run_analysis.sh \
+  --config configs/exp/m4_fever_qwen25_phase0_gate_sweep.yaml \
   --seed "${BASE_SEED}" \
-  --output_dir "${RUN_ROOT}/pilot-A-base-only"
-
-./scripts/run_train.sh \
-  --config configs/exp/m4_fever_qwen25_teacher_text.yaml \
-  --seed "$((BASE_SEED + 2))" \
-  --output_dir "${RUN_ROOT}/pilot-T-teacher-text"
+  --output_dir "${RESULT_ROOT}/phase0-gate-sweep"
 
 ./scripts/run_analysis.sh \
-  --config configs/exp/m4_fever_qwen25_writer_audit.yaml \
+  --config configs/exp/m4_fever_qwen25_phase1_writer_audit.yaml \
   --seed "$((BASE_SEED + 4))" \
-  --output_dir "${RESULT_ROOT}/writer-audit" \
-  --input_root "${RUN_ROOT}" \
+  --output_dir "${RESULT_ROOT}/phase1-writer-audit" \
+  --input_root "${RESULT_ROOT}/phase0-gate-sweep" \
   --resume "${RESUME_STAGE_B_ROOT}"
 
-PHASE1_PASSED="$(python -c 'import json,sys; print("1" if json.loads(open(sys.argv[1]).read()).get("phase1_gate_passed") else "0")' "${RESULT_ROOT}/writer-audit/metrics.json")"
+PHASE0_PASSED="$(python -c 'import json,sys; print("1" if json.loads(open(sys.argv[1]).read()).get("phase0_gate_passed") else "0")' "${RESULT_ROOT}/phase0-gate-sweep/metrics.json")"
+PHASE1_PASSED="$(python -c 'import json,sys; print("1" if json.loads(open(sys.argv[1]).read()).get("phase1_gate_passed") else "0")' "${RESULT_ROOT}/phase1-writer-audit/metrics.json")"
 
-if [[ "${PHASE1_PASSED}" == "1" ]]; then
-  ./scripts/run_train.sh \
-    --config configs/exp/m4_fever_qwen25_injected_real.yaml \
-    --seed "$((BASE_SEED + 10))" \
-    --output_dir "${RUN_ROOT}/pilot-I-real" \
-    --resume "${RESUME_STAGE_B_ROOT}"
-
-  ./scripts/run_train.sh \
-    --config configs/exp/m4_fever_qwen25_injected_shuffle.yaml \
-    --seed "$((BASE_SEED + 12))" \
-    --output_dir "${RUN_ROOT}/pilot-I-shuffle" \
-    --resume "${RESUME_STAGE_B_ROOT}"
-
-  ./scripts/run_train.sh \
-    --config configs/exp/m4_fever_qwen25_injected_zero.yaml \
-    --seed "$((BASE_SEED + 14))" \
-    --output_dir "${RUN_ROOT}/pilot-I-zero" \
-    --resume "${RESUME_STAGE_B_ROOT}"
+if [[ "${PHASE0_PASSED}" == "1" && "${PHASE1_PASSED}" == "1" ]]; then
+  python scripts/run_m4_selected_shared_injection_suite.py \
+    --config configs/exp/m4_fever_qwen25_phase2_common.yaml \
+    --phase0_metrics "${RESULT_ROOT}/phase0-gate-sweep/metrics.json" \
+    --resume "${RESUME_STAGE_B_ROOT}" \
+    --output_root "${RUN_ROOT}/phase2-selected" \
+    --seed "$((BASE_SEED + 20))"
 
   ./scripts/run_analysis.sh \
-    --config configs/exp/m4_fever_qwen25_shared_injection_compare.yaml \
-    --seed "$((BASE_SEED + 16))" \
-    --output_dir "${RESULT_ROOT}/compare" \
-    --input_root "${RUN_ROOT}"
+    --config configs/exp/m4_fever_qwen25_phase2_compare.yaml \
+    --seed "$((BASE_SEED + 24))" \
+    --output_dir "${RESULT_ROOT}/phase2-compare" \
+    --input_root "${RUN_ROOT}/phase2-selected"
 fi
 
 mkdir -p runs/review results/generated/review
@@ -71,4 +58,4 @@ rsync -a --exclude='*.pt' --exclude='*.ckpt' \
 
 ./scripts/publish_review_artifacts.sh
 
-echo "m4 FEVER shared injection complete (phase1_gate_passed=${PHASE1_PASSED})"
+echo "m4 FEVER shared injection recovery complete (phase0=${PHASE0_PASSED}, phase1=${PHASE1_PASSED})"

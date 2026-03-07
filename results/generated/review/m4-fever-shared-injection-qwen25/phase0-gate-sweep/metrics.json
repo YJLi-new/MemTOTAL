@@ -1,0 +1,38 @@
+{
+  "a_winner": {
+    "accuracy": 0.29435483870967744,
+    "arm_type": "A",
+    "dominant_label_fraction": 1.0,
+    "label_recall_by_class": {
+      "NOT_ENOUGH_INFO": 0.0,
+      "REFUTES": 0.0,
+      "SUPPORTS": 1.0
+    },
+    "macro_f1": 0.15160955347871236,
+    "mean_margin": -0.007102014083630498,
+    "prompt_variant": "inline_short_labels",
+    "support_serialization_variant": "none",
+    "valid_prompt_surface": false
+  },
+  "analysis_mode": "m4_phase0_gate_sweep",
+  "phase0_gate_passed": false,
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v3/phase0-gate-sweep/report.md",
+  "selected_prompt_variant": "inline_short_labels",
+  "selected_support_serialization": "flat_raw8",
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v3/phase0-gate-sweep/phase0_summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v3/phase0-gate-sweep/phase0_summary.svg",
+  "t_winner": {
+    "accuracy": 0.29435483870967744,
+    "arm_type": "T",
+    "dominant_label_fraction": 1.0,
+    "label_recall_by_class": {
+      "NOT_ENOUGH_INFO": 0.0,
+      "REFUTES": 0.0,
+      "SUPPORTS": 1.0
+    },
+    "macro_f1": 0.15160955347871236,
+    "mean_margin": -0.13504368164637615,
+    "prompt_variant": "inline_short_labels",
+    "support_serialization_variant": "flat_raw8"
+  }
+}

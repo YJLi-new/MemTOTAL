@@ -15,6 +15,19 @@ from memtotal.training.m3 import _resolve_artifact_path
 from memtotal.utils.io import write_json, write_jsonl
 from memtotal.utils.profiling import ProfileTracker
 
+FEVER_LABEL_ORDER = ("SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO")
+FEVER_PROMPT_VARIANTS = (
+    "inline_short_labels",
+    "answer_slot_labels",
+    "verbalized_decisions",
+)
+FEVER_SUPPORT_SERIALIZATION_VARIANTS = (
+    "flat_raw8",
+    "example_blocks_raw8",
+    "triad_curated6",
+)
+FEVER_TRIAD_NEI_EVIDENCE = "insufficient evidence available"
+
 
 @dataclass(frozen=True)
 class SharedInjectionExampleCache:
@@ -23,6 +36,7 @@ class SharedInjectionExampleCache:
     candidate_texts: list[str]
     gold_index: int
     prompt_text: str
+    prompt_variant: str
 
 
 class LatentPrefixProjector(nn.Module):
@@ -86,22 +100,201 @@ def _resolve_pilot_arm_alias(config: dict[str, Any], *, arm: str, writer_memory_
     }[writer_memory_control]
 
 
-def _resolve_prompt_text(example: dict[str, Any]) -> str:
-    prompt = str(example.get("segment", "")).strip()
-    if prompt:
-        return prompt
-    claim = str(example.get("claim", "")).strip()
-    evidence = str(example.get("evidence", "")).strip()
-    choices = example.get("choices", [])
-    labels_block = " | ".join(f"{choice['label']}: {choice['text']}" for choice in choices)
-    return f"Claim: {claim} || Evidence: {evidence} || Labels: {labels_block} || Decide the correct label."
+def _resolve_prompt_variant(config: dict[str, Any]) -> str:
+    prompt_variant = str(config["runtime"].get("pilot_prompt_variant", "inline_short_labels"))
+    if prompt_variant not in FEVER_PROMPT_VARIANTS:
+        raise ValueError(
+            f"Unsupported runtime.pilot_prompt_variant={prompt_variant}. "
+            f"Expected one of {', '.join(FEVER_PROMPT_VARIANTS)}."
+        )
+    return prompt_variant
 
 
-def _support_example_to_text(example: dict[str, Any]) -> str:
+def _resolve_support_serialization_variant(config: dict[str, Any]) -> str:
+    support_variant = str(config["runtime"].get("pilot_support_serialization", "flat_raw8"))
+    if support_variant not in FEVER_SUPPORT_SERIALIZATION_VARIANTS:
+        raise ValueError(
+            f"Unsupported runtime.pilot_support_serialization={support_variant}. "
+            f"Expected one of {', '.join(FEVER_SUPPORT_SERIALIZATION_VARIANTS)}."
+        )
+    return support_variant
+
+
+def _resolve_snapshot_steps(config: dict[str, Any], *, train_steps: int, warmup_steps: int) -> list[int]:
+    explicit = config["runtime"].get("pilot_snapshot_steps")
+    if explicit is not None:
+        values = [int(step) for step in explicit]
+    else:
+        values = [0, warmup_steps, max(warmup_steps, train_steps // 2), train_steps]
+    selected = sorted({step for step in values if 0 <= step <= train_steps})
+    if 0 not in selected:
+        selected.insert(0, 0)
+    if train_steps not in selected:
+        selected.append(train_steps)
+    return selected
+
+
+def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    labels = [str(row["gold_label"]) for row in rows]
+    unique_labels = sorted(set(labels))
+    total = max(1, len(rows))
+    accuracy = sum(int(bool(row["predicted_correct"])) for row in rows) / total
+    predicted_counts: dict[str, int] = {label: 0 for label in unique_labels}
+    gold_counts: dict[str, int] = {label: 0 for label in unique_labels}
+    tp_counts: dict[str, int] = {label: 0 for label in unique_labels}
+    for row in rows:
+        gold = str(row["gold_label"])
+        predicted = str(row["predicted_label"])
+        gold_counts[gold] = gold_counts.get(gold, 0) + 1
+        predicted_counts[predicted] = predicted_counts.get(predicted, 0) + 1
+        if gold == predicted:
+            tp_counts[gold] = tp_counts.get(gold, 0) + 1
+    f1_values: list[float] = []
+    recall_by_class: dict[str, float] = {}
+    for label in unique_labels:
+        tp = tp_counts.get(label, 0)
+        fp = predicted_counts.get(label, 0) - tp
+        fn = gold_counts.get(label, 0) - tp
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        if precision + recall == 0.0:
+            f1 = 0.0
+        else:
+            f1 = 2.0 * precision * recall / (precision + recall)
+        f1_values.append(f1)
+        recall_by_class[label] = recall
+    dominant_label_fraction = max(predicted_counts.values(), default=0) / total
+    mean_margin = sum(float(row["final_margin"]) for row in rows) / total
+    return {
+        "accuracy": float(accuracy),
+        "macro_f1": float(sum(f1_values) / max(1, len(f1_values))),
+        "dominant_label_fraction": float(dominant_label_fraction),
+        "label_recall_by_class": recall_by_class,
+        "mean_margin": float(mean_margin),
+    }
+
+
+def _fever_candidate_texts(prompt_variant: str) -> tuple[list[str], list[str]]:
+    labels = list(FEVER_LABEL_ORDER)
+    if prompt_variant == "inline_short_labels":
+        return labels, ["Supports", "Refutes", "Not enough info"]
+    if prompt_variant == "answer_slot_labels":
+        return labels, [" SUPPORTS", " REFUTES", " NOT_ENOUGH_INFO"]
+    if prompt_variant == "verbalized_decisions":
+        return labels, [
+            " The evidence supports the claim.",
+            " The evidence refutes the claim.",
+            " There is not enough information in the evidence to verify the claim.",
+        ]
+    raise ValueError(f"Unsupported prompt_variant={prompt_variant}.")
+
+
+def _resolve_prompt_text(example: dict[str, Any], *, prompt_variant: str) -> str:
     claim = str(example.get("claim", "")).strip()
     evidence = str(example.get("evidence", "")).strip()
-    label = str(example.get("label", "")).strip()
-    return f"Claim: {claim} || Evidence: {evidence} || Label: {label}"
+    if prompt_variant == "inline_short_labels":
+        return (
+            f"Claim: {claim} || Evidence: {evidence} || "
+            "Labels: SUPPORTS: Supports | REFUTES: Refutes | NOT_ENOUGH_INFO: Not enough info || "
+            "Decide the correct label."
+        )
+    if prompt_variant == "answer_slot_labels":
+        return (
+            f"Claim: {claim}\n"
+            f"Evidence: {evidence}\n"
+            "Question: Does the evidence support, refute, or not give enough info for the claim?\n"
+            "Answer:"
+        )
+    if prompt_variant == "verbalized_decisions":
+        return f"Claim: {claim}\nEvidence: {evidence}\nDecision:"
+    raise ValueError(f"Unsupported prompt_variant={prompt_variant}.")
+
+
+def _candidate_payload(example: dict[str, Any], *, prompt_variant: str) -> tuple[list[str], list[str], int]:
+    gold_label = str(example["label"])
+    candidate_labels, candidate_texts = _fever_candidate_texts(prompt_variant)
+    try:
+        gold_index = candidate_labels.index(gold_label)
+    except ValueError as exc:
+        raise ValueError(f"Gold label {gold_label!r} missing from FEVER labels.") from exc
+    return candidate_labels, candidate_texts, gold_index
+
+
+def _build_example_caches(
+    examples: list[dict[str, Any]],
+    *,
+    prompt_variant: str,
+) -> list[SharedInjectionExampleCache]:
+    caches: list[SharedInjectionExampleCache] = []
+    for example in examples:
+        candidate_labels, candidate_texts, gold_index = _candidate_payload(
+            example,
+            prompt_variant=prompt_variant,
+        )
+        caches.append(
+            SharedInjectionExampleCache(
+                example=example,
+                candidate_labels=candidate_labels,
+                candidate_texts=candidate_texts,
+                gold_index=gold_index,
+                prompt_text=_resolve_prompt_text(example, prompt_variant=prompt_variant),
+                prompt_variant=prompt_variant,
+            )
+        )
+    return caches
+
+
+def _serialize_support_row(
+    row: dict[str, Any],
+    *,
+    support_index: int,
+    support_serialization_variant: str,
+) -> str:
+    claim = str(row.get("claim", "")).strip()
+    evidence = str(row.get("evidence", "")).strip()
+    label = str(row.get("label", "")).strip()
+    if support_serialization_variant == "flat_raw8":
+        return f"Support {support_index}: Claim: {claim} || Evidence: {evidence} || Label: {label}"
+    if support_serialization_variant in {"example_blocks_raw8", "triad_curated6"}:
+        return (
+            f"Example {support_index}\n"
+            f"Claim: {claim}\n"
+            f"Evidence: {evidence}\n"
+            f"Answer: {label}"
+        )
+    raise ValueError(
+        f"Unsupported support_serialization_variant={support_serialization_variant}."
+    )
+
+
+def _select_support_rows_for_variant(
+    support_examples: list[dict[str, Any]],
+    *,
+    support_serialization_variant: str,
+) -> list[dict[str, Any]]:
+    if support_serialization_variant in {"flat_raw8", "example_blocks_raw8"}:
+        return [dict(example) for example in support_examples]
+    if support_serialization_variant != "triad_curated6":
+        raise ValueError(
+            f"Unsupported support_serialization_variant={support_serialization_variant}."
+        )
+    by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for example in support_examples:
+        label = str(example.get("label", "")).strip()
+        if label in by_label:
+            by_label[label].append(dict(example))
+    selected: list[dict[str, Any]] = []
+    for label in FEVER_LABEL_ORDER:
+        rows = by_label[label][:2]
+        if len(rows) < 2:
+            raise ValueError(
+                f"triad_curated6 requires at least 2 rows for label {label}, got {len(rows)}."
+            )
+        for row in rows:
+            if label == "NOT_ENOUGH_INFO":
+                row["evidence"] = FEVER_TRIAD_NEI_EVIDENCE
+            selected.append(row)
+    return selected
 
 
 def _build_support_text_block(
@@ -109,77 +302,42 @@ def _build_support_text_block(
     *,
     memory_control: str,
     example_lookup: dict[str, dict[str, Any]],
+    support_serialization_variant: str,
 ) -> str:
     if memory_control == "zero":
         return ""
+    selected_rows = _select_support_rows_for_variant(
+        support_examples,
+        support_serialization_variant=support_serialization_variant,
+    )
     rows: list[dict[str, Any]] = []
     if memory_control == "real":
-        rows = [dict(example) for example in support_examples]
+        rows = [dict(example) for example in selected_rows]
     else:
-        for example in support_examples:
+        for example in selected_rows:
             shuffled_id = str(example.get("shuffled_memory_example_id", "")).strip()
             if not shuffled_id:
                 raise ValueError(
                     f"Support example {example['id']} is missing shuffled_memory_example_id for shuffled control."
                 )
-            shuffled_example = example_lookup[shuffled_id]
-            rows.append(
-                {
-                    **example,
-                    "evidence": shuffled_example.get("evidence", ""),
-                    "label": shuffled_example.get("label", ""),
-                }
-            )
-    return " || ".join(
-        f"Support {index + 1}: {_support_example_to_text(row)}"
+            shuffled_example = dict(example_lookup[shuffled_id])
+            if support_serialization_variant == "triad_curated6" and str(shuffled_example.get("label", "")) == "NOT_ENOUGH_INFO":
+                shuffled_example["evidence"] = FEVER_TRIAD_NEI_EVIDENCE
+            rows.append(shuffled_example)
+    return "\n\n".join(
+        _serialize_support_row(
+            row,
+            support_index=index + 1,
+            support_serialization_variant=support_serialization_variant,
+        )
         for index, row in enumerate(rows)
     )
-
-
-def _candidate_payload(example: dict[str, Any]) -> tuple[list[str], list[str], int]:
-    choices = example.get("choices", [])
-    if not choices:
-        raise ValueError("Shared injection pilot currently supports only multiple-choice tasks.")
-    candidate_labels = [str(choice["label"]) for choice in choices]
-    candidate_texts = [str(choice["text"]) for choice in choices]
-    gold_label = str(example["label"])
-    try:
-        gold_index = candidate_labels.index(gold_label)
-    except ValueError as exc:
-        raise ValueError(f"Gold label {gold_label!r} missing from candidate choices.") from exc
-    return candidate_labels, candidate_texts, gold_index
-
-
-def _build_example_caches(examples: list[dict[str, Any]]) -> list[SharedInjectionExampleCache]:
-    caches: list[SharedInjectionExampleCache] = []
-    for example in examples:
-        candidate_labels, candidate_texts, gold_index = _candidate_payload(example)
-        caches.append(
-            SharedInjectionExampleCache(
-                example=example,
-                candidate_labels=candidate_labels,
-                candidate_texts=candidate_texts,
-                gold_index=gold_index,
-                prompt_text=_resolve_prompt_text(example),
-            )
-        )
-    return caches
-
-
-def _strongest_competitor_index(scores: torch.Tensor, gold_index: int) -> int:
-    competitor_indices = [index for index in range(scores.shape[0]) if index != gold_index]
-    return max(competitor_indices, key=lambda index: float(scores[index].item()))
-
-
-def _compute_margin(scores: torch.Tensor, gold_index: int) -> tuple[float, int]:
-    competitor_index = _strongest_competitor_index(scores, gold_index)
-    return float(scores[gold_index].item() - scores[competitor_index].item()), competitor_index
 
 
 def _serialize_teacher_prompt(prompt_text: str, support_text_block: str) -> str:
     if not support_text_block:
         return prompt_text
-    return f"Support bank: {support_text_block} || {prompt_text}"
+    return f"Support bank:\n{support_text_block}\n\n{prompt_text}"
 
 
 class SharedInjectionPilotRuntime(nn.Module):
@@ -257,6 +415,16 @@ class SharedInjectionPilotRuntime(nn.Module):
         )
 
 
+def _strongest_competitor_index(scores: torch.Tensor, gold_index: int) -> int:
+    competitor_indices = [index for index in range(scores.shape[0]) if index != gold_index]
+    return max(competitor_indices, key=lambda index: float(scores[index].item()))
+
+
+def _compute_margin(scores: torch.Tensor, gold_index: int) -> tuple[float, int]:
+    competitor_index = _strongest_competitor_index(scores, gold_index)
+    return float(scores[gold_index].item() - scores[competitor_index].item()), competitor_index
+
+
 def _choice_task_loss(scores: torch.Tensor, gold_index: int, *, margin_value: float) -> torch.Tensor:
     ce_loss = F.cross_entropy(
         scores.unsqueeze(0),
@@ -280,6 +448,8 @@ def _prediction_row(
     arm_alias: str,
     arm: str,
     writer_memory_control: str,
+    prompt_variant: str,
+    support_serialization_variant: str,
     support_text_block: str,
     example_cache: SharedInjectionExampleCache,
     scores: torch.Tensor,
@@ -292,6 +462,8 @@ def _prediction_row(
         "arm_alias": arm_alias,
         "arm": arm,
         "writer_memory_control": writer_memory_control,
+        "prompt_variant": prompt_variant,
+        "support_serialization_variant": support_serialization_variant,
         "support_text_block_chars": len(support_text_block),
         "prefix_tokens": 0 if prefix_embeddings is None else int(prefix_embeddings.shape[1]),
         "prefix_l2": 0.0 if prefix_embeddings is None else float(prefix_embeddings.norm().item()),
@@ -308,6 +480,50 @@ def _prediction_row(
     }
 
 
+def _evaluate_examples(
+    *,
+    runtime: SharedInjectionPilotRuntime,
+    eval_examples: list[SharedInjectionExampleCache],
+    arm_alias: str,
+    arm: str,
+    writer_memory_control: str,
+    prompt_variant: str,
+    support_serialization_variant: str,
+    support_text_block: str,
+    teacher_support_text_block: str,
+    prefix_embeddings: torch.Tensor | None,
+    profiler: ProfileTracker | None,
+) -> list[dict[str, Any]]:
+    prefix_embeddings_cpu = None if prefix_embeddings is None else prefix_embeddings.detach().cpu()
+    active_support_text_block = teacher_support_text_block if arm == "teacher_text" else support_text_block
+    case_rows: list[dict[str, Any]] = []
+    for example_cache in eval_examples:
+        if profiler is not None:
+            profiler.add_example()
+            profiler.add_tokens(runtime.backbone.count_tokens(example_cache.prompt_text))
+            for candidate_text in example_cache.candidate_texts:
+                profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
+        scores = runtime.score_example(
+            example_cache,
+            support_text_block=teacher_support_text_block,
+            prefix_embeddings=prefix_embeddings,
+        ).detach().to(dtype=torch.float32).cpu()
+        case_rows.append(
+            _prediction_row(
+                arm_alias=arm_alias,
+                arm=arm,
+                writer_memory_control=writer_memory_control,
+                prompt_variant=prompt_variant,
+                support_serialization_variant=support_serialization_variant,
+                support_text_block=active_support_text_block,
+                example_cache=example_cache,
+                scores=scores,
+                prefix_embeddings=prefix_embeddings_cpu,
+            )
+        )
+    return case_rows
+
+
 def run_shared_injection_pilot(
     *,
     config: dict[str, Any],
@@ -319,38 +535,46 @@ def run_shared_injection_pilot(
     arm = _resolve_shared_injection_arm(config)
     writer_memory_control = _resolve_writer_memory_control(config)
     arm_alias = _resolve_pilot_arm_alias(config, arm=arm, writer_memory_control=writer_memory_control)
+    prompt_variant = _resolve_prompt_variant(config)
+    support_serialization_variant = _resolve_support_serialization_variant(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     support_limit = max(0, int(config["runtime"].get("pilot_support_examples", 8)))
-    learning_rate = float(config["runtime"].get("pilot_learning_rate", 0.05))
-    train_steps = int(config["runtime"].get("pilot_train_steps", 12))
-    projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 2))
+    train_steps = int(config["runtime"].get("pilot_train_steps", 64))
+    projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 16))
+    writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 0.002))
+    projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 0.01))
     choice_margin = float(config["runtime"].get("stage_c_choice_margin", 0.1))
     if arm in {"base_only", "teacher_text"} or writer_memory_control == "zero":
         train_steps = 0
         projector_warmup_steps = 0
     if dry_run:
         train_steps = min(train_steps, 2)
+        projector_warmup_steps = min(projector_warmup_steps, train_steps)
 
-    support_examples = _build_example_caches(_load_task_dataset_with_path(config, support_dataset_path))
-    eval_examples = _build_example_caches(load_task_dataset(config))
+    support_examples = _load_task_dataset_with_path(config, support_dataset_path)
+    eval_examples = load_task_dataset(config)
     if support_limit:
         support_examples = support_examples[: min(support_limit, len(support_examples))]
     if dry_run:
-        eval_examples = eval_examples[: min(4, len(eval_examples))]
+        eval_examples = eval_examples[: min(12, len(eval_examples))]
 
+    eval_caches = _build_example_caches(eval_examples, prompt_variant=prompt_variant)
+    support_caches = _build_example_caches(support_examples, prompt_variant=prompt_variant)
     example_lookup = {
         str(cache.example["id"]): cache.example
-        for cache in [*support_examples, *eval_examples]
+        for cache in [*support_caches, *eval_caches]
     }
     support_text_block = _build_support_text_block(
-        [cache.example for cache in support_examples],
+        [cache.example for cache in support_caches],
         memory_control=writer_memory_control if arm == "injected" else "real",
         example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
     )
     teacher_support_text_block = _build_support_text_block(
-        [cache.example for cache in support_examples],
+        [cache.example for cache in support_caches],
         memory_control="real",
         example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
     )
 
     runtime = SharedInjectionPilotRuntime(
@@ -368,24 +592,58 @@ def run_shared_injection_pilot(
         event_name="train",
     )
     train_events: list[dict[str, Any]] = []
+    snapshot_steps = _resolve_snapshot_steps(
+        config,
+        train_steps=train_steps,
+        warmup_steps=projector_warmup_steps,
+    )
+    snapshot_metrics: list[dict[str, Any]] = []
+
+    def evaluate_snapshot(step: int) -> None:
+        prefix_embeddings = None
+        if arm == "injected":
+            prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
+        snapshot_rows = _evaluate_examples(
+            runtime=runtime,
+            eval_examples=eval_caches,
+            arm_alias=arm_alias,
+            arm=arm,
+            writer_memory_control=writer_memory_control,
+            prompt_variant=prompt_variant,
+            support_serialization_variant=support_serialization_variant,
+            support_text_block=support_text_block,
+            teacher_support_text_block=teacher_support_text_block,
+            prefix_embeddings=prefix_embeddings,
+            profiler=None,
+        )
+        metrics = _classification_metrics_from_rows(snapshot_rows)
+        snapshot_metrics.append(
+            {
+                "step": step,
+                "accuracy": metrics["accuracy"],
+                "macro_f1": metrics["macro_f1"],
+                "mean_margin": metrics["mean_margin"],
+                "dominant_label_fraction": metrics["dominant_label_fraction"],
+            }
+        )
+
+    if 0 in snapshot_steps:
+        evaluate_snapshot(0)
+
     if arm == "injected" and writer_memory_control != "zero":
         runtime.writer.train()
         runtime.prefix_projector.train()
         runtime.set_writer_trainable(False)
-        warmup_optimizer = torch.optim.Adam(runtime.prefix_projector.parameters(), lr=learning_rate)
-        joint_optimizer = torch.optim.Adam(
-            [*runtime.writer.parameters(), *runtime.prefix_projector.parameters()],
-            lr=learning_rate,
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": list(runtime.prefix_projector.parameters()), "lr": projector_learning_rate},
+                {"params": list(runtime.writer.parameters()), "lr": writer_learning_rate},
+            ]
         )
         for step in range(train_steps):
-            projector_warmup = step < projector_warmup_steps
-            if projector_warmup:
-                runtime.set_writer_trainable(False)
-                optimizer = warmup_optimizer
-            else:
-                runtime.set_writer_trainable(True)
-                optimizer = joint_optimizer
-            support_example = support_examples[step % len(support_examples)]
+            writer_frozen = step < projector_warmup_steps
+            runtime.set_writer_trainable(not writer_frozen)
+            support_example = support_caches[step % len(support_caches)]
             optimizer.zero_grad(set_to_none=True)
             prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
             scores = runtime.score_example(
@@ -402,12 +660,18 @@ def run_shared_injection_pilot(
                 profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
             train_events.append(
                 {
-                    "step": step,
+                    "step": step + 1,
                     "loss": float(loss.item()),
                     "support_example_id": str(support_example.example["id"]),
-                    "projector_warmup": projector_warmup,
+                    "writer_frozen": writer_frozen,
                 }
             )
+            if (step + 1) in snapshot_steps and (step + 1) != 0:
+                runtime.writer.eval()
+                runtime.prefix_projector.eval()
+                evaluate_snapshot(step + 1)
+                runtime.writer.train()
+                runtime.prefix_projector.train()
         runtime.writer.eval()
         runtime.prefix_projector.eval()
         runtime.set_writer_trainable(True)
@@ -415,35 +679,22 @@ def run_shared_injection_pilot(
     prefix_embeddings = None
     if arm == "injected":
         prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
-    prefix_embeddings_cpu = None if prefix_embeddings is None else prefix_embeddings.detach().cpu()
-
-    case_rows: list[dict[str, Any]] = []
-    active_support_text_block = teacher_support_text_block if arm == "teacher_text" else support_text_block
-    for example_cache in eval_examples:
-        profiler.add_example()
-        profiler.add_tokens(runtime.backbone.count_tokens(example_cache.prompt_text))
-        for candidate_text in example_cache.candidate_texts:
-            profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
-        scores = runtime.score_example(
-            example_cache,
-            support_text_block=teacher_support_text_block,
-            prefix_embeddings=prefix_embeddings,
-        ).detach().to(dtype=torch.float32).cpu()
-        case_rows.append(
-            _prediction_row(
-                arm_alias=arm_alias,
-                arm=arm,
-                writer_memory_control=writer_memory_control,
-                support_text_block=active_support_text_block,
-                example_cache=example_cache,
-                scores=scores,
-                prefix_embeddings=prefix_embeddings_cpu,
-            )
-        )
+    case_rows = _evaluate_examples(
+        runtime=runtime,
+        eval_examples=eval_caches,
+        arm_alias=arm_alias,
+        arm=arm,
+        writer_memory_control=writer_memory_control,
+        prompt_variant=prompt_variant,
+        support_serialization_variant=support_serialization_variant,
+        support_text_block=support_text_block,
+        teacher_support_text_block=teacher_support_text_block,
+        prefix_embeddings=prefix_embeddings,
+        profiler=profiler,
+    )
 
     profile_metrics = profiler.finalize()
-    task_score = sum(float(row["task_score"]) for row in case_rows) / max(1, len(case_rows))
-    mean_margin = sum(float(row["final_margin"]) for row in case_rows) / max(1, len(case_rows))
+    class_metrics = _classification_metrics_from_rows(case_rows)
     checkpoint_path = output_dir / "checkpoint.pt"
     if arm == "injected":
         torch.save(
@@ -456,6 +707,8 @@ def run_shared_injection_pilot(
                 "writer_memory_control": writer_memory_control,
                 "support_dataset_path": str(Path(support_dataset_path).resolve()),
                 "support_text_block": support_text_block,
+                "prompt_variant": prompt_variant,
+                "support_serialization_variant": support_serialization_variant,
             },
             checkpoint_path,
         )
@@ -468,29 +721,37 @@ def run_shared_injection_pilot(
         "pilot_arm_alias": arm_alias,
         "shared_injection_arm": arm,
         "writer_memory_control": writer_memory_control,
+        "prompt_variant": prompt_variant,
+        "support_serialization_variant": support_serialization_variant,
         "task_name": config["task"]["name"],
         "benchmark_id": config["task"].get("benchmark_id"),
         "pilot_split": str(config["task"].get("pilot_split", config["task"].get("smoke_subset", ""))),
         "support_dataset_path": str(Path(support_dataset_path).resolve()),
         "eval_dataset_path": str(Path(config["task"]["dataset_path"]).resolve()),
-        "support_examples": len(support_examples),
-        "eval_examples": len(eval_examples),
+        "support_examples": len(support_caches),
+        "eval_examples": len(eval_caches),
         "teacher_text_block_chars": len(teacher_support_text_block),
         "support_text_block_chars": len(support_text_block),
         "task_metric_name": str(config["task"].get("metric_name", "accuracy")),
-        "best_adapt_task_score": float(task_score),
-        "best_adapt_task_margin": float(mean_margin),
+        "best_adapt_task_score": float(class_metrics["accuracy"]),
+        "best_adapt_macro_f1": float(class_metrics["macro_f1"]),
+        "best_adapt_task_margin": float(class_metrics["mean_margin"]),
+        "dominant_label_fraction": float(class_metrics["dominant_label_fraction"]),
+        "label_recall_by_class": class_metrics["label_recall_by_class"],
         "best_adapt_step": 0,
         "task_case_dump_rows": len(case_rows),
         "task_case_dump_path": str(task_case_dump_path.resolve()),
         "pilot_train_steps": train_steps,
-        "pilot_learning_rate": learning_rate,
+        "pilot_writer_learning_rate": writer_learning_rate,
+        "pilot_projector_learning_rate": projector_learning_rate,
         "pilot_projector_warmup_steps": projector_warmup_steps,
+        "pilot_snapshot_steps": snapshot_steps,
+        "snapshot_metrics": snapshot_metrics,
         "stage_c_choice_margin": choice_margin,
         "train_final_loss": train_events[-1]["loss"] if train_events else None,
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         **profile_metrics,
     }
     write_json(output_dir / "metrics.json", metrics)
-    write_json(output_dir / "train_events.json", {"events": train_events})
+    write_json(output_dir / "train_events.json", {"events": train_events, "snapshots": snapshot_metrics})
     return metrics

@@ -13,7 +13,18 @@ from memtotal.analysis.reporting import write_sanity_plot, write_summary_csv
 from memtotal.models import BackboneWrapper, MemoryWriter
 from memtotal.tasks import load_task_dataset
 from memtotal.training.m3 import _resolve_artifact_path
-from memtotal.utils.io import write_json
+from memtotal.training.m4_shared_injection import (
+    FEVER_LABEL_ORDER,
+    FEVER_PROMPT_VARIANTS,
+    FEVER_SUPPORT_SERIALIZATION_VARIANTS,
+    SharedInjectionPilotRuntime,
+    _build_example_caches,
+    _build_support_text_block,
+    _classification_metrics_from_rows,
+    _evaluate_examples,
+)
+from memtotal.training.m4_shared_injection import _load_task_dataset_with_path
+from memtotal.utils.io import write_json, write_jsonl
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -33,12 +44,6 @@ def _load_case_rows(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]
         if line.strip()
     ]
     return metrics, case_rows
-
-
-def _row_task_score(row: dict[str, Any]) -> float:
-    if "task_score" in row:
-        return float(row["task_score"])
-    return float(bool(row.get("predicted_correct", False)))
 
 
 def _collect_shared_injection_runs(root: Path) -> dict[str, tuple[dict[str, Any], Path]]:
@@ -144,6 +149,32 @@ def _binary_auc(scores: list[float], labels: list[int]) -> float:
     return float((rank_sum - positives * (positives + 1) / 2.0) / (positives * negatives))
 
 
+def _macro_f1(y_true: list[int], y_pred: list[int], labels: list[int]) -> float:
+    f1_values: list[float] = []
+    for label in labels:
+        tp = sum(1 for truth, pred in zip(y_true, y_pred) if truth == label and pred == label)
+        fp = sum(1 for truth, pred in zip(y_true, y_pred) if truth != label and pred == label)
+        fn = sum(1 for truth, pred in zip(y_true, y_pred) if truth == label and pred != label)
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        if precision + recall == 0.0:
+            f1 = 0.0
+        else:
+            f1 = 2.0 * precision * recall / (precision + recall)
+        f1_values.append(f1)
+    return float(sum(f1_values) / max(1, len(f1_values)))
+
+
+def _balanced_accuracy(y_true: list[int], y_pred: list[int]) -> float:
+    positives = [index for index, label in enumerate(y_true) if label == 1]
+    negatives = [index for index, label in enumerate(y_true) if label == 0]
+    if not positives or not negatives:
+        return float("nan")
+    tpr = sum(int(y_pred[index] == 1) for index in positives) / len(positives)
+    tnr = sum(int(y_pred[index] == 0) for index in negatives) / len(negatives)
+    return float((tpr + tnr) / 2.0)
+
+
 def _build_probe_model(
     *,
     input_dim: int,
@@ -169,6 +200,7 @@ def _fit_probe_cv(
     task_kind: str,
     model_kind: str,
     seed: int,
+    labels: list[int] | None = None,
 ) -> dict[str, float]:
     if len(targets) != features.shape[0]:
         raise ValueError("features and targets must have the same number of rows.")
@@ -176,6 +208,8 @@ def _fit_probe_cv(
     num_folds = min(4, len(indices))
     fold_splits = [indices[fold::num_folds] for fold in range(num_folds)]
     accuracies: list[float] = []
+    macro_f1s: list[float] = []
+    balanced_accuracies: list[float] = []
     aucs: list[float] = []
     for fold_index, eval_indices in enumerate(fold_splits):
         train_indices = [index for index in indices if index not in eval_indices]
@@ -184,7 +218,7 @@ def _fit_probe_cv(
         train_y = torch.tensor([targets[index] for index in train_indices], dtype=torch.long)
         eval_y = torch.tensor([targets[index] for index in eval_indices], dtype=torch.long)
         train_x, eval_x = _standardize(train_x, eval_x)
-        output_dim = 3 if task_kind == "multiclass" else 1
+        output_dim = len(labels) if task_kind == "multiclass" else 1
         model = _build_probe_model(
             input_dim=int(features.shape[1]),
             output_dim=output_dim,
@@ -208,23 +242,218 @@ def _fit_probe_cv(
             logits = model(eval_x)
             if task_kind == "multiclass":
                 predictions = torch.argmax(logits, dim=-1)
+                predicted = predictions.tolist()
+                gold = eval_y.tolist()
                 accuracies.append(float((predictions == eval_y).to(dtype=torch.float32).mean().item()))
+                macro_f1s.append(_macro_f1(gold, predicted, labels=labels or sorted(set(targets))))
             else:
                 probabilities = torch.sigmoid(logits.squeeze(-1))
                 predictions = (probabilities >= 0.5).to(dtype=torch.long)
+                predicted = predictions.tolist()
+                gold = eval_y.tolist()
                 accuracies.append(float((predictions == eval_y).to(dtype=torch.float32).mean().item()))
-                aucs.append(_binary_auc(probabilities.tolist(), eval_y.tolist()))
+                balanced_accuracies.append(_balanced_accuracy(gold, predicted))
+                aucs.append(_binary_auc(probabilities.tolist(), gold))
     auc_values = [value for value in aucs if not math.isnan(value)]
+    bal_values = [value for value in balanced_accuracies if not math.isnan(value)]
     return {
         "accuracy": sum(accuracies) / max(1, len(accuracies)),
+        "macro_f1": float("nan") if not macro_f1s else sum(macro_f1s) / len(macro_f1s),
+        "balanced_accuracy": float("nan") if not bal_values else sum(bal_values) / len(bal_values),
         "auroc": float("nan") if not auc_values else sum(auc_values) / len(auc_values),
     }
 
 
-def _metric_value(row: dict[str, Any], *, target_name: str) -> float:
-    if target_name == "teacher_gain_probe" and not math.isnan(float(row.get("auroc", float("nan")))):
-        return float(row["auroc"])
-    return float(row["accuracy"])
+def _label_recall_count(metrics: dict[str, Any]) -> int:
+    recalls = metrics.get("label_recall_by_class", {})
+    return sum(int(float(value) >= 0.10) for value in recalls.values())
+
+
+def run_m4_phase0_gate_sweep(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    support_dataset_path = str(config["task"]["support_dataset_path"])
+    support_examples = _load_task_dataset_with_path(config, support_dataset_path)
+    eval_examples = load_task_dataset(config)
+    if dry_run:
+        eval_examples = eval_examples[: min(24, len(eval_examples))]
+    example_lookup = {str(example["id"]): dict(example) for example in [*support_examples, *eval_examples]}
+    base_runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=int(config["runtime"].get("phase0_seed", 0)),
+        arm="base_only",
+        writer_memory_control="real",
+    )
+    teacher_runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=int(config["runtime"].get("phase0_seed", 0)) + 1,
+        arm="teacher_text",
+        writer_memory_control="real",
+    )
+    arm_summary_rows: list[dict[str, Any]] = []
+    arm_case_dump_dir = output_dir / "arm_case_dumps"
+    arm_case_dump_dir.mkdir(parents=True, exist_ok=True)
+    selected_a_rows: list[dict[str, Any]] = []
+    selected_t_rows: list[dict[str, Any]] = []
+    for prompt_variant in FEVER_PROMPT_VARIANTS:
+        eval_caches = _build_example_caches(eval_examples, prompt_variant=prompt_variant)
+        a_case_rows = _evaluate_examples(
+            runtime=base_runtime,
+            eval_examples=eval_caches,
+            arm_alias=f"A::{prompt_variant}",
+            arm="base_only",
+            writer_memory_control="real",
+            prompt_variant=prompt_variant,
+            support_serialization_variant="none",
+            support_text_block="",
+            teacher_support_text_block="",
+            prefix_embeddings=None,
+            profiler=None,
+        )
+        a_metrics = _classification_metrics_from_rows(a_case_rows)
+        arm_summary_rows.append(
+            {
+                "arm_type": "A",
+                "prompt_variant": prompt_variant,
+                "support_serialization_variant": "none",
+                **a_metrics,
+            }
+        )
+        write_jsonl(arm_case_dump_dir / f"A__{prompt_variant}.jsonl", a_case_rows)
+        for support_variant in FEVER_SUPPORT_SERIALIZATION_VARIANTS:
+            support_text_block = _build_support_text_block(
+                support_examples,
+                memory_control="real",
+                example_lookup=example_lookup,
+                support_serialization_variant=support_variant,
+            )
+            t_case_rows = _evaluate_examples(
+                runtime=teacher_runtime,
+                eval_examples=eval_caches,
+                arm_alias=f"T::{prompt_variant}::{support_variant}",
+                arm="teacher_text",
+                writer_memory_control="real",
+                prompt_variant=prompt_variant,
+                support_serialization_variant=support_variant,
+                support_text_block=support_text_block,
+                teacher_support_text_block=support_text_block,
+                prefix_embeddings=None,
+                profiler=None,
+            )
+            t_metrics = _classification_metrics_from_rows(t_case_rows)
+            arm_summary_rows.append(
+                {
+                    "arm_type": "T",
+                    "prompt_variant": prompt_variant,
+                    "support_serialization_variant": support_variant,
+                    **t_metrics,
+                }
+            )
+            write_jsonl(
+                arm_case_dump_dir / f"T__{prompt_variant}__{support_variant}.jsonl",
+                t_case_rows,
+            )
+
+    a_rows = [row for row in arm_summary_rows if row["arm_type"] == "A"]
+    a_rows_sorted = sorted(
+        a_rows,
+        key=lambda row: (
+            float(row["macro_f1"]),
+            float(row["accuracy"]),
+            -float(row["dominant_label_fraction"]),
+        ),
+        reverse=True,
+    )
+    a_winner = dict(a_rows_sorted[0])
+    a_winner["valid_prompt_surface"] = bool(
+        float(a_winner["dominant_label_fraction"]) <= 0.85
+        and _label_recall_count(a_winner) >= 2
+    )
+    t_rows = [
+        row
+        for row in arm_summary_rows
+        if row["arm_type"] == "T" and row["prompt_variant"] == a_winner["prompt_variant"]
+    ]
+    t_rows_sorted = sorted(
+        t_rows,
+        key=lambda row: (float(row["macro_f1"]), float(row["accuracy"])),
+        reverse=True,
+    )
+    t_winner = dict(t_rows_sorted[0])
+    phase0_gate_passed = bool(
+        a_winner["valid_prompt_surface"]
+        and (float(t_winner["accuracy"]) - float(a_winner["accuracy"])) >= (2.0 / max(1, len(eval_examples)))
+        and (float(t_winner["macro_f1"]) - float(a_winner["macro_f1"])) >= 0.05
+        and float(t_winner["dominant_label_fraction"]) <= float(a_winner["dominant_label_fraction"])
+    )
+    summary_csv = output_dir / "phase0_summary.csv"
+    summary_plot = output_dir / "phase0_summary.svg"
+    write_summary_csv(
+        summary_csv,
+        [
+            {
+                "mode": f"{row['arm_type']}:{row['prompt_variant']}:{row['support_serialization_variant']}",
+                "run_dir": output_dir,
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+                "accuracy": float(row["accuracy"]),
+                "dominant_label_fraction": float(row["dominant_label_fraction"]),
+            }
+            for row in arm_summary_rows
+        ],
+    )
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['arm_type']}:{row['prompt_variant']}:{row['support_serialization_variant']}",
+                "run_dir": f"{row['arm_type']}-{row['prompt_variant']}-{row['support_serialization_variant']}",
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+            }
+            for row in arm_summary_rows
+        ],
+    )
+    _write_csv(output_dir / "phase0_arm_summary.csv", arm_summary_rows)
+    report_lines = [
+        "# M4 Phase 0 Gate Sweep",
+        "",
+        f"- phase0_gate_passed: {phase0_gate_passed}",
+        f"- a_winner_prompt_variant: {a_winner['prompt_variant']}",
+        f"- t_winner_support_serialization: {t_winner['support_serialization_variant']}",
+        "",
+        "## A Winner",
+        (
+            f"- macro_f1={float(a_winner['macro_f1']):.4f}, accuracy={float(a_winner['accuracy']):.4f}, "
+            f"dominant_label_fraction={float(a_winner['dominant_label_fraction']):.4f}, "
+            f"label_recall_by_class={json.dumps(a_winner['label_recall_by_class'], sort_keys=True)}"
+        ),
+        "",
+        "## T Winner",
+        (
+            f"- macro_f1={float(t_winner['macro_f1']):.4f}, accuracy={float(t_winner['accuracy']):.4f}, "
+            f"dominant_label_fraction={float(t_winner['dominant_label_fraction']):.4f}, "
+            f"label_recall_by_class={json.dumps(t_winner['label_recall_by_class'], sort_keys=True)}"
+        ),
+    ]
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_phase0_gate_sweep",
+            "phase0_gate_passed": phase0_gate_passed,
+            "a_winner": a_winner,
+            "t_winner": t_winner,
+            "selected_prompt_variant": str(a_winner["prompt_variant"]),
+            "selected_support_serialization": str(t_winner["support_serialization_variant"]),
+            "summary_csv": str(summary_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "report_path": str((output_dir / "report.md").resolve()),
+        },
+    )
 
 
 def run_m4_writer_information_audit(
@@ -237,20 +466,11 @@ def run_m4_writer_information_audit(
 ) -> None:
     if resume is None:
         raise ValueError("Writer information audit requires --resume pointing at a writer checkpoint root.")
-    runs = _collect_shared_injection_runs(Path(input_root).resolve())
-    if "A" not in runs or "T" not in runs:
-        raise ValueError("Writer information audit requires both A and T runs under --input_root.")
-    a_metrics, a_run_dir = runs["A"]
-    t_metrics, t_run_dir = runs["T"]
-    _, a_rows = _load_case_rows(a_run_dir)
-    _, t_rows = _load_case_rows(t_run_dir)
-    a_lookup = {str(row["example_id"]): row for row in a_rows}
-    t_lookup = {str(row["example_id"]): row for row in t_rows}
-
+    phase0_metrics = json.loads((Path(input_root).resolve() / "metrics.json").read_text())
+    phase0_gate_passed = bool(phase0_metrics.get("phase0_gate_passed", False))
     full_examples = load_task_dataset(config)
+    examples = full_examples[: min(32, len(full_examples))] if dry_run else list(full_examples)
     example_lookup = {str(example["id"]): example for example in full_examples}
-    examples = full_examples[: min(16, len(full_examples))] if dry_run else list(full_examples)
-    examples = [example for example in examples if str(example["id"]) in a_lookup and str(example["id"]) in t_lookup]
     backbone, writer = _build_writer(config, resume, seed=int(config["runtime"].get("probe_seed", 0)))
     feature_modes = {
         "real": _extract_writer_features(
@@ -260,7 +480,7 @@ def run_m4_writer_information_audit(
             example_lookup=example_lookup,
             mode="real",
         ),
-        "shuffled": _extract_writer_features(
+        "shuffle": _extract_writer_features(
             backbone=backbone,
             writer=writer,
             examples=examples,
@@ -276,135 +496,168 @@ def run_m4_writer_information_audit(
         ),
     }
 
-    label_names = sorted({str(example["label"]) for example in examples})
+    label_names = list(FEVER_LABEL_ORDER)
     label_to_index = {label: index for index, label in enumerate(label_names)}
-    targets_by_name: dict[str, tuple[list[int], str]] = {
-        "label_probe": ([label_to_index[str(example["label"])] for example in examples], "multiclass"),
-        "base_margin_sign_probe": (
-            [int(float(a_lookup[str(example["id"])]["final_margin"]) < 0.0) for example in examples],
-            "binary",
-        ),
-        "teacher_gain_probe": (
-            [
-                int(
-                    (
-                        _row_task_score(t_lookup[str(example["id"])])
-                        > _row_task_score(a_lookup[str(example["id"])])
-                    )
-                    or (
-                        float(t_lookup[str(example["id"])]["final_margin"])
-                        > float(a_lookup[str(example["id"])]["final_margin"])
-                    )
-                )
-                for example in examples
-            ],
-            "binary",
-        ),
+    verifiability_targets = [int(str(example["label"]) == "NOT_ENOUGH_INFO") for example in examples]
+    polarity_indices = [index for index, example in enumerate(examples) if str(example["label"]) != "NOT_ENOUGH_INFO"]
+    polarity_targets = [
+        int(str(examples[index]["label"]) == "SUPPORTS")
+        for index in polarity_indices
+    ]
+
+    probe_specs = {
+        "label_probe_3way": {
+            "task_kind": "multiclass",
+            "targets": [label_to_index[str(example["label"])] for example in examples],
+            "labels": list(range(len(label_names))),
+            "primary_metric": "macro_f1",
+        },
+        "verifiability_probe": {
+            "task_kind": "binary",
+            "targets": verifiability_targets,
+            "labels": None,
+            "primary_metric": "auroc",
+        },
+        "polarity_probe": {
+            "task_kind": "binary",
+            "targets": polarity_targets,
+            "labels": None,
+            "primary_metric": "auroc",
+            "subset_indices": polarity_indices,
+        },
     }
 
     rows: list[dict[str, Any]] = []
     base_seed = int(config["runtime"].get("probe_seed", 0))
-    for target_offset, (target_name, (targets, task_kind)) in enumerate(targets_by_name.items()):
+    for probe_offset, (probe_name, probe_spec) in enumerate(probe_specs.items()):
         for mode_offset, (feature_mode, features) in enumerate(feature_modes.items()):
+            active_features = features
+            active_targets = probe_spec["targets"]
+            if "subset_indices" in probe_spec:
+                subset_indices = list(probe_spec["subset_indices"])
+                active_features = features[subset_indices]
+                active_targets = [int(str(examples[index]["label"]) == "SUPPORTS") for index in subset_indices]
             for model_offset, model_kind in enumerate(("linear", "mlp")):
                 probe_metrics = _fit_probe_cv(
-                    features=features,
-                    targets=targets,
-                    task_kind=task_kind,
+                    features=active_features,
+                    targets=active_targets,
+                    task_kind=str(probe_spec["task_kind"]),
                     model_kind=model_kind,
-                    seed=base_seed + (100 * target_offset) + (10 * mode_offset) + model_offset,
+                    seed=base_seed + (100 * probe_offset) + (10 * mode_offset) + model_offset,
+                    labels=probe_spec.get("labels"),
                 )
                 rows.append(
                     {
-                        "target_name": target_name,
-                        "task_kind": task_kind,
+                        "probe_name": probe_name,
                         "feature_mode": feature_mode,
                         "model_kind": model_kind,
+                        "primary_metric": str(probe_spec["primary_metric"]),
                         "accuracy": probe_metrics["accuracy"],
+                        "macro_f1": probe_metrics["macro_f1"],
+                        "balanced_accuracy": probe_metrics["balanced_accuracy"],
                         "auroc": probe_metrics["auroc"],
                     }
                 )
 
-    phase0_support_has_value = bool(
-        float(t_metrics.get("best_adapt_task_score", 0.0)) > float(a_metrics.get("best_adapt_task_score", 0.0))
-        or float(t_metrics.get("best_adapt_task_margin", 0.0))
-        > float(a_metrics.get("best_adapt_task_margin", 0.0))
-    )
-    classification_gap = float(config["runtime"].get("audit_classification_min_gap", 0.05))
-    teacher_auc_floor = float(config["runtime"].get("audit_teacher_gain_min_auc", 0.60))
-    teacher_auc_gap = float(config["runtime"].get("audit_teacher_gain_auc_gap", 0.05))
-    probe_gate_passed = False
-    target_summaries: list[dict[str, Any]] = []
-    for target_name in targets_by_name:
-        target_rows = [row for row in rows if row["target_name"] == target_name]
-        real_best = max((_metric_value(row, target_name=target_name) for row in target_rows if row["feature_mode"] == "real"), default=float("-inf"))
-        control_best = max(
-            (_metric_value(row, target_name=target_name) for row in target_rows if row["feature_mode"] in {"shuffled", "zero"}),
-            default=float("-inf"),
-        )
-        target_summary = {
-            "target_name": target_name,
-            "best_real_metric": real_best,
-            "best_control_metric": control_best,
-            "metric_gap": real_best - control_best,
-        }
-        target_summaries.append(target_summary)
-        if target_name == "teacher_gain_probe":
-            if real_best >= teacher_auc_floor and (real_best - control_best) >= teacher_auc_gap:
-                probe_gate_passed = True
-        elif (real_best - control_best) >= classification_gap:
-            probe_gate_passed = True
+    def best_metric(probe_name: str, feature_mode: str, metric_name: str) -> float:
+        values = [
+            float(row[metric_name])
+            for row in rows
+            if row["probe_name"] == probe_name and row["feature_mode"] == feature_mode and not math.isnan(float(row[metric_name]))
+        ]
+        return max(values, default=float("-inf"))
 
-    phase1_gate_passed = bool(phase0_support_has_value and probe_gate_passed)
-    probe_results_path = output_dir / "probe_results.csv"
-    summary_path = output_dir / "summary.csv"
-    plot_path = output_dir / "summary.svg"
-    report_path = output_dir / "report.md"
-    write_summary_csv(summary_path, rows)
-    plot_rows = [
-        {
-            "mode": row["feature_mode"],
-            "run_dir": f"{row['target_name']}-{row['model_kind']}",
-            "primary_score": _metric_value(row, target_name=str(row["target_name"])),
-            "primary_metric": "auroc" if str(row["target_name"]) == "teacher_gain_probe" else "accuracy",
-        }
-        for row in rows
-    ]
-    write_sanity_plot(plot_path, plot_rows)
-    _write_csv(probe_results_path, rows)
-    _write_csv(output_dir / "target_summaries.csv", target_summaries)
+    label_real = best_metric("label_probe_3way", "real", "macro_f1")
+    label_control = max(
+        best_metric("label_probe_3way", "shuffle", "macro_f1"),
+        best_metric("label_probe_3way", "zero", "macro_f1"),
+    )
+    verif_real = best_metric("verifiability_probe", "real", "auroc")
+    verif_control = max(
+        best_metric("verifiability_probe", "shuffle", "auroc"),
+        best_metric("verifiability_probe", "zero", "auroc"),
+    )
+    polarity_real = best_metric("polarity_probe", "real", "auroc")
+    polarity_control = max(
+        best_metric("polarity_probe", "shuffle", "auroc"),
+        best_metric("polarity_probe", "zero", "auroc"),
+    )
+
+    label_probe_passed = bool(
+        label_real >= float(config["runtime"].get("audit_label_macro_f1_min", 0.40))
+        and (label_real - label_control) >= float(config["runtime"].get("audit_label_macro_f1_gap", 0.05))
+    )
+    semantic_probe_passed = bool(
+        (
+            verif_real >= float(config["runtime"].get("audit_binary_auroc_min", 0.60))
+            and (verif_real - verif_control) >= float(config["runtime"].get("audit_binary_auroc_gap", 0.05))
+        )
+        or (
+            polarity_real >= float(config["runtime"].get("audit_binary_auroc_min", 0.60))
+            and (polarity_real - polarity_control) >= float(config["runtime"].get("audit_binary_auroc_gap", 0.05))
+        )
+    )
+    phase1_probe_passed = bool(label_probe_passed and semantic_probe_passed)
+    phase1_gate_passed = bool(phase0_gate_passed and phase1_probe_passed)
+
+    summary_csv = output_dir / "summary.csv"
+    summary_plot = output_dir / "summary.svg"
+    probe_csv = output_dir / "probe_results.csv"
+    write_summary_csv(
+        summary_csv,
+        [
+            {
+                "mode": f"{row['probe_name']}:{row['feature_mode']}:{row['model_kind']}",
+                "run_dir": output_dir,
+                "primary_metric": str(row["primary_metric"]),
+                "primary_score": float(row[str(row["primary_metric"])]),
+            }
+            for row in rows
+        ],
+    )
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['probe_name']}:{row['feature_mode']}:{row['model_kind']}",
+                "run_dir": f"{row['probe_name']}-{row['feature_mode']}-{row['model_kind']}",
+                "primary_metric": str(row["primary_metric"]),
+                "primary_score": float(row[str(row["primary_metric"])]),
+            }
+            for row in rows
+        ],
+    )
+    _write_csv(probe_csv, rows)
     report_lines = [
         "# M4 Writer Information Audit",
         "",
-        f"- phase0_support_has_value: {phase0_support_has_value}",
-        f"- probe_gate_passed: {probe_gate_passed}",
+        f"- phase0_gate_passed: {phase0_gate_passed}",
+        f"- label_probe_passed: {label_probe_passed}",
+        f"- semantic_probe_passed: {semantic_probe_passed}",
+        f"- phase1_probe_passed: {phase1_probe_passed}",
         f"- phase1_gate_passed: {phase1_gate_passed}",
         "",
-        "## Target Summaries",
+        f"- label_real_macro_f1: {label_real:.4f}",
+        f"- label_control_macro_f1: {label_control:.4f}",
+        f"- verifiability_real_auroc: {verif_real:.4f}",
+        f"- verifiability_control_auroc: {verif_control:.4f}",
+        f"- polarity_real_auroc: {polarity_real:.4f}",
+        f"- polarity_control_auroc: {polarity_control:.4f}",
     ]
-    for row in target_summaries:
-        report_lines.append(
-            f"- {row['target_name']}: best_real={row['best_real_metric']:.4f}, "
-            f"best_control={row['best_control_metric']:.4f}, gap={row['metric_gap']:.4f}"
-        )
-    report_path.write_text("\n".join(report_lines) + "\n")
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
     write_json(
         output_dir / "metrics.json",
         {
             "analysis_mode": "m4_writer_information_audit",
-            "base_run_dir": str(a_run_dir.resolve()),
-            "teacher_run_dir": str(t_run_dir.resolve()),
-            "base_task_score": float(a_metrics.get("best_adapt_task_score", 0.0)),
-            "teacher_task_score": float(t_metrics.get("best_adapt_task_score", 0.0)),
-            "base_margin": float(a_metrics.get("best_adapt_task_margin", 0.0)),
-            "teacher_margin": float(t_metrics.get("best_adapt_task_margin", 0.0)),
-            "phase0_support_has_value": phase0_support_has_value,
-            "probe_gate_passed": probe_gate_passed,
+            "phase0_gate_passed": phase0_gate_passed,
+            "label_probe_passed": label_probe_passed,
+            "semantic_probe_passed": semantic_probe_passed,
+            "phase1_probe_passed": phase1_probe_passed,
             "phase1_gate_passed": phase1_gate_passed,
-            "probe_results_csv": str(probe_results_path.resolve()),
-            "summary_csv": str(summary_path.resolve()),
-            "summary_plot": str(plot_path.resolve()),
-            "report_path": str(report_path.resolve()),
+            "probe_results_csv": str(probe_csv.resolve()),
+            "summary_csv": str(summary_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "report_path": str((output_dir / "report.md").resolve()),
         },
     )
 
@@ -443,6 +696,7 @@ def run_m4_shared_injection_compare(
     dry_run: bool,
 ) -> None:
     del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
     runs = _collect_shared_injection_runs(Path(input_root).resolve())
     required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
     missing = sorted(required - set(runs))
@@ -453,6 +707,7 @@ def run_m4_shared_injection_compare(
     for alias in sorted(required):
         metrics, run_dir = runs[alias]
         _, case_rows = _load_case_rows(run_dir)
+        class_metrics = _classification_metrics_from_rows(case_rows)
         arm_rows[alias] = {str(row["example_id"]): row for row in case_rows}
         arm_summaries.append(
             {
@@ -460,84 +715,79 @@ def run_m4_shared_injection_compare(
                 "run_dir": str(run_dir.resolve()),
                 "primary_metric": str(metrics.get("task_metric_name", "accuracy")),
                 "primary_score": float(metrics.get("best_adapt_task_score", 0.0)),
-                "mean_margin": float(metrics.get("best_adapt_task_margin", 0.0)),
+                "macro_f1": float(class_metrics["macro_f1"]),
+                "mean_margin": float(class_metrics["mean_margin"]),
+                "dominant_label_fraction": float(class_metrics["dominant_label_fraction"]),
                 "case_rows": len(case_rows),
             }
         )
     pairwise_rows: list[dict[str, Any]] = []
-    for left_alias, right_alias in [("A", "T"), ("A", "I_real"), ("I_shuffle", "I_real"), ("I_zero", "I_real")]:
+    for left_alias, right_alias in [
+        ("A", "T"),
+        ("A", "I_real"),
+        ("I_shuffle", "I_real"),
+        ("I_zero", "I_real"),
+    ]:
         compare = _pairwise_compare(arm_rows[left_alias], arm_rows[right_alias])
-        pairwise_rows.append(
-            {
-                "left_alias": left_alias,
-                "right_alias": right_alias,
-                **compare,
-            }
-        )
-    real_vs_shuffle_gap_rows: list[dict[str, Any]] = []
-    real_vs_zero_gap_rows: list[dict[str, Any]] = []
-    for example_id in sorted(set(arm_rows["I_real"]) & set(arm_rows["I_shuffle"])):
-        real_row = arm_rows["I_real"][example_id]
-        shuffle_row = arm_rows["I_shuffle"][example_id]
-        real_vs_shuffle_gap_rows.append(
-            {
-                "example_id": example_id,
-                "real_correct": bool(real_row["predicted_correct"]),
-                "shuffle_correct": bool(shuffle_row["predicted_correct"]),
-                "real_margin": float(real_row["final_margin"]),
-                "shuffle_margin": float(shuffle_row["final_margin"]),
-                "margin_gap": float(real_row["final_margin"]) - float(shuffle_row["final_margin"]),
-            }
-        )
-    for example_id in sorted(set(arm_rows["I_real"]) & set(arm_rows["I_zero"])):
-        real_row = arm_rows["I_real"][example_id]
-        zero_row = arm_rows["I_zero"][example_id]
-        real_vs_zero_gap_rows.append(
-            {
-                "example_id": example_id,
-                "real_correct": bool(real_row["predicted_correct"]),
-                "zero_correct": bool(zero_row["predicted_correct"]),
-                "real_margin": float(real_row["final_margin"]),
-                "zero_margin": float(zero_row["final_margin"]),
-                "margin_gap": float(real_row["final_margin"]) - float(zero_row["final_margin"]),
-            }
-        )
-    summary_path = output_dir / "arm_summary.csv"
-    plot_path = output_dir / "summary.svg"
-    pairwise_path = output_dir / "arm_pairwise_compare.csv"
+        pairwise_rows.append({"left_alias": left_alias, "right_alias": right_alias, **compare})
+    pairwise_lookup = {(row["left_alias"], row["right_alias"]): row for row in pairwise_rows}
     real_vs_shuffle_path = output_dir / "real_vs_shuffle_gap.csv"
     real_vs_zero_path = output_dir / "real_vs_zero_gap.csv"
-    report_path = output_dir / "report.md"
-    write_summary_csv(summary_path, arm_summaries)
-    write_sanity_plot(plot_path, arm_summaries)
-    _write_csv(pairwise_path, pairwise_rows)
-    _write_csv(real_vs_shuffle_path, real_vs_shuffle_gap_rows)
-    _write_csv(real_vs_zero_path, real_vs_zero_gap_rows)
-    pairwise_lookup = {(row["left_alias"], row["right_alias"]): row for row in pairwise_rows}
-    teacher_helpful = bool(
-        float(runs["T"][0].get("best_adapt_task_score", 0.0)) > float(runs["A"][0].get("best_adapt_task_score", 0.0))
-        or float(runs["T"][0].get("best_adapt_task_margin", 0.0)) > float(runs["A"][0].get("best_adapt_task_margin", 0.0))
+    _write_csv(
+        real_vs_shuffle_path,
+        [
+            {
+                "example_id": example_id,
+                "real_margin": float(arm_rows["I_real"][example_id]["final_margin"]),
+                "shuffle_margin": float(arm_rows["I_shuffle"][example_id]["final_margin"]),
+                "margin_gap": float(arm_rows["I_real"][example_id]["final_margin"])
+                - float(arm_rows["I_shuffle"][example_id]["final_margin"]),
+            }
+            for example_id in sorted(set(arm_rows["I_real"]) & set(arm_rows["I_shuffle"]))
+        ],
     )
+    _write_csv(
+        real_vs_zero_path,
+        [
+            {
+                "example_id": example_id,
+                "real_margin": float(arm_rows["I_real"][example_id]["final_margin"]),
+                "zero_margin": float(arm_rows["I_zero"][example_id]["final_margin"]),
+                "margin_gap": float(arm_rows["I_real"][example_id]["final_margin"])
+                - float(arm_rows["I_zero"][example_id]["final_margin"]),
+            }
+            for example_id in sorted(set(arm_rows["I_real"]) & set(arm_rows["I_zero"]))
+        ],
+    )
+    summary_csv = output_dir / "arm_summary.csv"
+    summary_plot = output_dir / "summary.svg"
+    pairwise_csv = output_dir / "arm_pairwise_compare.csv"
+    write_summary_csv(summary_csv, arm_summaries)
+    write_sanity_plot(summary_plot, arm_summaries)
+    _write_csv(pairwise_csv, pairwise_rows)
+    summary_lookup = {row["mode"]: row for row in arm_summaries}
     regressions_vs_base = int(pairwise_lookup[("A", "I_real")]["left_correct_to_right_wrong"])
     gate_passed = bool(
-        teacher_helpful
-        and int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]) >= 2
+        int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]) >= 2
+        and (float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_shuffle"]["macro_f1"])) >= 0.05
         and int(pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]) >= 2
-        and float(runs["I_real"][0].get("best_adapt_task_score", 0.0))
-        >= float(runs["A"][0].get("best_adapt_task_score", 0.0))
+        and (float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_zero"]["macro_f1"])) >= 0.05
+        and float(summary_lookup["I_real"]["primary_score"]) >= float(summary_lookup["A"]["primary_score"])
         and regressions_vs_base <= 1
     )
     report_lines = [
         "# M4 Shared Injection Compare",
         "",
-        f"- teacher_helpful: {teacher_helpful}",
         f"- gate_passed: {gate_passed}",
+        f"- regressions_vs_base: {regressions_vs_base}",
         "",
         "## Arm Summary",
     ]
     for row in arm_summaries:
         report_lines.append(
-            f"- {row['mode']}: task_score={row['primary_score']:.4f}, mean_margin={row['mean_margin']:.4f}"
+            f"- {row['mode']}: task_score={row['primary_score']:.4f}, "
+            f"macro_f1={row['macro_f1']:.4f}, mean_margin={row['mean_margin']:.4f}, "
+            f"dominant_label_fraction={row['dominant_label_fraction']:.4f}"
         )
     report_lines.append("")
     report_lines.append("## Pairwise Compare")
@@ -549,19 +799,21 @@ def run_m4_shared_injection_compare(
             f"left_correct_to_right_wrong={row['left_correct_to_right_wrong']}, "
             f"mean_margin_gain={row['mean_margin_gain']:.4f}"
         )
-    report_path.write_text("\n".join(report_lines) + "\n")
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
     write_json(
         output_dir / "metrics.json",
         {
             "analysis_mode": "m4_shared_injection_compare",
-            "teacher_helpful": teacher_helpful,
             "gate_passed": gate_passed,
             "regressions_vs_base": regressions_vs_base,
-            "summary_csv": str(summary_path.resolve()),
-            "summary_plot": str(plot_path.resolve()),
-            "pairwise_compare_csv": str(pairwise_path.resolve()),
+            "summary_csv": str(summary_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "pairwise_compare_csv": str(pairwise_csv.resolve()),
             "real_vs_shuffle_gap_csv": str(real_vs_shuffle_path.resolve()),
             "real_vs_zero_gap_csv": str(real_vs_zero_path.resolve()),
-            "report_path": str(report_path.resolve()),
+            "report_path": str((output_dir / "report.md").resolve()),
+            "task_score_gap_to_T": float(summary_lookup["I_real"]["primary_score"]) - float(summary_lookup["T"]["primary_score"]),
+            "macro_f1_gap_to_T": float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["T"]["macro_f1"]),
+            "mean_margin_gap_to_T": float(summary_lookup["I_real"]["mean_margin"]) - float(summary_lookup["T"]["mean_margin"]),
         },
     )

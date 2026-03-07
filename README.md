@@ -8,24 +8,23 @@
 
 ## 最新进展
 
-- 已完成 `M4` 的架构换轨脚手架：不再继续修 `candidate-conditioned residual family`，而是新增 `FEVER-first shared generative injection` 主线，包含：
-  - `teacher-text upper bound`
-  - `writer information audit`
-  - `shared latent prefix injection` 的真实 qwen25 scaffold
-- `M4` 当前并没有直接宣称 injection 成功；相反，它先把更上游的 gate 跑实了：
-  - `A = base_only = 0.25`
-  - `T = teacher-text = 0.25`
-  - `teacher_margin = -0.9794906545430422`，明显差于 `base_margin = -8.739530039747478e-05`
-  - `phase0_support_has_value = false`
-  - `phase1_gate_passed = false`
-- `writer information audit` 这轮已经按更保守的判因口径实现：
-  - 同时做 `linear probe` 和浅层 `MLP probe`
-  - 同时比较 `real / shuffle / zero`
-  - 当前 `label_probe` 与 `base_margin_sign_probe` 都没有出现 `real > control`
-  - `teacher_gain_probe` 虽略高于 control，但仍低于 gate 下限
-- 因而，`I-real / I-shuffle / I-zero` 这轮并没有启动训练；当前最直接的 blocker 已经上移到：
-  - `support_text` 序列化 / prompt 还没让 frozen Qwen 从显式 support 中受益
-  - 当前 writer family 也还没在 `FEVER` 上暴露出足够可读的任务信息
+- 已完成 `M4.1` 的 `FEVER Gate Recovery`：上游 gate 现在明确拆成 `screen248` 上的 `Phase 0 prompt/support gate`、`Phase 1 writer information audit`，以及只有前两者通过后才会启动的 `fixed64` shared injection。
+- 当前最新真实结果不是“writer 没信息”，而是：
+  - `Phase 0` 失败：`A_winner` 和 `T_winner` 都塌缩成全预测 `SUPPORTS`
+  - `screen248` 上两者相同：`accuracy=0.29435483870967744`、`macro_f1=0.15160955347871236`、`dominant_label_fraction=1.0`
+  - 因而当前 immediate blocker 已经收敛到 `FEVER` 的 prompt / support serialization，而不是注入训练本身
+- `Phase 1 writer information audit` 已按更稳的判因口径给出正信号：
+  - `label_probe_3way`: `real macro_f1=0.4434`，高于 `shuffle=0.3499`
+  - `verifiability_probe`: `real auroc=0.7724`，高于 `shuffle=0.5568`
+  - `polarity_probe`: `real auroc=0.5534`，高于 `shuffle=0.4863`
+  - 当前 `phase1_probe_passed=true`，但由于 `phase0_gate_passed=false`，整体 `phase1_gate_passed=false`
+- `Phase 2` 这轮没有在真实 run 中启动，但 shared injection harness 已经技术上打通：
+  - `BackboneWrapper.score_continuations(prefix_embeddings=...)` 现在允许 prefix 路径回传梯度
+  - `LatentPrefixProjector` + writer warmup / joint-training 链路都能在 dry-run 下完整跑通
+- 因而，当前最值得继续的方向非常明确：
+  - 先修 `FEVER` 的 label verbalization、support serialization、teacher-text prompt，让 `T > A`
+  - 再重新进入 `I-real / I-shuffle / I-zero`
+  - 现在不该回到旧的 score-side residual family，也不该直接扩到 `Story Cloze` 或 `Qwen3-8B`
 - benchmark-native `M3 core4` 主链已经打通：`gsm8k + kodcode + gpqa + story_cloze` 的 `Stage A/B/C`、统一产物、统一分析都可运行。
 - 真实 `Qwen2.5-1.5B-Instruct` 的最小闭环已经打通：`BackboneWrapper(load_mode=hf_causal_lm)` 现支持真实 `summarize_texts`、`score_continuations` 与本地 staged model 目录加载。
 - 最新判别实验已经完成三步：
@@ -107,15 +106,15 @@
   - 当前这条 `candidate-conditioned residual family` 在 repair objective 下依然没有 real-memory 内容效应
   - `R-real` 同时没有优于 `R-shuffle`，也没有优于 `R-zero`
   - 因而现在不该继续修 current candidate-conditioned family；如果后续还要做 candidate-specific `Stage C`，应直接换 residual family，而不是继续在这一条上加 router / sign selector
-- `M4 shared injection` 这轮又把当前主 blocker上移了一层：
-  - `teacher-text upper bound` 本身没有优于 `base_only`
-  - `writer information audit` 即便加入 `MLP fallback`，也仍没通过 `real > shuffle/zero` 的 gate
-  - 所以这轮没有进入 `I-real / I-shuffle / I-zero` 的真正注入训练
-  - 当前最合理的结论不是“shared injection 已失败”，而是“`support serialization / prompt` 与 `writer` 信息质量还没过门槛，现阶段不该烧注入训练算力”
+- `M4.1 shared injection recovery` 这轮又把 blocker 更精确地上移了一层：
+  - `Phase 0` 在 `screen248` 上仍然失败：所有 12 条 `A/T` prompt-support 组合都塌缩到全预测 `SUPPORTS`
+  - 但 `Phase 1 writer audit` 已经通过了语义 probe，本轮不再支持“writer 完全没信息”这个解释
+  - 所以这轮没有进入真实 `I-real / I-shuffle / I-zero`，但这并不意味着 shared injection 已失败
+  - 当前最合理的结论是：`support serialization / prompt / teacher-text surface` 还没把 frozen Qwen 带到可利用 support 的决策面上
 - 因而，当前最重要的下一步已改成：
-  - 先修 `FEVER` 的 `teacher-text` 构造和 support serialization，让 `T > A`
-  - 再提高当前 writer family 在 `FEVER` 上的可读任务信息，至少让 audit 出现稳定的 `real > shuffle/zero`
-  - 只有在这两个 gate 通过后，才重新启动 `shared injected memory` 训练
+  - 先修 `FEVER` 的 `teacher-text` 构造、support serialization 与 label verbalization，让 `T > A`
+  - `writer information audit` 这轮已经给出正信号，所以当前不是“writer 先天没信息”，而是“Qwen 还没被 prompt/support surface 正确带到这些信息上”
+  - 只有在 `Phase 0` 先通过后，才重新启动真实 `shared injected memory` 训练
   - `Story Cloze` 继续只保留为后续 stress test，不参与当前 capability gate
 
 ## 关键结果路径
@@ -151,8 +150,11 @@
 - M4 FEVER shared injection gating runs：
   - `runs/review/m4-fever-shared-injection-qwen25/`
   - `results/generated/review/m4-fever-shared-injection-qwen25/`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/writer-audit/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/writer-audit/summary.csv`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/report.md`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/phase0_summary.csv`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/summary.csv`
+  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-dryrun-compare/metrics.json`
 
 ## 现在最重要的下一步
 

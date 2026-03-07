@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import hashlib
 import os
 from typing import Iterable
@@ -240,7 +241,8 @@ class BackboneWrapper(nn.Module):
         full_texts = [f"{prompt_with_sep}{candidate_text}" for candidate_text in candidate_texts]
         encoded, prefix_length = self._prepare_prefixed_hf_inputs(full_texts, prefix_embeddings)
         prompt_length = len(self.tokenizer(prompt_with_sep, add_special_tokens=True)["input_ids"])
-        with torch.inference_mode():
+        model_context = torch.inference_mode if prefix_embeddings is None else nullcontext
+        with model_context():
             logits = self.model(**encoded, use_cache=False).logits
         log_probs = torch.log_softmax(logits[:, :-1, :].to(dtype=torch.float32), dim=-1)
         labels_source = encoded.get("input_ids")

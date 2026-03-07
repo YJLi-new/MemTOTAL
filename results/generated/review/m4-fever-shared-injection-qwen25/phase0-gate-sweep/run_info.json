@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/m4_fever_qwen25_phase0_gate_sweep.yaml",
+    "--seed",
+    "9201",
+    "--output_dir",
+    "results/generated/m4-fever-shared-injection-qwen25-v3/phase0-gate-sweep"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "m4_fever_qwen25_phase0_gate_sweep",
+  "git_hash": "e95fc268dc465f31b08aea2bdee50f15a76ca91b",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-phase0-gate-sweep",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 9201,
+  "smoke_subset": "real_screen248",
+  "stage": "M4-gate-recovery",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen248",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T17:53:23.114221+00:00",
+  "torch_version": "2.8.0+cu128"
+}

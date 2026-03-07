@@ -1,0 +1,5 @@
+example_count,flip_count_delta,left_alias,left_correct_to_right_wrong,left_wrong_to_right_correct,mean_margin_gain,right_alias
+12,0,A,0,0,-0.001440550988263567,T
+12,0,A,0,0,0.0001423820970861319,I_real
+12,0,I_shuffle,0,0,0.0,I_real
+12,0,I_zero,0,0,0.0,I_real
