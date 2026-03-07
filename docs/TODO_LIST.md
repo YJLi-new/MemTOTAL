@@ -396,6 +396,34 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - 当前也还看不出真实 memory 内容效应，`real memory` 与 `shuffled memory` 几乎重合
   - 顺着“推力不够”做的全局 `support_grid_search` 也已经试过：看 `pilot-support8` 会把 `alpha` 压到 `0`，换成额外的 `calibration-hard32` 也仍然回到 `alpha=1`
   - 下一步更值得做的是 competitor-aware inner-loop / conditional residual calibration，而不是继续扫全局 loss/sample
+- 已新增 `story_cloze` 的离线 oracle 审计：
+  - `configs/exp/stage_c_real_pilot_oracle_audit.yaml`
+  - `scripts/run_m3_story_cloze_real_oracle_audit.sh`
+  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/`
+- oracle 当前给出的结论非常关键：
+  - `best-of-two oracle` 仍然是 `0.2`
+  - 但 `per-case alpha oracle` 达到 `0.96`
+  - `80` 个 base-wrong cases 里，有 `76` 个能被离线 `alpha_i` 翻正
+  - 但这 `76` 个全部需要 `|alpha| >= 32`，而且正负号几乎对半分：`+37 / -39`
+  - 因而当前更像是“residual family 里有 signal，但缺 case-conditional routing / sign selection”，而不是“单一全局 alpha 不够大”
+- 已新增 `FEVER` 的 real qwen25 control pilot：
+  - `configs/exp/fever_real_pilot_split.yaml`
+  - `configs/exp/fever_real_fixed_set_builder.yaml`
+  - `configs/exp/stage_c_real_pilot_compare_fever.yaml`
+  - `scripts/run_m3_fever_real_pilot_qwen25.sh`
+  - review 结果位于 `runs/review/m3-fever-real-pilot-qwen25/` 与 `results/generated/review/m3-fever-real-pilot-qwen25/`
+- FEVER control 当前给出的结论也已经明确：
+  - `A=base_only=0.25`
+  - `B=base+shared_summary residual=0.75`
+  - `C=base+candidate_conditioned residual=0.25`
+  - `D=base+candidate_conditioned residual+shuffled memory=0.25`
+  - `A -> B` 当前有 `flip_count_delta=32`
+  - 但 `A -> C` 与 `C -> D` 都是 `0`
+- 因而，这轮判别实验后的最稳妥结论已经变成：
+  - `Story Cloze` 仍更像 artifact-heavy stress test，不适合作为 memory idea 的单一生死判官
+  - 当前 low-bandwidth residual family 不是整体死亡，因为 `shared_summary residual` 在 FEVER 上是 load-bearing 的
+  - 但当前这版 `candidate_conditioned late fusion` 还不能继续扩大 sweep，也不该直接上 `Qwen3-8B`
+  - 下一步应先在 `FEVER` 这类 control task 上修好 candidate-conditioned decision path，再回到 `Story Cloze`
 - Stage C canonical `core4` 配置现已加入 `runtime.target_eval_repeats=3`；`adapt_curve.csv` 会同步写出 `target_eval_repeats / evaluated_query_examples`，用于把单一 target query 子集上的偶然波动与真正的 official few-shot 提升区分开
 - `analysis` 现支持 `analysis_mode=m3_failure_checks`，会显式跑 `zero_memory / writer_noise / collapsed_fuser` 三个 smoke ablation，并输出 `failure_checks.json`、`failure_ablation_summary.csv`、`failure_ablation_summary.svg`
 - 已新增 benchmark-native runbook：`scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh`

@@ -1,0 +1,5 @@
+alias,mode,primary_metric,primary_score,run_dir,task_score
+A,analysis,task_score,0.2,A,0.2
+C,analysis,task_score,0.2,C,0.2
+oracle_best_of_two,analysis,task_score,0.2,oracle_best_of_two,0.2
+oracle_per_case_alpha,analysis,task_score,0.96,oracle_per_case_alpha,0.96

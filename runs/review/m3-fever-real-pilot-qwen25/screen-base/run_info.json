@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/train.py",
+    "--config",
+    "configs/exp/m3_stage_c_real_qwen25_base_fever_screening.yaml",
+    "--seed",
+    "5307",
+    "--output_dir",
+    "runs/verify/m3-fever-real-pilot-qwen25/screen-base"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "m3_stage_c_real_qwen25_base_fever_screening",
+  "git_hash": "c44c17aac223072aef6659cc31e18ee0aefd05cd",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "stage-c-real-base-only-fever",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 5307,
+  "smoke_subset": "real_screen_eval248",
+  "stage": "M3-fever-real-screening",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_eval248",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T11:37:00.392578+00:00",
+  "torch_version": "2.8.0+cu128"
+}

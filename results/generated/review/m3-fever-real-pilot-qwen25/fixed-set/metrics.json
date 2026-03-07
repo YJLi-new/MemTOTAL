@@ -1,0 +1,11 @@
+{
+  "analysis_mode": "fever_real_fixed_set_builder",
+  "bucket_counts": {
+    "base_correct_control": 16,
+    "near_threshold_bad": 32,
+    "stubborn_wrong": 16
+  },
+  "fixed_eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/fixed64.jsonl",
+  "fixed_eval_examples": 64,
+  "manifest_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/fixed64-manifest.json"
+}

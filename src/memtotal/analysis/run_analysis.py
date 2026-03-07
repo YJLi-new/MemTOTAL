@@ -17,7 +17,10 @@ from memtotal.analysis.m3_sensitivity_audit import run_m3_stage_c_sensitivity_au
 from memtotal.analysis.m3_stage_c_probe import run_m3_stage_c_probe_summary
 from memtotal.analysis.m3_stage_c_seed_sweep import run_m3_stage_c_seed_sweep_summary
 from memtotal.analysis.story_cloze_real_pilot import (
+    run_fever_real_fixed_set_builder,
+    run_fever_real_pilot_split,
     run_stage_c_real_pilot_compare,
+    run_stage_c_real_pilot_oracle_audit,
     run_story_cloze_real_fixed_set_builder,
     run_story_cloze_real_pilot_split,
 )
@@ -168,6 +171,13 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
         return 0
+    if analysis_mode == "fever_real_pilot_split":
+        run_fever_real_pilot_split(
+            config=config,
+            output_dir=output_dir,
+            dry_run=args.dry_run,
+        )
+        return 0
     if analysis_mode == "story_cloze_real_fixed_set_builder":
         if not args.input_root:
             raise ValueError("--input_root is required for story_cloze_real_fixed_set_builder mode.")
@@ -178,10 +188,31 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
         return 0
+    if analysis_mode == "fever_real_fixed_set_builder":
+        if not args.input_root:
+            raise ValueError("--input_root is required for fever_real_fixed_set_builder mode.")
+        run_fever_real_fixed_set_builder(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+        )
+        return 0
     if analysis_mode == "stage_c_real_pilot_compare":
         if not args.input_root:
             raise ValueError("--input_root is required for stage_c_real_pilot_compare mode.")
         run_stage_c_real_pilot_compare(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "stage_c_real_pilot_oracle_audit":
+        if not args.input_root:
+            raise ValueError("--input_root is required for stage_c_real_pilot_oracle_audit mode.")
+        run_stage_c_real_pilot_oracle_audit(
+            config=config,
             output_dir=output_dir,
             input_root=args.input_root,
             dry_run=args.dry_run,

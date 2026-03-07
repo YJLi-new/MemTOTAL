@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "shuffled",
+      "residual_calibration_mode": "none",
+      "step": 0,
+      "support_task_margin": 0.0,
+      "support_task_proxy_score": 0.0,
+      "support_task_score": 0.0
+    },
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "shuffled",
+      "residual_calibration_mode": "none",
+      "step": 1,
+      "support_task_margin": 0.0,
+      "support_task_proxy_score": 0.0,
+      "support_task_score": 0.0
+    },
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "shuffled",
+      "residual_calibration_mode": "none",
+      "step": 2,
+      "support_task_margin": 0.0,
+      "support_task_proxy_score": 0.0,
+      "support_task_score": 0.0
+    },
+    {
+      "configured_residual_scale": 1.0,
+      "decision_mode": "candidate_conditioned_late_fusion",
+      "effective_residual_scale": 1.0,
+      "memory_control_mode": "shuffled",
+      "residual_calibration_mode": "none",
+      "step": 3,
+      "support_task_margin": 0.0,
+      "support_task_proxy_score": 0.0,
+      "support_task_score": 0.0
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+bucket,requested_examples,selected_examples
+near_threshold_bad,16,32
+improving_but_unflipped,16,0
+stubborn_wrong,16,16
+base_correct_control,16,16

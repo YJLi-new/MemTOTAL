@@ -139,6 +139,18 @@ TASK_SPECS: dict[str, TaskSpec] = {
         prompt_template="Claim: {claim} || Evidence: {evidence} || Labels: {choices_block} || Decide the correct label.",
         choices_field="choices",
         label_field="label",
+        passthrough_fields=(
+            "claim",
+            "evidence",
+            "screening_bucket",
+            "screening_split",
+            "screening_base_margin",
+            "screening_shared_margin",
+            "screening_margin_gain",
+            "screening_base_correct",
+            "screening_shared_correct",
+            "shuffled_memory_example_id",
+        ),
     ),
     "alfworld": TaskSpec(
         benchmark_id="alfworld",

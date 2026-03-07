@@ -55,6 +55,88 @@ class TaskRegistryTest(unittest.TestCase):
         self.assertEqual(dataset[0]["label"], "A")
         self.assertEqual(len(dataset[0]["choices"]), 2)
 
+    def test_load_task_dataset_preserves_fever_pilot_passthrough_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "fever_fixed64.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "id": "fever-001",
+                        "claim": "The sky is blue.",
+                        "evidence": "The sky appears blue on a clear day.",
+                        "choices": [
+                            {"label": "SUPPORTS", "text": "Supports"},
+                            {"label": "REFUTES", "text": "Refutes"},
+                            {"label": "NOT_ENOUGH_INFO", "text": "Not enough info"},
+                        ],
+                        "label": "SUPPORTS",
+                        "answer": "Supports",
+                        "screening_bucket": "near_threshold_bad",
+                        "screening_split": "fixed64",
+                        "screening_base_margin": -0.02,
+                        "screening_shared_margin": -0.01,
+                        "screening_margin_gain": 0.01,
+                        "screening_base_correct": False,
+                        "screening_shared_correct": False,
+                        "shuffled_memory_example_id": "fever-002",
+                    }
+                )
+                + "\n"
+            )
+            config = {
+                "experiment": {
+                    "name": "benchmark_fever_test",
+                    "stage": "M4",
+                    "method_variant": "ours-benchmark-real-smoke",
+                },
+                "task": {
+                    "name": "fever_real_fixed64",
+                    "benchmark_id": "fever",
+                    "domain": "qa",
+                    "split": "eval",
+                    "smoke_subset": "real_fixed64",
+                    "pilot_split": "fixed64",
+                    "dataset_path": str(dataset_path),
+                    "support_dataset_path": str(dataset_path),
+                    "metric_name": "accuracy",
+                    "evaluator": {"type": "multiple_choice"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "method": {
+                    "embed_dim": 64,
+                    "segmenter": {"mode": "delimiter", "delimiter": "||"},
+                    "writer": {"memory_slots": 4, "arch": "mlp"},
+                    "reader": {
+                        "num_queries": 4,
+                        "use_query_gating": False,
+                        "gating_mode": "off",
+                        "num_heads": 4,
+                        "condition_on_context": True,
+                        "conditioning": {"domain_key": "domain", "include_task_name": True},
+                    },
+                    "fuser": {"short_slots": 2, "arch": "linear"},
+                    "injector": {"mode": "prefix", "enabled": True, "position": "segment"},
+                },
+                "runtime": {
+                    "train_steps": 2,
+                    "eval_examples": 1,
+                    "learning_rate": 0.01,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "fever.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            dataset = load_task_dataset(load_config(config_path))
+            self.assertEqual(dataset[0]["shuffled_memory_example_id"], "fever-002")
+            self.assertEqual(dataset[0]["screening_bucket"], "near_threshold_bad")
+            self.assertEqual(dataset[0]["claim"], "The sky is blue.")
+
     def test_task_evaluator_handles_exact_match_and_multiple_choice(self) -> None:
         exact_match_config = load_config(ROOT / "configs/exp/benchmark_kodcode_qwen25_smoke.yaml")
         exact_match_dataset = load_task_dataset(exact_match_config)

@@ -3,8 +3,9 @@
 ## Open
 
 - 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
-- 真实 `Qwen2.5-1.5B-Instruct` `story_cloze` pilot 已表明：当前 `candidate_conditioned_late_fusion` 只带来 `1e-3` 级 margin/proxy 改善，却没有任何 flip，也没有显出真实 memory 内容效应。连全局 `support_grid_search` residual calibration 也没救起来，所以后续需要直接检查 competitor-aware objective、conditional residual calibration 和 choice-level scorer 接口，而不是继续扫全局 loss/sample。
-- 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。后续需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
+- 真实 `Qwen2.5-1.5B-Instruct` `story_cloze` pilot 现已结合 oracle 补充出一个更精确的 tech debt：当前 residual family 里并不是完全没有 decision signal，但这个 signal 需要极端而且混合正负号的 per-case `alpha_i` 才能转成真实 flip。fresh oracle `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/metrics.json` 记录：`oracle_per_case_alpha_flip_gain=76`，但这 76 个 wrong cases 全都需要 `|alpha| >= 32`，且正负号几乎对半分。后续需要的是 case-conditional routing / sign selection，而不是继续扫单一全局 `alpha`。
+- `FEVER` real qwen25 control pilot 又把问题进一步缩小了：`results/generated/review/m3-fever-real-pilot-qwen25/compare/arm_pairwise_compare.csv` 当前显示 `A->B flip_count_delta=32`，但 `A->C=0`、`C->D=0`。这说明 low-bandwidth residual family 并没有整体失效；当前坏掉的是这版 `candidate_conditioned late fusion`，而不是 memory idea 本身。后续需要先在 control task 上修 candidate-conditioned branch，而不是直接扩大 Story Cloze sweep。
+- 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
 - 将当前 toy smoke 数据替换为与 `docs/EXPERIMENTS_INFO.md` 主套件兼容的数据准备流水线。
 - 增加更严格的结构 lint，覆盖 run 命名、结果目录和 generated-only 报表规则。
 - 让 MemGen adapter 在真实运行后补齐 profiling / wall time / token / 显存字段，并与我们自己的 `metrics.json` 结构进一步对齐。

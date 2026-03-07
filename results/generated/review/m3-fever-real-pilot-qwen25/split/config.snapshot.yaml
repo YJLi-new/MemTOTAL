@@ -1,0 +1,29 @@
+task:
+  name: fever_real_screen_source256
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: hf_real_screen256
+  dataset_path: data/benchmarks/materialized/fever/eval-real-smoke256.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/fever_real_pilot_split.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/materialized/fever_real_screen_source256.yaml
+experiment:
+  name: fever_real_pilot_split
+  stage: M3-fever-real-pilot
+  method_variant: fever-real-screen-split
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+runtime:
+  analysis_mode: fever_real_pilot_split
+  screen_source_examples: 256
+  pilot_support_examples: 8
+  support_selection_seed: 3701
+  pilot_output_root: data/benchmarks/pilots/fever

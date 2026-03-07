@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/fever_real_fixed_set_builder.yaml",
+    "--seed",
+    "5311",
+    "--output_dir",
+    "results/generated/m3-fever-real-pilot-qwen25/fixed-set",
+    "--input_root",
+    "runs/verify/m3-fever-real-pilot-qwen25"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "fever_real_fixed_set_builder",
+  "git_hash": "c44c17aac223072aef6659cc31e18ee0aefd05cd",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-real-fixed64-builder",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 5311,
+  "smoke_subset": "real_screen_eval248",
+  "stage": "M3-fever-real-pilot",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_eval248",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T11:37:44.608696+00:00",
+  "torch_version": "2.8.0+cu128"
+}

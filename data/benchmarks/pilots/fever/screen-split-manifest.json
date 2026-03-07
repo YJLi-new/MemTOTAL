@@ -1,0 +1,27 @@
+{
+  "eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-eval248.jsonl",
+  "eval_examples": 248,
+  "source_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/fever/eval-real-smoke256.jsonl",
+  "support_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/pilot-support8.jsonl",
+  "support_examples": 8,
+  "support_ids": [
+    "126173",
+    "15542",
+    "164502",
+    "182701",
+    "224140",
+    "47848",
+    "96401",
+    "99521"
+  ],
+  "support_labels": [
+    "NOT_ENOUGH_INFO",
+    "SUPPORTS",
+    "NOT_ENOUGH_INFO",
+    "SUPPORTS",
+    "REFUTES",
+    "REFUTES",
+    "REFUTES",
+    "NOT_ENOUGH_INFO"
+  ]
+}

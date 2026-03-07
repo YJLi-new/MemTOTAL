@@ -1,0 +1,9 @@
+{
+  "analysis_mode": "fever_real_pilot_split",
+  "eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-eval248.jsonl",
+  "eval_examples": 248,
+  "manifest_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-split-manifest.json",
+  "source_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/fever/eval-real-smoke256.jsonl",
+  "support_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/pilot-support8.jsonl",
+  "support_examples": 8
+}

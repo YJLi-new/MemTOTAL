@@ -29,7 +29,7 @@
   - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/arm_pairwise_compare.csv`
   - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/report.md`
 
-## 结果
+## 第一轮结果
 
 这轮 real pilot 的五条臂在同一个 hard `fixed100` 上全部没有翻正收益：
 
@@ -55,7 +55,7 @@ pairwise compare：
   - `flip_count_delta=0`
   - `mean_task_gain=0.0`
 
-## 这轮能下的结论
+## 第一轮能下的结论
 
 这轮已经能排除一件事：
 
@@ -65,7 +65,7 @@ pairwise compare：
 
 同样，`choice_ce_plus_margin` 这版 target objective 也没有在这轮 pilot 上带来额外收益。
 
-## 当前更像的 blocker
+## 第一轮之后更像的 blocker
 
 现在更像的不是“shared-summary 是唯一问题”，而是：
 
@@ -84,11 +84,69 @@ pairwise compare：
 
 也就是说，这批 pilot 样本里并没有自然形成的 `near_threshold_bad`。
 
+## 第二轮补充：oracle 与 FEVER control
+
+这轮后来又补了两件判别实验。
+
+### 1. Story Cloze 离线 oracle
+
+路径：
+- `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/`
+
+关键结果：
+- `best-of-two oracle` 仍然只有 `0.2`
+- `per-case alpha oracle` 达到 `0.96`
+- `80` 个 base-wrong cases 里，有 `76` 个能被离线 `alpha_i` 翻正
+
+但这个上界不能被误读成“问题已经解决”。因为这些翻正几乎都依赖极端而且不稳定的 per-case 缩放：
+- `76/76` 个被翻正的 wrong cases 全都需要 `|alpha| >= 32`
+- 其中正负号几乎对半分：`+37 / -39`
+
+这说明：
+- 当前 residual family 里确实有 decision signal
+- 但它不是“用一个统一全局 `alpha` 放大一点就能用”的那种 signal
+- 当前真正缺的是 case-conditional routing / sign selection
+
+### 2. FEVER real qwen25 control pilot
+
+路径：
+- `runs/review/m3-fever-real-pilot-qwen25/`
+- `results/generated/review/m3-fever-real-pilot-qwen25/compare/`
+
+四条臂：
+- `A = base_only`
+- `B = base + shared_summary residual`
+- `C = base + candidate_conditioned residual`
+- `D = base + candidate_conditioned residual + shuffled memory`
+
+结果：
+- `A = 0.25`
+- `B = 0.75`
+- `C = 0.25`
+- `D = 0.25`
+
+pairwise：
+- `A -> B`: `flip_count_delta=32`
+- `A -> C`: `flip_count_delta=0`
+- `C -> D`: `flip_count_delta=0`
+
+这一步很关键。它说明：
+- low-bandwidth memory residual 不是整体上都不 load-bearing
+- 在更干净的 control task 上，`shared_summary residual` 是真的能帮 decision 的
+- 当前坏掉的是这版 `candidate_conditioned late fusion`，而不是 memory idea 本身
+
+## 现在最稳妥的结论
+
+- `Story Cloze` 当前更像 artifact-heavy stress test，而不是总 idea 的生死判官。
+- 当前 `candidate_conditioned` 分支的失败，不能直接推出“memory idea 不行”。
+- 但它已经足够说明：这版 `candidate_conditioned late fusion` 不能直接扩大 sweep，也不该直接上 `Qwen3-8B`。
+- 如果下一轮要继续，应该先在像 `FEVER` 这样的 control task 上把 candidate-conditioned decision path 修到能稳定优于 `shared_summary`，再回到 `Story Cloze`。
+
 ## 下一步建议
 
 下一轮不要再回去扫全局 loss/sample。
 
-更合理的顺序是：
-- 先扩大 screening pool，重新构造真正带 near-threshold cases 的 fixed-set
-- 再做 competitor-aware inner-loop / direct pairwise objective
-- 再做 conditional / case-level residual calibration，而不是只看统一的全局 `alpha`
+更合理的顺序现在是：
+- 先保留 `FEVER` 作为正 control，修 candidate-conditioned decision path
+- 优先尝试 `shared residual + candidate delta` 这类更保守的晚融合，而不是直接用当前这版 candidate residual 替换决策
+- 只有当新的 candidate 分支先在 `FEVER` 上跑出真实净增益，再回到 `Story Cloze`

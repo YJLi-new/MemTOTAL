@@ -1,0 +1,5 @@
+base_task_score,bucket,candidate_task_score,examples,oracle_best_of_two_flip_gain,oracle_best_of_two_task_score,oracle_per_case_alpha_flip_gain,oracle_per_case_alpha_task_score
+1.0,base_correct_control,1.0,20,0,1.0,0,1.0
+0.0,improving_but_unflipped,0.0,40,0,0.0,39,0.975
+0.0,stubborn_wrong_other,0.0,20,0,0.0,20,1.0
+0.0,stubborn_wrong_story_context,0.0,20,0,0.0,17,0.85
