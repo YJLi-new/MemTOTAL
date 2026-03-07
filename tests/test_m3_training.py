@@ -447,12 +447,20 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_b_metrics["trainable_module"], "reader.queries+fuser")
             self.assertEqual(stage_b_metrics["query_candidate_pool_policy"], "exclude_support_for_query_eval")
             self.assertEqual(stage_b_metrics["support_candidate_pool_policy"], "support_only_for_inner_loop")
+            self.assertEqual(stage_b_metrics["retrieval_negative_count"], 7)
+            self.assertEqual(stage_b_metrics["meta_episodes"], 6)
+            self.assertEqual(stage_b_metrics["inner_steps"], 1)
+            self.assertEqual(stage_b_metrics["meta_learning_rate"], 0.05)
 
             stage_c_metrics = json.loads(stage_c_dir.joinpath("metrics.json").read_text())
             self.assertEqual(stage_c_metrics["query_objective"], "continuation_retrieval")
             self.assertIn("zero_shot_task_score", stage_c_metrics)
             self.assertIn("best_adapt_task_score", stage_c_metrics)
             self.assertEqual(stage_c_metrics["task_metric_name"], "accuracy")
+            self.assertEqual(stage_c_metrics["retrieval_negative_count"], 7)
+            self.assertEqual(stage_c_metrics["adapt_learning_rate"], 0.2)
+            self.assertEqual(stage_c_metrics["adapt_steps"], 3)
+            self.assertEqual(stage_c_metrics["adapt_shots"], [0, 3])
 
             with stage_c_dir.joinpath("adapt_curve.csv").open() as handle:
                 rows = list(csv.DictReader(handle))

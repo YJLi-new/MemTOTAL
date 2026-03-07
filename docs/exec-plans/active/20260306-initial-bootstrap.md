@@ -214,6 +214,7 @@
 - 2026-03-07 00:30 UTC: 已对 benchmark-native retrieval 协议做 follow-up 修正：`Stage B/C` 的 query/val 候选池现显式排除 support continuations，inner-loop support update 只在 support pool 内做 retrieval。最新 canonical run 仍未完全翻正，但已把 `mean_adaptation_gain` 压到 `-3.577272097269694e-05`（qwen25）与 `-5.6743621826171875e-05`（qwen3），说明当前 blocker 已从“协议明显错误”收缩为“接近零增益的 smoke 调优问题”。
 - 2026-03-07 01:10 UTC: 已将 benchmark-native `core4` 的 canonical 结构从早期 `smoke4/2x2` 升级为 `smoke8/3x3`：`configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml` 现固定指向 `gsm8k / kodcode / gpqa / story_cloze` 的 `eval-real-smoke8.jsonl`，并使用 `support_size=3`、`query_size=3`。
 - 2026-03-07 01:10 UTC: 在新的 `smoke8/3x3` canonical 配置上，两档 backbone 的 benchmark-native `Stage B` 已首次翻到正向 meta gain：`runs/verify/m3-core4-qwen25/stage-b/metrics.json` 当前记录 `mean_adaptation_gain=1.903374989827474e-05`，`runs/verify/m3-core4-qwen3/stage-b/metrics.json` 当前记录 `mean_adaptation_gain=0.0007965167363484701`。这说明 retrieval-style Stage B 的最小 smoke 证据已经成立，但当前 margin 仍然较小，后续仍需继续扩大稳定性。
+- 2026-03-07 03:20 UTC: 已补齐 `Stage B/C` 的 runtime hyperparameter 记账：`metrics.json` 现在会显式写出 `retrieval_negative_count / meta_episodes / inner_steps / inner_learning_rate / meta_learning_rate / adapt_learning_rate / adapt_steps / adapt_shots`。这次修正不改变训练逻辑，目标是让后续 benchmark-native probe 直接可比，而不是必须回看 `config.snapshot.yaml`。
 
 ## Surprises & Discoveries
 

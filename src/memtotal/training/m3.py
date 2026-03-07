@@ -599,6 +599,15 @@ def run_stage_b(
             "training_stage": "stage_b",
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
+            "retrieval_negative_count": retrieval_negative_count,
+            "meta_episodes": int(config["runtime"].get("meta_episodes", 0)),
+            "inner_steps": int(config["runtime"].get("inner_steps", 0)),
+            "inner_learning_rate": float(config["runtime"].get("inner_learning_rate", 0.0)),
+            "meta_learning_rate": float(config["runtime"].get("meta_learning_rate", 0.0)),
+            "multitask_steps": int(config["runtime"].get("multitask_steps", config["runtime"].get("meta_episodes", 0))),
+            "multitask_learning_rate": float(
+                config["runtime"].get("multitask_learning_rate", config["runtime"].get("meta_learning_rate", 0.0))
+            ),
             "query_candidate_pool_policy": (
                 "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
             ),
@@ -828,6 +837,15 @@ def run_stage_b(
         "training_stage": "stage_b",
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
+        "retrieval_negative_count": retrieval_negative_count,
+        "meta_episodes": int(config["runtime"].get("meta_episodes", 0)),
+        "inner_steps": int(config["runtime"].get("inner_steps", 0)),
+        "inner_learning_rate": float(config["runtime"].get("inner_learning_rate", 0.0)),
+        "meta_learning_rate": float(config["runtime"].get("meta_learning_rate", 0.0)),
+        "multitask_steps": int(config["runtime"].get("multitask_steps", config["runtime"].get("meta_episodes", 0))),
+        "multitask_learning_rate": float(
+            config["runtime"].get("multitask_learning_rate", config["runtime"].get("meta_learning_rate", 0.0))
+        ),
         "query_candidate_pool_policy": (
             "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
@@ -1100,6 +1118,7 @@ def run_stage_c(
         "target_domain": manifest["target_domain"],
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
+        "retrieval_negative_count": retrieval_negative_count,
         "query_candidate_pool_policy": (
             "exclude_support_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
@@ -1109,6 +1128,9 @@ def run_stage_c(
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
+        "adapt_learning_rate": adapt_lr,
+        "adapt_steps": max_steps,
+        "adapt_shots": shots_list,
         "zero_shot_query_loss": zero_shot_row["query_loss"],
         "zero_shot_query_accuracy": zero_shot_row["query_accuracy"],
         "zero_shot_objective_loss": zero_shot_row["objective_loss"],
