@@ -313,7 +313,7 @@ def _build_task_evaluator_for_example(example: dict[str, Any]) -> TaskEvaluator:
 def _evaluate_task_example(
     runtime: MemoryRuntime,
     example: dict[str, Any],
-) -> tuple[float, str]:
+) -> dict[str, object]:
     evaluator = _build_task_evaluator_for_example(example)
     if evaluator.evaluator_type == "multiple_choice":
         choices = example.get("choices", [])
@@ -322,19 +322,32 @@ def _evaluate_task_example(
         candidate_labels = [str(choice["label"]) for choice in choices]
         candidate_texts = [str(choice["text"]) for choice in choices]
         candidate_states = runtime.backbone.summarize_texts(candidate_texts)
-        predicted_label, _, _ = runtime.predict_label(
-            example,
-            candidate_states=candidate_states,
-            candidate_labels=candidate_labels,
-        )
-        predicted_text = next(
-            str(choice["text"]) for choice in choices if str(choice["label"]) == predicted_label
-        )
+        forward = runtime.forward_example(example)
+        memory_summary = runtime.summarize_memory_short(forward.memory_short)
+        scores = runtime.score_candidates(memory_summary, candidate_states)
+        probabilities = torch.softmax(scores, dim=0)
+        predicted_index = int(torch.argmax(scores).item())
+        predicted_label = candidate_labels[predicted_index]
+        predicted_text = candidate_texts[predicted_index]
         score_payload = evaluator.evaluate_prediction(
             {"label": predicted_label, "text": predicted_text},
             example,
         )
-        return float(score_payload["score"]), evaluator.metric_name
+        gold_label = str(example["label"])
+        gold_index = candidate_labels.index(gold_label)
+        if len(candidate_labels) > 1:
+            best_other_score = max(
+                float(score.item()) for index, score in enumerate(scores) if index != gold_index
+            )
+        else:
+            best_other_score = float(scores[gold_index].item())
+        return {
+            "task_score": float(score_payload["score"]),
+            "task_metric_name": evaluator.metric_name,
+            "task_proxy_score": float(probabilities[gold_index].item()),
+            "task_proxy_name": "gold_choice_probability",
+            "task_margin": float(scores[gold_index].item()) - best_other_score,
+        }
 
     forward = runtime.forward_example(example)
     generated_text = runtime.backbone.generate(
@@ -342,24 +355,51 @@ def _evaluate_task_example(
         memory_tokens=forward.generation_memory,
     )[0]
     score_payload = evaluator.evaluate_prediction({"text": generated_text}, example)
-    return float(score_payload["score"]), evaluator.metric_name
+    score = float(score_payload["score"])
+    return {
+        "task_score": score,
+        "task_metric_name": evaluator.metric_name,
+        "task_proxy_score": score,
+        "task_proxy_name": evaluator.metric_name,
+        "task_margin": 0.0,
+    }
 
 
 def _mean_task_score(
     runtime: MemoryRuntime,
     examples: list[dict[str, Any]],
-) -> tuple[float, str]:
-    scores: list[float] = []
+) -> dict[str, object]:
+    task_scores: list[float] = []
     metric_names: list[str] = []
+    proxy_scores: list[float] = []
+    proxy_names: list[str] = []
+    task_margins: list[float] = []
     for example in examples:
-        score, metric_name = _evaluate_task_example(runtime, example)
-        scores.append(score)
-        metric_names.append(metric_name)
-    if not scores:
-        return 0.0, "none"
+        metrics = _evaluate_task_example(runtime, example)
+        task_scores.append(float(metrics["task_score"]))
+        metric_names.append(str(metrics["task_metric_name"]))
+        proxy_scores.append(float(metrics["task_proxy_score"]))
+        proxy_names.append(str(metrics["task_proxy_name"]))
+        task_margins.append(float(metrics["task_margin"]))
+    if not task_scores:
+        return {
+            "task_score": 0.0,
+            "task_metric_name": "none",
+            "task_proxy_score": 0.0,
+            "task_proxy_name": "none",
+            "task_margin": 0.0,
+        }
     unique_metric_names = sorted(set(metric_names))
     resolved_metric_name = unique_metric_names[0] if len(unique_metric_names) == 1 else "mean_score"
-    return sum(scores) / len(scores), resolved_metric_name
+    unique_proxy_names = sorted(set(proxy_names))
+    resolved_proxy_name = unique_proxy_names[0] if len(unique_proxy_names) == 1 else "mean_proxy_score"
+    return {
+        "task_score": sum(task_scores) / len(task_scores),
+        "task_metric_name": resolved_metric_name,
+        "task_proxy_score": sum(proxy_scores) / len(proxy_scores),
+        "task_proxy_name": resolved_proxy_name,
+        "task_margin": sum(task_margins) / len(task_margins),
+    }
 
 
 def _resolve_retrieval_candidates(
@@ -435,6 +475,7 @@ def _mean_continuation_retrieval_metrics(
 def _stage_c_row_key(row: dict[str, object]) -> tuple[float, float, int, int]:
     return (
         float(row.get("task_score", row.get("query_accuracy", 0.0))),
+        float(row.get("task_proxy_score", row.get("task_score", row.get("query_accuracy", 0.0)))),
         -float(row.get("objective_loss", row.get("query_loss", 0.0))),
         int(row["shot"]),
         int(row["step"]),
@@ -611,7 +652,16 @@ def run_stage_b(
                 candidate_pool_resolver=lambda _: source_examples,
                 negative_count=retrieval_negative_count,
             )
-            source_eval_task_score, source_eval_metric_name = _mean_task_score(runtime, source_examples)
+            source_eval_metrics = _mean_task_score(runtime, source_examples)
+            source_eval_task_score = float(source_eval_metrics["task_score"])
+            source_eval_metric_name = str(source_eval_metrics["task_metric_name"])
+            source_eval_task_proxy_score = float(source_eval_metrics["task_proxy_score"])
+            source_eval_task_proxy_name = str(source_eval_metrics["task_proxy_name"])
+            source_eval_task_margin = float(source_eval_metrics["task_margin"])
+        if query_objective == "label_prototype":
+            source_eval_task_proxy_score = source_eval_task_score
+            source_eval_task_proxy_name = source_eval_metric_name
+            source_eval_task_margin = 0.0
         queries_path = _save_stage_b_state(
             output_dir=output_dir,
             runtime=runtime,
@@ -653,6 +703,9 @@ def run_stage_b(
             "source_eval_query_accuracy": source_zero_shot_query_accuracy,
             "source_eval_task_score": source_eval_task_score,
             "source_eval_metric_name": source_eval_metric_name,
+            "source_eval_task_proxy_score": source_eval_task_proxy_score,
+            "source_eval_task_proxy_name": source_eval_task_proxy_name,
+            "source_eval_task_margin": source_eval_task_margin,
             "queries_meta_init": str(queries_path.resolve()),
             "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
             "source_domains": manifest["source_domains"],
@@ -852,6 +905,9 @@ def run_stage_b(
         )
         source_eval_task_score = source_zero_shot_query_accuracy
         source_eval_metric_name = "accuracy"
+        source_eval_task_proxy_score = source_eval_task_score
+        source_eval_task_proxy_name = source_eval_metric_name
+        source_eval_task_margin = 0.0
     else:
         source_zero_shot_query_loss, source_zero_shot_query_accuracy = _mean_continuation_retrieval_metrics(
             runtime,
@@ -859,7 +915,12 @@ def run_stage_b(
             candidate_pool_resolver=_source_pool_resolver,
             negative_count=retrieval_negative_count,
         )
-        source_eval_task_score, source_eval_metric_name = _mean_task_score(runtime, source_examples)
+        source_eval_metrics = _mean_task_score(runtime, source_examples)
+        source_eval_task_score = float(source_eval_metrics["task_score"])
+        source_eval_metric_name = str(source_eval_metrics["task_metric_name"])
+        source_eval_task_proxy_score = float(source_eval_metrics["task_proxy_score"])
+        source_eval_task_proxy_name = str(source_eval_metrics["task_proxy_name"])
+        source_eval_task_margin = float(source_eval_metrics["task_margin"])
     metrics = {
         "mode": "train",
         "training_stage": "stage_b",
@@ -891,6 +952,9 @@ def run_stage_b(
         "source_eval_query_accuracy": source_zero_shot_query_accuracy,
         "source_eval_task_score": source_eval_task_score,
         "source_eval_metric_name": source_eval_metric_name,
+        "source_eval_task_proxy_score": source_eval_task_proxy_score,
+        "source_eval_task_proxy_name": source_eval_task_proxy_name,
+        "source_eval_task_margin": source_eval_task_margin,
         "queries_meta_init": str(queries_path.resolve()),
         "writer_checkpoint": str((output_dir / "writer.ckpt").resolve()),
         "source_domains": manifest["source_domains"],
@@ -1007,6 +1071,9 @@ def run_stage_c(
                 )
                 task_score = objective_accuracy
                 task_metric_name = "accuracy"
+                task_proxy_score = task_score
+                task_proxy_name = task_metric_name
+                task_margin = 0.0
             else:
                 objective_loss, objective_accuracy = _mean_continuation_retrieval_metrics(
                     current_runtime,
@@ -1014,10 +1081,12 @@ def run_stage_c(
                     candidate_pool_resolver=lambda _: query_candidate_pool,
                     negative_count=retrieval_negative_count,
                 )
-                task_score, task_metric_name = _mean_task_score(
-                    current_runtime,
-                    target_episode.query_examples,
-                )
+                task_metrics = _mean_task_score(current_runtime, target_episode.query_examples)
+                task_score = float(task_metrics["task_score"])
+                task_metric_name = str(task_metrics["task_metric_name"])
+                task_proxy_score = float(task_metrics["task_proxy_score"])
+                task_proxy_name = str(task_metrics["task_proxy_name"])
+                task_margin = float(task_metrics["task_margin"])
             curve_rows.append(
                 {
                     "query_learning_mode": query_learning_mode,
@@ -1033,6 +1102,9 @@ def run_stage_c(
                     "objective_accuracy": objective_accuracy,
                     "task_score": task_score,
                     "task_metric_name": task_metric_name,
+                    "task_proxy_score": task_proxy_score,
+                    "task_proxy_name": task_proxy_name,
+                    "task_margin": task_margin,
                     "preceding_support_grad_norm": latest_support_grad_norm,
                     "preceding_support_update_max_abs": latest_support_update_max_abs,
                     "preceding_support_update_l2": latest_support_update_l2,
@@ -1109,6 +1181,9 @@ def run_stage_c(
                 "objective_accuracy",
                 "task_score",
                 "task_metric_name",
+                "task_proxy_score",
+                "task_proxy_name",
+                "task_margin",
                 "preceding_support_grad_norm",
                 "preceding_support_update_max_abs",
                 "preceding_support_update_l2",
@@ -1209,11 +1284,16 @@ def run_stage_c(
         "zero_shot_query_accuracy": zero_shot_row["query_accuracy"],
         "zero_shot_objective_loss": zero_shot_row["objective_loss"],
         "zero_shot_task_score": zero_shot_row["task_score"],
+        "zero_shot_task_proxy_score": zero_shot_row["task_proxy_score"],
+        "zero_shot_task_margin": zero_shot_row["task_margin"],
         "task_metric_name": best_row["task_metric_name"],
+        "task_proxy_name": best_row["task_proxy_name"],
         "best_adapt_query_accuracy": best_row["query_accuracy"],
         "best_adapt_query_loss": best_row["query_loss"],
         "best_adapt_objective_loss": best_row["objective_loss"],
         "best_adapt_task_score": best_row["task_score"],
+        "best_adapt_task_proxy_score": best_row["task_proxy_score"],
+        "best_adapt_task_margin": best_row["task_margin"],
         "best_adapt_shot": best_row["shot"],
         "best_adapt_step": best_row["step"],
         "adapt_curve_path": str(adapt_curve_path.resolve()),

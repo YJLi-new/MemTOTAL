@@ -37,6 +37,7 @@ def _load_seed(run_dir: Path) -> int | None:
 def _stage_c_probe_row_key(row: dict[str, object]) -> tuple[float, float, float, float]:
     return (
         float(row.get("best_adapt_task_score") or 0.0),
+        float(row.get("best_adapt_task_proxy_score") or row.get("best_adapt_task_score") or 0.0),
         float(row.get("task_gain") or 0.0),
         -float(row.get("best_adapt_query_loss") or 0.0),
         -float(row.get("trainable_parameter_count") or 0.0),
@@ -90,6 +91,10 @@ def collect_stage_c_probe_rows(
             "best_adapt_task_score": best_adapt_task_score,
             "task_gain": best_adapt_task_score - zero_shot_task_score,
             "task_metric_name": metrics.get("task_metric_name"),
+            "zero_shot_task_proxy_score": metrics.get("zero_shot_task_proxy_score"),
+            "best_adapt_task_proxy_score": metrics.get("best_adapt_task_proxy_score"),
+            "task_proxy_name": metrics.get("task_proxy_name"),
+            "best_adapt_task_margin": metrics.get("best_adapt_task_margin"),
             "zero_shot_query_loss": metrics.get("zero_shot_query_loss"),
             "best_adapt_query_loss": metrics.get("best_adapt_query_loss"),
             "best_adapt_shot": metrics.get("best_adapt_shot"),
@@ -139,6 +144,10 @@ def write_stage_c_probe_csv(output_path: str | Path, rows: list[dict[str, object
         "best_adapt_task_score",
         "task_gain",
         "task_metric_name",
+        "zero_shot_task_proxy_score",
+        "best_adapt_task_proxy_score",
+        "task_proxy_name",
+        "best_adapt_task_margin",
         "zero_shot_query_loss",
         "best_adapt_query_loss",
         "best_adapt_shot",
@@ -214,13 +223,19 @@ def write_stage_c_probe_svg(output_path: str | Path, rows: list[dict[str, object
         score_label = (
             f"{float(row.get('zero_shot_task_score') or 0.0):.3f}->{float(row.get('best_adapt_task_score') or 0.0):.3f}"
         )
+        proxy_label = (
+            f"{float(row.get('zero_shot_task_proxy_score') or 0.0):.3f}->{float(row.get('best_adapt_task_proxy_score') or 0.0):.3f}"
+        )
         parts.append(
             f"<text x='{center_x + half_bar + 16}' y='{top + 16}' font-size='12' font-family='monospace'>{value:.3f} eff={effective} score={score_label}</text>"
+        )
+        parts.append(
+            f"<text x='{center_x + half_bar + 16}' y='{top + 30}' font-size='11' font-family='monospace'>proxy={proxy_label} [{row.get('task_proxy_name') or 'none'}]</text>"
         )
         ratio = row.get("query_to_writer_grad_ratio")
         if ratio is not None:
             parts.append(
-                f"<text x='{center_x + half_bar + 16}' y='{top + 34}' font-size='11' font-family='monospace'>q/w grad ratio={float(ratio):.3e}</text>"
+                f"<text x='{center_x + half_bar + 16}' y='{top + 44}' font-size='11' font-family='monospace'>q/w grad ratio={float(ratio):.3e}</text>"
             )
     parts.append("</svg>")
     destination.write_text("".join(parts))
@@ -252,6 +267,8 @@ def run_m3_stage_c_probe_summary(
                 "seed": row["seed"],
                 "task_gain": float(row.get("task_gain") or 0.0),
                 "best_adapt_task_score": row["best_adapt_task_score"],
+                "best_adapt_task_proxy_score": row.get("best_adapt_task_proxy_score"),
+                "task_proxy_name": row.get("task_proxy_name"),
                 "best_adapt_query_loss": row["best_adapt_query_loss"],
                 "adapt_learning_rate": row["adapt_learning_rate"],
                 "adapt_steps": row["adapt_steps"],
@@ -272,6 +289,8 @@ def run_m3_stage_c_probe_summary(
             "adapt_steps": row["adapt_steps"],
             "adaptation_effective": row["adaptation_effective"],
             "best_adapt_task_score": row["best_adapt_task_score"],
+            "best_adapt_task_proxy_score": row.get("best_adapt_task_proxy_score"),
+            "task_proxy_name": row.get("task_proxy_name"),
             "best_adapt_query_loss": row["best_adapt_query_loss"],
             "trainable_parameter_count": row["trainable_parameter_count"],
             "query_to_writer_grad_ratio": row["query_to_writer_grad_ratio"],

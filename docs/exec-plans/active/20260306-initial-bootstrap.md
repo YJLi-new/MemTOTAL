@@ -227,6 +227,9 @@
 - 2026-03-07 04:20 UTC: fresh sensitivity audit 已重新跑通。`results/generated/m3-stage-c-sensitivity-audit/qwen25/metrics.json` 现记录 `query_to_memory_score_delta_ratio=0.7457097764552213`，qwen3 对应值为 `1.2928086655448818`；这说明 q-only 的函数影响已经不再是 1e-5 量级噪声。
 - 2026-03-07 04:20 UTC: fresh Stage C probe suite 已重跑到新目录 `results/generated/m3-core4-stage-c-probe-suite-v2/`。当前两档 backbone 的 `q_only` 都已 `adaptation_effective=True`；qwen25 q-only gradient audit 为 `query_to_writer_grad_ratio=0.07231639531004393`，qwen3 为 `0.057166275150394304`，且 q-only 的 `best_adapt_query_loss` 已与 writer-inclusive 变体近乎打平。
 - 2026-03-07 04:20 UTC: fresh q-only budget probe 已重跑到 `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v2/`。当前两档 backbone 的所有 budget variant 都已 `adaptation_effective=True`；qwen25 最优 objective 出现在 `lr=5.0, steps=10`，而 qwen3 的 canonical `lr=0.2, steps=3` 已最佳。由此可确认：当前 Stage C 的主 blocker 已从“q-only 参数化无效”转移到“smoke task score 对 objective 改善仍不敏感”。
+- 2026-03-07 04:37 UTC: 已为 Stage C 补齐平滑 target-side proxy：`src/memtotal/training/m3.py` 现会把 `task_proxy_score / task_proxy_name / task_margin` 写入 `adapt_curve.csv` 与 `metrics.json`；当前 multiple-choice 任务使用 `gold_choice_probability`。`src/memtotal/analysis/m3_stage_c_probe.py` 也已更新为在 official `task_score` 打平时使用 `task_proxy_score` 作为二级比较键。
+- 2026-03-07 04:37 UTC: fresh Stage C probe suite 已再次重跑到 `results/generated/m3-core4-stage-c-probe-suite-v3/`。当前 qwen25 在这组 target seed 上 official `accuracy` 三条线都停在 `0.0`，但 `best_adapt_task_proxy_score` 已能把 `q_only / w_only / w_plus_q` 分到 `0.4828866 / 0.4830253 / 0.4830246`；qwen3 的 fresh best row 也已因 proxy tie-break 回到 `q_only`。
+- 2026-03-07 04:37 UTC: fresh q-only budget probe 已再次重跑到 `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v3/`。当前两档 backbone 在 official `task_score=0.6666666666666666` 完全打平时，proxy 仍能继续比较预算；最新 `best_by_backbone` 都落在 `lr=5.0, steps=10`。这说明当前下一步应继续攻 official target metric 的稳定性，而不是重复扫 reader/optimizer 是否有效。
 
 ## Surprises & Discoveries
 

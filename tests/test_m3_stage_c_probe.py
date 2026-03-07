@@ -30,6 +30,8 @@ class M3StageCProbeTest(unittest.TestCase):
         adapt_learning_rate: float = 0.2,
         adapt_steps: int = 3,
         best_adapt_query_loss: float = 1.6,
+        zero_shot_task_proxy_score: float = 0.4,
+        best_adapt_task_proxy_score: float = 0.4,
     ) -> None:
         run_dir = root / run_name
         run_dir.mkdir(parents=True)
@@ -51,6 +53,10 @@ class M3StageCProbeTest(unittest.TestCase):
                     "zero_shot_task_score": zero_shot_task_score,
                     "best_adapt_task_score": best_adapt_task_score,
                     "task_metric_name": "accuracy",
+                    "zero_shot_task_proxy_score": zero_shot_task_proxy_score,
+                    "best_adapt_task_proxy_score": best_adapt_task_proxy_score,
+                    "task_proxy_name": "gold_choice_probability",
+                    "best_adapt_task_margin": 0.1,
                     "zero_shot_query_loss": 1.7,
                     "best_adapt_query_loss": best_adapt_query_loss,
                     "best_adapt_shot": 3,
@@ -120,6 +126,7 @@ class M3StageCProbeTest(unittest.TestCase):
             self.assertEqual(rows[0]["adapt_learning_rate"], 0.2)
             self.assertAlmostEqual(float(rows[0]["task_gain"]), 0.0)
             self.assertAlmostEqual(float(rows[0]["query_to_writer_grad_ratio"]), 1.6e-6)
+            self.assertEqual(rows[0]["task_proxy_name"], "gold_choice_probability")
 
     def test_analysis_mode_writes_stage_c_probe_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -134,6 +141,8 @@ class M3StageCProbeTest(unittest.TestCase):
                 zero_shot_task_score=0.25,
                 best_adapt_task_score=0.25,
                 adaptation_effective=False,
+                zero_shot_task_proxy_score=0.40,
+                best_adapt_task_proxy_score=0.55,
             )
             self._write_stage_c_run(
                 input_root,
@@ -143,6 +152,8 @@ class M3StageCProbeTest(unittest.TestCase):
                 zero_shot_task_score=0.25,
                 best_adapt_task_score=0.5,
                 adaptation_effective=True,
+                zero_shot_task_proxy_score=0.42,
+                best_adapt_task_proxy_score=0.75,
             )
             self._write_stage_c_run(
                 input_root,
@@ -154,6 +165,8 @@ class M3StageCProbeTest(unittest.TestCase):
                 adaptation_effective=False,
                 adapt_learning_rate=1.0,
                 best_adapt_query_loss=1.55,
+                zero_shot_task_proxy_score=0.40,
+                best_adapt_task_proxy_score=0.65,
             )
             self._write_stage_c_run(
                 input_root,
@@ -163,6 +176,8 @@ class M3StageCProbeTest(unittest.TestCase):
                 zero_shot_task_score=0.25,
                 best_adapt_task_score=0.5,
                 adaptation_effective=True,
+                zero_shot_task_proxy_score=0.35,
+                best_adapt_task_proxy_score=0.70,
             )
             self._write_gradient_audit_run(
                 input_root,
@@ -198,6 +213,10 @@ class M3StageCProbeTest(unittest.TestCase):
             self.assertEqual(metrics["best_by_backbone"]["Qwen2.5-1.5B-Instruct"]["adapt_steps"], 3)
             self.assertTrue(metrics["seed_consistent_by_backbone"]["Qwen2.5-1.5B-Instruct"])
             self.assertEqual(metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["run_name"], "qwen25-q-only-lr1")
+            self.assertEqual(
+                metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["task_proxy_name"],
+                "gold_choice_probability",
+            )
             self.assertFalse(metrics["q_only_by_backbone"]["Qwen2.5-1.5B-Instruct"]["adaptation_effective"])
 
 
