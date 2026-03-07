@@ -17,6 +17,8 @@ runtime:
   training_stage: stage_c
   query_objective: continuation_retrieval
   retrieval_negative_count: 7
+  retrieval_loss_type: cross_entropy_plus_margin
+  retrieval_margin_value: 0.1
   adaptation_target: q_only
   expected_query_learning_mode: meta_trained
   adapt_steps: 3

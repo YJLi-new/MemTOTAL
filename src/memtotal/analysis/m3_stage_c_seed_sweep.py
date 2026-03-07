@@ -67,6 +67,9 @@ def collect_stage_c_seed_sweep_rows(input_root: str | Path) -> list[dict[str, ob
                 "adaptation_target": metrics.get("adaptation_target"),
                 "trainable_module": metrics.get("trainable_module"),
                 "trainable_parameter_count": metrics.get("trainable_parameter_count"),
+                "retrieval_negative_count": metrics.get("retrieval_negative_count"),
+                "retrieval_loss_type": metrics.get("retrieval_loss_type"),
+                "retrieval_margin_value": metrics.get("retrieval_margin_value"),
                 "adapt_learning_rate": metrics.get("adapt_learning_rate"),
                 "adapt_steps": metrics.get("adapt_steps"),
                 "target_eval_repeats": metrics.get("target_eval_repeats"),
@@ -115,6 +118,9 @@ def write_stage_c_seed_sweep_csv(output_path: str | Path, rows: list[dict[str, o
         "adaptation_target",
         "trainable_module",
         "trainable_parameter_count",
+        "retrieval_negative_count",
+        "retrieval_loss_type",
+        "retrieval_margin_value",
         "adapt_learning_rate",
         "adapt_steps",
         "target_eval_repeats",
@@ -186,7 +192,7 @@ def write_stage_c_seed_sweep_svg(output_path: str | Path, rows: list[dict[str, o
         bar_x = center_x if value >= 0 else center_x - bar_width
         backbone = str(row["backbone"])
         parts.append(
-            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} {row.get('target_split_policy') or 'random'} {row.get('target_support_weighting') or 'uniform'} {row.get('target_support_selection_policy') or 'plain'} seed={row['seed']}</text>"
+            f"<text x='24' y='{top + 16}' font-size='12' font-family='monospace'>{backbone} loss={row.get('retrieval_loss_type') or 'cross_entropy'} neg={row.get('retrieval_negative_count') or 0} {row.get('target_split_policy') or 'random'} {row.get('target_support_weighting') or 'uniform'} {row.get('target_support_selection_policy') or 'plain'} seed={row['seed']}</text>"
         )
         parts.append(
             f"<rect x='{center_x - half_bar}' y='{top}' width='{half_bar * 2}' height='24' fill='#efe6d0' rx='4' />"
@@ -262,6 +268,15 @@ def run_m3_stage_c_seed_sweep_summary(
             ),
             "target_support_selection_policies": sorted(
                 {str(row.get("target_support_selection_policy") or "plain") for row in group_rows}
+            ),
+            "retrieval_negative_counts": sorted(
+                {int(row.get("retrieval_negative_count") or 0) for row in group_rows}
+            ),
+            "retrieval_loss_types": sorted(
+                {str(row.get("retrieval_loss_type") or "cross_entropy") for row in group_rows}
+            ),
+            "retrieval_margin_values": sorted(
+                {float(row.get("retrieval_margin_value") or 0.0) for row in group_rows}
             ),
             "target_support_negative_pools": sorted(
                 {str(row.get("target_support_negative_pool") or "support_bank") for row in group_rows}
@@ -391,6 +406,36 @@ def run_m3_stage_c_seed_sweep_summary(
                 f"{backbone}::negative_sampler={negative_sampler}"
             ] = _summarize(grouped_rows)
 
+    by_backbone_negative_count: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        for negative_count in sorted(
+            {int(row.get("retrieval_negative_count") or 0) for row in rows if str(row["backbone"]) == backbone}
+        ):
+            grouped_rows = [
+                row
+                for row in rows
+                if str(row["backbone"]) == backbone
+                and int(row.get("retrieval_negative_count") or 0) == negative_count
+            ]
+            if not grouped_rows:
+                continue
+            by_backbone_negative_count[f"{backbone}::neg_count={negative_count}"] = _summarize(grouped_rows)
+
+    by_backbone_retrieval_loss: dict[str, dict[str, object]] = {}
+    for backbone in sorted({str(row["backbone"]) for row in rows}):
+        for loss_type in sorted(
+            {str(row.get("retrieval_loss_type") or "cross_entropy") for row in rows if str(row["backbone"]) == backbone}
+        ):
+            grouped_rows = [
+                row
+                for row in rows
+                if str(row["backbone"]) == backbone
+                and str(row.get("retrieval_loss_type") or "cross_entropy") == loss_type
+            ]
+            if not grouped_rows:
+                continue
+            by_backbone_retrieval_loss[f"{backbone}::loss={loss_type}"] = _summarize(grouped_rows)
+
     metrics = {
         "mode": "analysis",
         "analysis_mode": "m3_stage_c_seed_sweep_summary",
@@ -406,6 +451,8 @@ def run_m3_stage_c_seed_sweep_summary(
         "by_backbone_support_bank_size": by_backbone_support_bank_size,
         "by_backbone_support_negative_pool": by_backbone_support_negative_pool,
         "by_backbone_support_negative_sampler": by_backbone_support_negative_sampler,
+        "by_backbone_negative_count": by_backbone_negative_count,
+        "by_backbone_retrieval_loss": by_backbone_retrieval_loss,
     }
     write_json(output_dir / "metrics.json", metrics)
     return metrics

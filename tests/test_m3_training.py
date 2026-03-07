@@ -28,6 +28,7 @@ from memtotal.pipeline import MemoryRuntime
 from memtotal.training.m3 import (
     _build_stage_c_episode_states,
     _continuation_retrieval_loss,
+    _pairwise_margin_loss,
     _resolve_episode_support_weights,
     _resolve_retrieval_candidates,
     _select_label_diverse_examples,
@@ -264,6 +265,70 @@ class M3TrainingTest(unittest.TestCase):
         )
         self.assertEqual(resolved[0]["id"], "anchor")
         self.assertEqual(resolved[1]["id"], "near")
+
+    def test_pairwise_margin_loss_only_penalizes_gaps_below_margin(self) -> None:
+        scores = torch.tensor([0.20, 0.15, -0.20], dtype=torch.float32)
+        loss = _pairwise_margin_loss(scores, margin_value=0.1)
+        self.assertAlmostEqual(float(loss.item()), 0.025, places=6)
+        zero_loss = _pairwise_margin_loss(scores, margin_value=0.0)
+        self.assertAlmostEqual(float(zero_loss.item()), 0.0, places=6)
+
+    def test_continuation_retrieval_loss_supports_margin_variants(self) -> None:
+        class FakeBackbone:
+            def summarize_texts(self, texts):
+                mapping = {
+                    "positive": torch.tensor([1.0, 0.0]),
+                    "hard-negative": torch.tensor([0.95, 0.0]),
+                    "easy-negative": torch.tensor([0.0, 1.0]),
+                }
+                return torch.stack([mapping[str(text)] for text in texts])
+
+        class FakeRuntime:
+            def __init__(self) -> None:
+                self.backbone = FakeBackbone()
+
+            def forward_example(self, example):
+                return SimpleNamespace(memory_short=torch.tensor([[[1.0, 0.0]]], dtype=torch.float32))
+
+            def summarize_memory_short(self, memory_short):
+                return memory_short.squeeze(0).squeeze(0)
+
+            def score_candidates(self, memory_summary, candidate_states):
+                return torch.mv(candidate_states, memory_summary)
+
+        example = {"id": "anchor", "continuation": "positive"}
+        candidate_pool = [
+            example,
+            {"id": "hard", "continuation": "hard-negative"},
+            {"id": "easy", "continuation": "easy-negative"},
+        ]
+        ce_loss, accuracy = _continuation_retrieval_loss(
+            FakeRuntime(),
+            example,
+            candidate_pool=candidate_pool,
+            negative_count=2,
+            loss_type="cross_entropy",
+            margin_value=0.1,
+        )
+        hybrid_loss, _ = _continuation_retrieval_loss(
+            FakeRuntime(),
+            example,
+            candidate_pool=candidate_pool,
+            negative_count=2,
+            loss_type="cross_entropy_plus_margin",
+            margin_value=0.1,
+        )
+        margin_only_loss, _ = _continuation_retrieval_loss(
+            FakeRuntime(),
+            example,
+            candidate_pool=candidate_pool,
+            negative_count=2,
+            loss_type="margin_pairwise",
+            margin_value=0.1,
+        )
+        self.assertEqual(accuracy, 1.0)
+        self.assertGreater(float(hybrid_loss.item()), float(ce_loss.item()))
+        self.assertGreater(float(margin_only_loss.item()), 0.0)
 
     def test_resolve_episode_support_weights_supports_weighting_modes(self) -> None:
         self.assertEqual(
@@ -582,6 +647,8 @@ class M3TrainingTest(unittest.TestCase):
             self.assertEqual(stage_b_metrics["source_eval_metric_name"], "mean_score")
             self.assertIn("source_eval_task_proxy_score", stage_b_metrics)
             self.assertIn("source_eval_task_proxy_name", stage_b_metrics)
+            self.assertEqual(stage_b_metrics["retrieval_loss_type"], "cross_entropy")
+            self.assertEqual(stage_b_metrics["retrieval_margin_value"], 0.1)
             self.assertEqual(stage_b_metrics["stage_b_trainable_target"], "queries_plus_fuser")
             self.assertEqual(stage_b_metrics["trainable_module"], "reader.queries+fuser")
             self.assertEqual(stage_b_metrics["query_candidate_pool_policy"], "exclude_support_for_query_eval")
@@ -600,6 +667,8 @@ class M3TrainingTest(unittest.TestCase):
             self.assertIn("best_adapt_task_proxy_score", stage_c_metrics)
             self.assertEqual(stage_c_metrics["task_proxy_name"], "gold_choice_probability")
             self.assertEqual(stage_c_metrics["retrieval_negative_count"], 7)
+            self.assertEqual(stage_c_metrics["retrieval_loss_type"], "cross_entropy_plus_margin")
+            self.assertEqual(stage_c_metrics["retrieval_margin_value"], 0.1)
             self.assertEqual(stage_c_metrics["adapt_learning_rate"], 0.2)
             self.assertEqual(stage_c_metrics["adapt_steps"], 3)
             self.assertEqual(stage_c_metrics["adapt_shots"], [0, 3])
@@ -628,6 +697,8 @@ class M3TrainingTest(unittest.TestCase):
             self.assertGreaterEqual(len(rows), 2)
             self.assertIn("task_score", rows[0])
             self.assertIn("objective_loss", rows[0])
+            self.assertIn("retrieval_loss_type", rows[0])
+            self.assertIn("retrieval_margin_value", rows[0])
             self.assertIn("task_proxy_score", rows[0])
             self.assertIn("task_proxy_name", rows[0])
             self.assertIn("task_margin", rows[0])

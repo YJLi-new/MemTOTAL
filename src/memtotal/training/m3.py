@@ -70,6 +70,32 @@ def _resolve_retrieval_negative_count(config: dict) -> int:
     return int(config["runtime"].get("retrieval_negative_count", 7))
 
 
+def _resolve_retrieval_loss_type(config: dict) -> str:
+    loss_type = str(config["runtime"].get("retrieval_loss_type", "cross_entropy"))
+    aliases = {
+        "ce": "cross_entropy",
+        "cross_entropy": "cross_entropy",
+        "margin": "margin_pairwise",
+        "margin_pairwise": "margin_pairwise",
+        "ce_plus_margin": "cross_entropy_plus_margin",
+        "cross_entropy_plus_margin": "cross_entropy_plus_margin",
+    }
+    normalized = aliases.get(loss_type)
+    if normalized is None:
+        raise ValueError(
+            f"Unsupported runtime.retrieval_loss_type={loss_type}. "
+            "Expected one of cross_entropy, margin_pairwise, cross_entropy_plus_margin."
+        )
+    return normalized
+
+
+def _resolve_retrieval_margin_value(config: dict) -> float:
+    margin_value = float(config["runtime"].get("retrieval_margin_value", 0.1))
+    if margin_value < 0.0:
+        raise ValueError("runtime.retrieval_margin_value must be non-negative.")
+    return margin_value
+
+
 def _resolve_target_eval_repeats(config: dict) -> int:
     return max(1, int(config["runtime"].get("target_eval_repeats", 1)))
 
@@ -789,6 +815,8 @@ def _continuation_retrieval_loss(
     candidate_pool: list[dict[str, Any]],
     negative_count: int,
     negative_sampler: str = "deterministic_id",
+    loss_type: str = "cross_entropy",
+    margin_value: float = 0.1,
 ) -> tuple[torch.Tensor, float]:
     candidate_examples = _resolve_retrieval_candidates(
         example,
@@ -803,9 +831,29 @@ def _continuation_retrieval_loss(
         [str(row["continuation"]) for row in candidate_examples]
     )
     scores = runtime.score_candidates(memory_summary, candidate_states)
-    loss = F.cross_entropy(scores.unsqueeze(0), torch.tensor([0], dtype=torch.long))
+    cross_entropy_loss = F.cross_entropy(scores.unsqueeze(0), torch.tensor([0], dtype=torch.long))
+    margin_loss = _pairwise_margin_loss(scores, margin_value=margin_value)
+    if loss_type == "cross_entropy":
+        loss = cross_entropy_loss
+    elif loss_type == "margin_pairwise":
+        loss = margin_loss
+    elif loss_type == "cross_entropy_plus_margin":
+        loss = cross_entropy_loss + margin_loss
+    else:
+        raise ValueError(
+            f"Unsupported retrieval loss_type={loss_type}. "
+            "Expected one of cross_entropy, margin_pairwise, cross_entropy_plus_margin."
+        )
     accuracy = float(int(torch.argmax(scores).item()) == 0)
     return loss, accuracy
+
+
+def _pairwise_margin_loss(scores: torch.Tensor, *, margin_value: float) -> torch.Tensor:
+    if scores.numel() <= 1 or margin_value <= 0.0:
+        return scores.new_zeros(())
+    positive_score = scores[0]
+    negative_scores = scores[1:]
+    return torch.relu(margin_value - (positive_score - negative_scores)).mean()
 
 
 def _mean_continuation_retrieval_metrics(
@@ -814,6 +862,8 @@ def _mean_continuation_retrieval_metrics(
     *,
     candidate_pool_resolver,
     negative_count: int,
+    loss_type: str = "cross_entropy",
+    margin_value: float = 0.1,
 ) -> tuple[float, float]:
     losses: list[torch.Tensor] = []
     accuracies: list[float] = []
@@ -823,6 +873,8 @@ def _mean_continuation_retrieval_metrics(
             example,
             candidate_pool=candidate_pool_resolver(example),
             negative_count=negative_count,
+            loss_type=loss_type,
+            margin_value=margin_value,
         )
         losses.append(loss)
         accuracies.append(accuracy)
@@ -847,6 +899,8 @@ def _save_stage_b_state(
     source_domains: list[str],
     query_learning_mode: str,
     query_objective: str,
+    retrieval_loss_type: str,
+    retrieval_margin_value: float,
     stage_b_trainable_target: str,
     writer_checkpoint: Path,
 ) -> Path:
@@ -860,6 +914,8 @@ def _save_stage_b_state(
             "source_domains": source_domains,
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
+            "retrieval_loss_type": retrieval_loss_type,
+            "retrieval_margin_value": retrieval_margin_value,
             "stage_b_trainable_target": stage_b_trainable_target,
         },
         queries_path,
@@ -962,6 +1018,8 @@ def run_stage_b(
     stage_b_trainable_target = _resolve_stage_b_trainable_target(config)
     query_objective = _resolve_query_objective(config)
     retrieval_negative_count = _resolve_retrieval_negative_count(config)
+    retrieval_loss_type = _resolve_retrieval_loss_type(config)
+    retrieval_margin_value = _resolve_retrieval_margin_value(config)
     trainable_parameters, trainable_module = _stage_b_trainable_parameters(
         runtime,
         stage_b_trainable_target,
@@ -1008,6 +1066,8 @@ def run_stage_b(
                 source_examples,
                 candidate_pool_resolver=lambda _: source_examples,
                 negative_count=retrieval_negative_count,
+                loss_type=retrieval_loss_type,
+                margin_value=retrieval_margin_value,
             )
             source_eval_metrics = _mean_task_score(runtime, source_examples)
             source_eval_task_score = float(source_eval_metrics["task_score"])
@@ -1026,6 +1086,8 @@ def run_stage_b(
             source_domains=manifest["source_domains"],
             query_learning_mode=query_learning_mode,
             query_objective=query_objective,
+            retrieval_loss_type=retrieval_loss_type,
+            retrieval_margin_value=retrieval_margin_value,
             stage_b_trainable_target=stage_b_trainable_target,
             writer_checkpoint=output_dir / "writer.ckpt",
         )
@@ -1035,6 +1097,8 @@ def run_stage_b(
             "query_learning_mode": query_learning_mode,
             "query_objective": query_objective,
             "retrieval_negative_count": retrieval_negative_count,
+            "retrieval_loss_type": retrieval_loss_type,
+            "retrieval_margin_value": retrieval_margin_value,
             "meta_episodes": int(config["runtime"].get("meta_episodes", 0)),
             "inner_steps": int(config["runtime"].get("inner_steps", 0)),
             "inner_learning_rate": float(config["runtime"].get("inner_learning_rate", 0.0)),
@@ -1125,6 +1189,8 @@ def run_stage_b(
                     episode.query_examples,
                     candidate_pool_resolver=lambda _: query_candidate_pool,
                     negative_count=retrieval_negative_count,
+                    loss_type=retrieval_loss_type,
+                    margin_value=retrieval_margin_value,
                 )
             for _ in range(inner_steps):
                 if query_objective == "label_prototype":
@@ -1142,15 +1208,17 @@ def run_stage_b(
                 else:
                     support_loss = torch.stack(
                         [
-                            _continuation_retrieval_loss(
-                                fast_runtime,
-                                example,
-                                candidate_pool=support_candidate_pool,
-                                negative_count=retrieval_negative_count,
-                            )[0]
-                            for example in episode.support_examples
-                        ]
-                    ).mean()
+                                _continuation_retrieval_loss(
+                                    fast_runtime,
+                                    example,
+                                    candidate_pool=support_candidate_pool,
+                                    negative_count=retrieval_negative_count,
+                                    loss_type=retrieval_loss_type,
+                                    margin_value=retrieval_margin_value,
+                                )[0]
+                                for example in episode.support_examples
+                            ]
+                        ).mean()
                 inner_optimizer.zero_grad()
                 support_loss.backward()
                 inner_optimizer.step()
@@ -1173,6 +1241,8 @@ def run_stage_b(
                     episode.query_examples,
                     candidate_pool_resolver=lambda _: query_candidate_pool,
                     negative_count=retrieval_negative_count,
+                    loss_type=retrieval_loss_type,
+                    margin_value=retrieval_margin_value,
                 )
 
             with torch.no_grad():
@@ -1225,6 +1295,8 @@ def run_stage_b(
                     example,
                     candidate_pool=source_examples,
                     negative_count=retrieval_negative_count,
+                    loss_type=retrieval_loss_type,
+                    margin_value=retrieval_margin_value,
                 )
             loss.backward()
             optimizer.step()
@@ -1246,6 +1318,8 @@ def run_stage_b(
         source_domains=manifest["source_domains"],
         query_learning_mode=query_learning_mode,
         query_objective=query_objective,
+        retrieval_loss_type=retrieval_loss_type,
+        retrieval_margin_value=retrieval_margin_value,
         stage_b_trainable_target=stage_b_trainable_target,
         writer_checkpoint=output_dir / "writer.ckpt",
     )
@@ -1271,6 +1345,8 @@ def run_stage_b(
             source_examples,
             candidate_pool_resolver=_source_pool_resolver,
             negative_count=retrieval_negative_count,
+            loss_type=retrieval_loss_type,
+            margin_value=retrieval_margin_value,
         )
         source_eval_metrics = _mean_task_score(runtime, source_examples)
         source_eval_task_score = float(source_eval_metrics["task_score"])
@@ -1284,6 +1360,8 @@ def run_stage_b(
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
         "retrieval_negative_count": retrieval_negative_count,
+        "retrieval_loss_type": retrieval_loss_type,
+        "retrieval_margin_value": retrieval_margin_value,
         "meta_episodes": int(config["runtime"].get("meta_episodes", 0)),
         "inner_steps": int(config["runtime"].get("inner_steps", 0)),
         "inner_learning_rate": float(config["runtime"].get("inner_learning_rate", 0.0)),
@@ -1346,6 +1424,8 @@ def run_stage_c(
     expected_query_learning_mode = _resolve_expected_stage_c_query_learning_mode(config)
     query_objective = _resolve_query_objective(config)
     retrieval_negative_count = _resolve_retrieval_negative_count(config)
+    retrieval_loss_type = _resolve_retrieval_loss_type(config)
+    retrieval_margin_value = _resolve_retrieval_margin_value(config)
     target_eval_repeats = _resolve_target_eval_repeats(config)
     target_episode_repeats = _resolve_target_episode_repeats(config)
     target_episode_policy = _resolve_target_episode_policy(config)
@@ -1499,6 +1579,8 @@ def run_stage_c(
                             query_examples,
                             candidate_pool_resolver=lambda _: query_candidate_pool,
                             negative_count=retrieval_negative_count,
+                            loss_type=retrieval_loss_type,
+                            margin_value=retrieval_margin_value,
                         )
                         task_metrics = _mean_task_score(current_runtime, query_examples)
                         task_score = float(task_metrics["task_score"])
@@ -1541,6 +1623,8 @@ def run_stage_c(
                     "adaptation_target": adaptation_target,
                     "trainable_module": trainable_module,
                     "trainable_parameter_count": trainable_parameter_count,
+                    "retrieval_loss_type": retrieval_loss_type,
+                    "retrieval_margin_value": retrieval_margin_value,
                     "shot": shot,
                     "step": step,
                     "target_eval_repeats": target_eval_repeats,
@@ -1619,6 +1703,8 @@ def run_stage_c(
                                     candidate_pool=support_candidate_pool,
                                     negative_count=retrieval_negative_count,
                                     negative_sampler=target_support_negative_sampler,
+                                    loss_type=retrieval_loss_type,
+                                    margin_value=retrieval_margin_value,
                                 )[0]
                                 for example in support_examples
                             ]
@@ -1675,6 +1761,8 @@ def run_stage_c(
                                     candidate_pool=support_candidate_pool,
                                     negative_count=retrieval_negative_count,
                                     negative_sampler=target_support_negative_sampler,
+                                    loss_type=retrieval_loss_type,
+                                    margin_value=retrieval_margin_value,
                                 )[0]
                                 for example in support_examples
                             ]
@@ -1715,6 +1803,8 @@ def run_stage_c(
                 "adaptation_target",
                 "trainable_module",
                 "trainable_parameter_count",
+                "retrieval_loss_type",
+                "retrieval_margin_value",
                 "shot",
                 "step",
                 "target_eval_repeats",
@@ -1783,6 +1873,9 @@ def run_stage_c(
         "support_candidate_pool_policy": (
             "support_bank_for_inner_loop" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
+        "retrieval_negative_count": retrieval_negative_count,
+        "retrieval_loss_type": retrieval_loss_type,
+        "retrieval_margin_value": retrieval_margin_value,
         "adaptation_target": adaptation_target,
         "trainable_module": trainable_module,
         "trainable_parameter_count": trainable_parameter_count,
@@ -1830,6 +1923,8 @@ def run_stage_c(
         "query_learning_mode": query_learning_mode,
         "query_objective": query_objective,
         "retrieval_negative_count": retrieval_negative_count,
+        "retrieval_loss_type": retrieval_loss_type,
+        "retrieval_margin_value": retrieval_margin_value,
         "query_candidate_pool_policy": (
             "fixed_target_holdout_for_query_eval" if query_objective == "continuation_retrieval" else "label_prototype"
         ),
