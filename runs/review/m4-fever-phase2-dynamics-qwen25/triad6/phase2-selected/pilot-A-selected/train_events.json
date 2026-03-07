@@ -1,0 +1,14 @@
+{
+  "events": [],
+  "snapshots": [
+    {
+      "accuracy": 0.25,
+      "dominant_label_fraction": 1.0,
+      "macro_f1": 0.2,
+      "mean_margin": -2.557648926973343,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-A-selected/snapshot_evals/step_0000",
+      "step": 0,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-A-selected/snapshot_evals/step_0000/task_case_dump.jsonl"
+    }
+  ]
+}

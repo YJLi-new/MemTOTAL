@@ -11,6 +11,7 @@ import torch
 from memtotal.analysis.m4_shared_injection import (
     run_m4_phase0_gate_sweep,
     run_m4_shared_injection_compare,
+    run_m4_shared_injection_dynamics_audit,
     run_m4_writer_information_audit,
 )
 from memtotal.training.m4_shared_injection import (
@@ -155,6 +156,31 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             "\n".join(json.dumps(row) for row in case_rows) + "\n"
         )
 
+    def _write_snapshot(
+        self,
+        run_dir: Path,
+        *,
+        step: int,
+        case_rows: list[dict[str, object]],
+    ) -> None:
+        snapshot_dir = run_dir / "snapshot_evals" / f"step_{step:04d}"
+        snapshot_dir.mkdir(parents=True)
+        accuracy = sum(int(row["predicted_correct"]) for row in case_rows) / len(case_rows)
+        (snapshot_dir / "metrics.json").write_text(
+            json.dumps(
+                {
+                    "training_stage": "shared_injection_snapshot_eval",
+                    "step": step,
+                    "best_adapt_task_score": accuracy,
+                    "best_adapt_macro_f1": accuracy,
+                    "best_adapt_task_margin": sum(float(row["final_margin"]) for row in case_rows) / len(case_rows),
+                }
+            )
+        )
+        (snapshot_dir / "task_case_dump.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in case_rows) + "\n"
+        )
+
     @mock.patch("memtotal.analysis.m4_shared_injection._build_support_text_block")
     @mock.patch("memtotal.analysis.m4_shared_injection._evaluate_examples")
     @mock.patch("memtotal.analysis.m4_shared_injection.SharedInjectionPilotRuntime")
@@ -264,7 +290,17 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
                 ],
                 dtype=torch.float32,
             )
-            shuffled = torch.randn_like(real) * 0.01
+            shuffled = torch.tensor(
+                [
+                    [0.01, 0.00, 0.00], [0.00, 0.01, 0.00],
+                    [0.00, 0.00, 0.01], [0.01, 0.01, 0.00],
+                    [0.00, 0.01, 0.01], [0.01, 0.00, 0.01],
+                    [0.01, 0.00, 0.00], [0.00, 0.01, 0.00],
+                    [0.00, 0.00, 0.01], [0.01, 0.01, 0.00],
+                    [0.00, 0.01, 0.01], [0.01, 0.00, 0.01],
+                ],
+                dtype=torch.float32,
+            )
             zero = torch.zeros_like(real)
             mock_extract.side_effect = [real, shuffled, zero]
 
@@ -323,6 +359,50 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             )
             metrics = json.loads((output_dir / "metrics.json").read_text())
             self.assertTrue(metrics["gate_passed"])
+
+    def test_dynamics_audit_detects_overshoot_and_best_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suite_root = Path(tmpdir) / "raw8" / "phase2-selected"
+            gold = ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS"]
+            a_rows = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            t_rows = _classification_rows(gold, ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS"])
+            zero_rows = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            real_step0 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            real_step16 = _classification_rows(gold, ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS"])
+            real_step64 = _classification_rows(gold, ["SUPPORTS", "REFUTES", "SUPPORTS", "SUPPORTS"])
+            shuffle_step0 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            shuffle_step16 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            shuffle_step64 = _classification_rows(gold, ["SUPPORTS", "REFUTES", "SUPPORTS", "SUPPORTS"])
+            rows = {
+                "A": a_rows,
+                "T": t_rows,
+                "I_zero": zero_rows,
+                "I_real": real_step64,
+                "I_shuffle": shuffle_step64,
+            }
+            for alias, case_rows in rows.items():
+                self._write_run(suite_root, alias=alias, case_rows=case_rows)
+            self._write_snapshot(suite_root / "I_real", step=0, case_rows=real_step0)
+            self._write_snapshot(suite_root / "I_real", step=16, case_rows=real_step16)
+            self._write_snapshot(suite_root / "I_real", step=64, case_rows=real_step64)
+            self._write_snapshot(suite_root / "I_shuffle", step=0, case_rows=shuffle_step0)
+            self._write_snapshot(suite_root / "I_shuffle", step=16, case_rows=shuffle_step16)
+            self._write_snapshot(suite_root / "I_shuffle", step=64, case_rows=shuffle_step64)
+            self._write_snapshot(suite_root / "A", step=0, case_rows=a_rows)
+            self._write_snapshot(suite_root / "T", step=0, case_rows=t_rows)
+            self._write_snapshot(suite_root / "I_zero", step=0, case_rows=zero_rows)
+
+            output_dir = Path(tmpdir) / "audit"
+            run_m4_shared_injection_dynamics_audit(
+                config={"task": {"name": "fever_real_fixed64"}},
+                output_dir=output_dir,
+                input_root=str(Path(tmpdir)),
+                dry_run=False,
+            )
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            suite_metrics = metrics["suite_best_metrics"]["raw8"]
+            self.assertTrue(suite_metrics["overshoot_detected"])
+            self.assertEqual(suite_metrics["best_step"], 16)
 
 
 if __name__ == "__main__":

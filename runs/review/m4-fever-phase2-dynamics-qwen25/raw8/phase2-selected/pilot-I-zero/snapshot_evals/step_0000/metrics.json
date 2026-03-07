@@ -1,0 +1,20 @@
+{
+  "best_adapt_macro_f1": 0.2,
+  "best_adapt_task_margin": -7.536952942609787,
+  "best_adapt_task_score": 0.25,
+  "dominant_label_fraction": 1.0,
+  "label_recall_by_class": {
+    "REFUTES": 0.0,
+    "SUPPORTS": 1.0
+  },
+  "pilot_arm_alias": "I_zero",
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "injected",
+  "step": 0,
+  "support_serialization_variant": "example_blocks_raw8",
+  "support_text_block_chars": 0,
+  "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-I-zero/snapshot_evals/step_0000/task_case_dump.jsonl",
+  "task_case_dump_rows": 64,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "zero"
+}

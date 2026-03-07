@@ -1,0 +1,426 @@
+{
+  "events": [
+    {
+      "loss": 85.60029602050781,
+      "step": 1,
+      "support_example_id": "126173",
+      "writer_frozen": true
+    },
+    {
+      "loss": 0.0003583981015253812,
+      "step": 2,
+      "support_example_id": "15542",
+      "writer_frozen": true
+    },
+    {
+      "loss": 90.11264038085938,
+      "step": 3,
+      "support_example_id": "164502",
+      "writer_frozen": true
+    },
+    {
+      "loss": 0.0009589364635758102,
+      "step": 4,
+      "support_example_id": "182701",
+      "writer_frozen": true
+    },
+    {
+      "loss": 15.412973403930664,
+      "step": 5,
+      "support_example_id": "224140",
+      "writer_frozen": true
+    },
+    {
+      "loss": 18.004430770874023,
+      "step": 6,
+      "support_example_id": "47848",
+      "writer_frozen": true
+    },
+    {
+      "loss": 8.056221008300781,
+      "step": 7,
+      "support_example_id": "96401",
+      "writer_frozen": true
+    },
+    {
+      "loss": 91.05049133300781,
+      "step": 8,
+      "support_example_id": "99521",
+      "writer_frozen": true
+    },
+    {
+      "loss": 78.48576354980469,
+      "step": 9,
+      "support_example_id": "126173",
+      "writer_frozen": true
+    },
+    {
+      "loss": 4.938939094543457,
+      "step": 10,
+      "support_example_id": "15542",
+      "writer_frozen": true
+    },
+    {
+      "loss": 68.7510986328125,
+      "step": 11,
+      "support_example_id": "164502",
+      "writer_frozen": true
+    },
+    {
+      "loss": 0.00888666883111,
+      "step": 12,
+      "support_example_id": "182701",
+      "writer_frozen": true
+    },
+    {
+      "loss": 11.16645336151123,
+      "step": 13,
+      "support_example_id": "224140",
+      "writer_frozen": true
+    },
+    {
+      "loss": 11.353599548339844,
+      "step": 14,
+      "support_example_id": "47848",
+      "writer_frozen": true
+    },
+    {
+      "loss": 6.6380414962768555,
+      "step": 15,
+      "support_example_id": "96401",
+      "writer_frozen": true
+    },
+    {
+      "loss": 54.859230041503906,
+      "step": 16,
+      "support_example_id": "99521",
+      "writer_frozen": true
+    },
+    {
+      "loss": 50.30664825439453,
+      "step": 17,
+      "support_example_id": "126173",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.575939416885376,
+      "step": 18,
+      "support_example_id": "15542",
+      "writer_frozen": false
+    },
+    {
+      "loss": 42.53203582763672,
+      "step": 19,
+      "support_example_id": "164502",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.46239328384399414,
+      "step": 20,
+      "support_example_id": "182701",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.1876092255115509,
+      "step": 21,
+      "support_example_id": "224140",
+      "writer_frozen": false
+    },
+    {
+      "loss": 1.650386929512024,
+      "step": 22,
+      "support_example_id": "47848",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.09027863293886185,
+      "step": 23,
+      "support_example_id": "96401",
+      "writer_frozen": false
+    },
+    {
+      "loss": 28.947601318359375,
+      "step": 24,
+      "support_example_id": "99521",
+      "writer_frozen": false
+    },
+    {
+      "loss": 23.5740966796875,
+      "step": 25,
+      "support_example_id": "126173",
+      "writer_frozen": false
+    },
+    {
+      "loss": 15.506710052490234,
+      "step": 26,
+      "support_example_id": "15542",
+      "writer_frozen": false
+    },
+    {
+      "loss": 14.455997467041016,
+      "step": 27,
+      "support_example_id": "164502",
+      "writer_frozen": false
+    },
+    {
+      "loss": 5.928211212158203,
+      "step": 28,
+      "support_example_id": "182701",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.013811611570417881,
+      "step": 29,
+      "support_example_id": "224140",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.8640238046646118,
+      "step": 30,
+      "support_example_id": "47848",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.2790209650993347,
+      "step": 31,
+      "support_example_id": "96401",
+      "writer_frozen": false
+    },
+    {
+      "loss": 10.148146629333496,
+      "step": 32,
+      "support_example_id": "99521",
+      "writer_frozen": false
+    },
+    {
+      "loss": 1.3218497037887573,
+      "step": 33,
+      "support_example_id": "126173",
+      "writer_frozen": false
+    },
+    {
+      "loss": 6.655823707580566,
+      "step": 34,
+      "support_example_id": "15542",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.0011428022990003228,
+      "step": 35,
+      "support_example_id": "164502",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.09906992316246033,
+      "step": 36,
+      "support_example_id": "182701",
+      "writer_frozen": false
+    },
+    {
+      "loss": 1.5741063356399536,
+      "step": 37,
+      "support_example_id": "224140",
+      "writer_frozen": false
+    },
+    {
+      "loss": 2.1751043796539307,
+      "step": 38,
+      "support_example_id": "47848",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.6338230967521667,
+      "step": 39,
+      "support_example_id": "96401",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.2605316936969757,
+      "step": 40,
+      "support_example_id": "99521",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.12617282569408417,
+      "step": 41,
+      "support_example_id": "126173",
+      "writer_frozen": false
+    },
+    {
+      "loss": 5.327423095703125,
+      "step": 42,
+      "support_example_id": "15542",
+      "writer_frozen": false
+    },
+    {
+      "loss": 1.7392138242721558,
+      "step": 43,
+      "support_example_id": "164502",
+      "writer_frozen": false
+    },
+    {
+      "loss": 1.965187430381775,
+      "step": 44,
+      "support_example_id": "182701",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.04388359561562538,
+      "step": 45,
+      "support_example_id": "224140",
+      "writer_frozen": false
+    },
+    {
+      "loss": 2.687878131866455,
+      "step": 46,
+      "support_example_id": "47848",
+      "writer_frozen": false
+    },
+    {
+      "loss": 20.798381805419922,
+      "step": 47,
+      "support_example_id": "96401",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.00018368464952800423,
+      "step": 48,
+      "support_example_id": "99521",
+      "writer_frozen": false
+    },
+    {
+      "loss": 7.724463648628443e-05,
+      "step": 49,
+      "support_example_id": "126173",
+      "writer_frozen": false
+    },
+    {
+      "loss": 2.855456829071045,
+      "step": 50,
+      "support_example_id": "15542",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.0010994586627930403,
+      "step": 51,
+      "support_example_id": "164502",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.024376198649406433,
+      "step": 52,
+      "support_example_id": "182701",
+      "writer_frozen": false
+    },
+    {
+      "loss": 2.440354824066162,
+      "step": 53,
+      "support_example_id": "224140",
+      "writer_frozen": false
+    },
+    {
+      "loss": 1.548776388168335,
+      "step": 54,
+      "support_example_id": "47848",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.5105517506599426,
+      "step": 55,
+      "support_example_id": "96401",
+      "writer_frozen": false
+    },
+    {
+      "loss": 7.121243476867676,
+      "step": 56,
+      "support_example_id": "99521",
+      "writer_frozen": false
+    },
+    {
+      "loss": 2.7897911071777344,
+      "step": 57,
+      "support_example_id": "126173",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.2850506901741028,
+      "step": 58,
+      "support_example_id": "15542",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.3495074212551117,
+      "step": 59,
+      "support_example_id": "164502",
+      "writer_frozen": false
+    },
+    {
+      "loss": 3.3727145195007324,
+      "step": 60,
+      "support_example_id": "182701",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.011829935945570469,
+      "step": 61,
+      "support_example_id": "224140",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.046204593032598495,
+      "step": 62,
+      "support_example_id": "47848",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.09735893458127975,
+      "step": 63,
+      "support_example_id": "96401",
+      "writer_frozen": false
+    },
+    {
+      "loss": 0.045730505138635635,
+      "step": 64,
+      "support_example_id": "99521",
+      "writer_frozen": false
+    }
+  ],
+  "snapshots": [
+    {
+      "accuracy": 0.25,
+      "dominant_label_fraction": 1.0,
+      "macro_f1": 0.2,
+      "mean_margin": -7.768187195062637,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0000",
+      "step": 0,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0000/task_case_dump.jsonl"
+    },
+    {
+      "accuracy": 0.234375,
+      "dominant_label_fraction": 0.984375,
+      "macro_f1": 0.18987341772151897,
+      "mean_margin": -1.2160036861896515,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0016",
+      "step": 16,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0016/task_case_dump.jsonl"
+    },
+    {
+      "accuracy": 0.578125,
+      "dominant_label_fraction": 0.59375,
+      "macro_f1": 0.5238372093023256,
+      "mean_margin": 0.13007625937461853,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0032",
+      "step": 32,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0032/task_case_dump.jsonl"
+    },
+    {
+      "accuracy": 0.6875,
+      "dominant_label_fraction": 0.921875,
+      "macro_f1": 0.411214953271028,
+      "mean_margin": 1.1342867612838745,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0064",
+      "step": 64,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/triad6/phase2-selected/pilot-I-real/snapshot_evals/step_0064/task_case_dump.jsonl"
+    }
+  ]
+}

@@ -174,6 +174,43 @@ def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def _write_snapshot_eval(
+    *,
+    snapshot_dir: Path,
+    step: int,
+    arm_alias: str,
+    arm: str,
+    writer_memory_control: str,
+    prompt_variant: str,
+    support_serialization_variant: str,
+    support_text_block: str,
+    case_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    task_case_dump_path = snapshot_dir / "task_case_dump.jsonl"
+    write_jsonl(task_case_dump_path, case_rows)
+    metrics = _classification_metrics_from_rows(case_rows)
+    payload = {
+        "training_stage": "shared_injection_snapshot_eval",
+        "pilot_arm_alias": arm_alias,
+        "shared_injection_arm": arm,
+        "writer_memory_control": writer_memory_control,
+        "prompt_variant": prompt_variant,
+        "support_serialization_variant": support_serialization_variant,
+        "support_text_block_chars": len(support_text_block),
+        "step": int(step),
+        "task_case_dump_rows": len(case_rows),
+        "task_case_dump_path": str(task_case_dump_path.resolve()),
+        "best_adapt_task_score": float(metrics["accuracy"]),
+        "best_adapt_macro_f1": float(metrics["macro_f1"]),
+        "best_adapt_task_margin": float(metrics["mean_margin"]),
+        "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
+        "label_recall_by_class": metrics["label_recall_by_class"],
+    }
+    write_json(snapshot_dir / "metrics.json", payload)
+    return payload
+
+
 def _fever_candidate_texts(prompt_variant: str) -> tuple[list[str], list[str]]:
     labels = list(FEVER_LABEL_ORDER)
     if prompt_variant == "inline_short_labels":
@@ -617,6 +654,18 @@ def run_shared_injection_pilot(
             profiler=None,
         )
         metrics = _classification_metrics_from_rows(snapshot_rows)
+        snapshot_dir = output_dir / "snapshot_evals" / f"step_{step:04d}"
+        snapshot_payload = _write_snapshot_eval(
+            snapshot_dir=snapshot_dir,
+            step=step,
+            arm_alias=arm_alias,
+            arm=arm,
+            writer_memory_control=writer_memory_control,
+            prompt_variant=prompt_variant,
+            support_serialization_variant=support_serialization_variant,
+            support_text_block=support_text_block,
+            case_rows=snapshot_rows,
+        )
         snapshot_metrics.append(
             {
                 "step": step,
@@ -624,6 +673,8 @@ def run_shared_injection_pilot(
                 "macro_f1": metrics["macro_f1"],
                 "mean_margin": metrics["mean_margin"],
                 "dominant_label_fraction": metrics["dominant_label_fraction"],
+                "snapshot_dir": str(snapshot_dir.resolve()),
+                "task_case_dump_path": snapshot_payload["task_case_dump_path"],
             }
         )
 

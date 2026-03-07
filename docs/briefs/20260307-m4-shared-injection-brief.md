@@ -199,3 +199,44 @@ pairwise compare 里最关键的四条是：
 - `M4` 的新主线仍然是对的：把 memory 放回 frozen Qwen 的主链路
 - 但现在 immediate blocker 已经不在 injection 之前，而在 injection 本身的内容方向
 - 因而下一轮的主要任务不是“继续修 gate”，而是“解释并修正 `real` 为何比 `shuffle` 更差”
+
+## M4.2：Phase 2 dynamics 进一步把 blocker 收紧了
+
+这轮又补了一层真正可核验的证据：不再只看 `Phase 2` 的单个 final compare，而是把 `raw8 / triad6` 两个 support variant 的 `step0/16/32/64` 全部落成 case dump，并做统一 dynamics audit。
+
+新增结果路径：
+
+- `runs/review/m4-fever-phase2-dynamics-qwen25/`
+- `results/generated/review/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/report.md`
+- `results/generated/review/m4-fever-phase2-dynamics-qwen25/triad6/phase2-compare/report.md`
+- `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/report.md`
+
+这轮最重要的数字是：
+
+- `raw8 final`
+  - `I-real = 0.109375 / macro_f1 = 0.1571`
+  - `I-shuffle = 0.453125 / macro_f1 = 0.4618`
+- `raw8 best step = 32`
+  - `I-real = 0.515625 / macro_f1 = 0.4572`
+  - `flip_gain_vs_shuffle = 8`
+  - `flip_gain_vs_zero = 17`
+- `triad6 final`
+  - `I-real = 0.6875 / macro_f1 = 0.4112`
+  - `I-shuffle = 0.6875 / macro_f1 = 0.6135`
+- `triad6 best step = 32`
+  - `I-real = 0.578125 / macro_f1 = 0.5238`
+  - `flip_gain_vs_shuffle = 16`
+  - `flip_gain_vs_zero = 21`
+
+现在能更准确地下结论了：
+
+- shared injection 已经不是“完全没有 real-memory signal”
+- `triad6 + step32` 已经出现了 `real > shuffle > zero` 的正向内容信号
+- 当前真正的主矛盾是：
+  - support bank 口径会改变 real prefix 的方向
+  - late-step 训练会把已经出现的正信号过冲掉
+
+所以当前下一步不再是“继续证明 prefix 有没有用”，而是：
+
+1. 把 `support variant + checkpoint selection` 做成正式 capability gate
+2. 在这个 gate 站稳后，再考虑更强的主链路注入，比如 `deep prompt / per-layer prefix`

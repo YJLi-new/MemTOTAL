@@ -731,10 +731,22 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `teacher-text upper bound`
   - `writer information audit`
   - `shared latent prefix injection` 的 `real / shuffle / zero`
-- 但 `M4.1` 的 fresh qwen25 结果也说明，当前还没到真正注入训练那一步：
-  - `Phase 0` 在 `screen248` 上失败，`A_winner` 和 `T_winner` 都塌缩到全预测 `SUPPORTS`
-  - `Phase 1 writer audit` 已给出正信号：`label_probe_passed=true`、`semantic_probe_passed=true`
-  - 所以当前 immediate blocker 已从“writer 有没有信息”进一步收缩成“support bank 本身有没有通过 prompt surface 被 frozen Qwen 正确消费”
+- `M4.1` 的上游 gate 已全部通过：
+  - `Phase 0` 已真实通过：`A_winner=answer_slot_labels`，`T_winner=answer_slot_labels + example_blocks_raw8`
+  - `Phase 1 writer audit` 也已通过：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_gate_passed=true`
+  - 因而当前已不再适合把问题归因成“prompt/support surface 没修好”或“writer 完全没信息”
+- `M4.1` 的 `Phase 2` 真实 shared injection 已经进入训练与 step 级诊断：
+  - 单看最早一版 stable compare，当前 `A=0.25 / macro_f1=0.2`，`T=0.53125 / macro_f1=0.5294`，`I-real=0.390625 / macro_f1=0.4061`，`I-shuffle=0.546875 / macro_f1=0.5031`，`I-zero=0.25 / macro_f1=0.2`
+  - 这说明 prefix 主链路已经不再是零效应，因为 `I-real > I-zero`
+  - 但它也说明当前 real support latent 方向仍然会被错误 support 反超，因为 `I-shuffle > I-real`
+- `M4.2` 又把 blocker 继续收紧到 `support variant + checkpoint selection`：
+  - `raw8` support 下，`I-real` 在 `step32` 仍能到 `0.515625 / macro_f1=0.4572`，并且 `flip_gain_vs_shuffle=8`、`flip_gain_vs_zero=17`
+  - `triad6` support 下，`I-real` 在 `step32` 已达到 `0.578125 / macro_f1=0.5238`，并且 `flip_gain_vs_shuffle=16`、`flip_gain_vs_zero=21`
+  - 但两条线在 `step64` 都被 `dynamics-audit` 标成 `overshoot_detected=true`
+  - 当前更准确的结论已经变成：shared injection 不是“完全没有 real-memory signal”，而是“已经能出正信号，但默认 support/step 口径会把它毁掉”
+- 因而当前最值得继续的不是回去修 score-side residual family，也不是直接扩 `Story Cloze` / `Qwen3-8B`，而是：
+  - 把 `support variant + checkpoint selection` 做成正式 capability gate
+  - 在这条 gate 站稳后，再升级到更强的主链路注入（如 `deep prompt / per-layer prefix`）
 
 ### P0 必须
 - [ ] 接入主套件 benchmark

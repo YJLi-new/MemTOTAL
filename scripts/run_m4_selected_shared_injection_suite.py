@@ -19,6 +19,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", required=True)
     parser.add_argument("--output_root", required=True)
     parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--prompt-variant")
+    parser.add_argument("--support-serialization")
+    parser.add_argument("--train-steps", type=int)
+    parser.add_argument("--warmup-steps", type=int)
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -27,8 +31,10 @@ def main() -> int:
     args = build_arg_parser().parse_args()
     config = load_config(args.config)
     phase0_metrics = json.loads(Path(args.phase0_metrics).read_text())
-    prompt_variant = str(phase0_metrics["selected_prompt_variant"])
-    support_serialization_variant = str(phase0_metrics["selected_support_serialization"])
+    prompt_variant = str(args.prompt_variant or phase0_metrics["selected_prompt_variant"])
+    support_serialization_variant = str(
+        args.support_serialization or phase0_metrics["selected_support_serialization"]
+    )
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     arm_specs = [
@@ -46,6 +52,10 @@ def main() -> int:
         arm_config["runtime"]["pilot_arm_alias"] = alias
         arm_config["runtime"]["shared_injection_arm"] = arm
         arm_config["runtime"]["writer_memory_control"] = memory_control
+        if args.train_steps is not None:
+            arm_config["runtime"]["pilot_train_steps"] = int(args.train_steps)
+        if args.warmup_steps is not None:
+            arm_config["runtime"]["pilot_projector_warmup_steps"] = int(args.warmup_steps)
         arm_seed = args.seed + seed_offset
         set_seed(arm_seed)
         metrics = run_shared_injection_pilot(

@@ -59,6 +59,53 @@ def _collect_shared_injection_runs(root: Path) -> dict[str, tuple[dict[str, Any]
     return runs
 
 
+def _load_snapshot_eval_rows(
+    run_dir: Path,
+) -> dict[int, tuple[dict[str, Any], list[dict[str, Any]]]]:
+    snapshot_root = run_dir / "snapshot_evals"
+    snapshots: dict[int, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    if not snapshot_root.exists():
+        return snapshots
+    for metrics_path in sorted(snapshot_root.glob("step_*/metrics.json")):
+        metrics = json.loads(metrics_path.read_text())
+        case_path = metrics_path.parent / "task_case_dump.jsonl"
+        case_rows = [
+            json.loads(line)
+            for line in case_path.read_text().splitlines()
+            if line.strip()
+        ]
+        snapshots[int(metrics["step"])] = (metrics, case_rows)
+    return snapshots
+
+
+def _resolve_phase2_suite_roots(root: Path) -> dict[str, Path]:
+    suites: dict[str, Path] = {}
+
+    def register(path: Path, suite_name: str) -> None:
+        if not path.exists():
+            return
+        direct_runs = []
+        for child in path.iterdir():
+            if not child.is_dir():
+                continue
+            metrics_path = child / "metrics.json"
+            if not metrics_path.exists():
+                continue
+            metrics = json.loads(metrics_path.read_text())
+            if metrics.get("training_stage") == "shared_injection_pilot":
+                direct_runs.append(child.name)
+        if direct_runs:
+            suites[suite_name] = path
+
+    if root.exists():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            register(child, child.name)
+            register(child / "phase2-selected", child.name)
+    return suites
+
+
 def _build_writer(config: dict[str, Any], resume: str, seed: int) -> tuple[BackboneWrapper, MemoryWriter]:
     backbone_cfg = config["backbone"]
     runtime_device = str(config["runtime"].get("device", "cpu"))
@@ -884,5 +931,174 @@ def run_m4_shared_injection_compare(
             "task_score_gap_to_T": float(summary_lookup["I_real"]["primary_score"]) - float(summary_lookup["T"]["primary_score"]),
             "macro_f1_gap_to_T": float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["T"]["macro_f1"]),
             "mean_margin_gap_to_T": float(summary_lookup["I_real"]["mean_margin"]) - float(summary_lookup["T"]["mean_margin"]),
+        },
+    )
+
+
+def run_m4_shared_injection_dynamics_audit(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    input_root: str,
+    dry_run: bool,
+) -> None:
+    del config, dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suite_roots = _resolve_phase2_suite_roots(Path(input_root).resolve())
+    if not suite_roots:
+        raise ValueError(f"No phase2-selected suite roots found under {input_root}.")
+
+    summary_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+    best_suite_metrics: dict[str, Any] = {}
+    report_lines = ["# M4 Shared Injection Dynamics Audit", ""]
+
+    for suite_name, suite_root in sorted(suite_roots.items()):
+        runs = _collect_shared_injection_runs(suite_root)
+        required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
+        missing = sorted(required - set(runs))
+        if missing:
+            raise ValueError(
+                f"Suite {suite_name} is missing required shared injection runs: {', '.join(missing)}"
+            )
+        snapshots = {
+            alias: _load_snapshot_eval_rows(run_dir)
+            for alias, (_, run_dir) in runs.items()
+        }
+        static_rows: dict[str, list[dict[str, Any]]] = {}
+        for alias in ("A", "T", "I_zero"):
+            if 0 in snapshots[alias]:
+                static_rows[alias] = snapshots[alias][0][1]
+            else:
+                _, static_rows[alias] = _load_case_rows(runs[alias][1])
+        common_steps = sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"]))
+        if not common_steps:
+            raise ValueError(f"Suite {suite_name} has no overlapping I_real/I_shuffle snapshot steps.")
+
+        suite_i_real_rows: list[dict[str, Any]] = []
+        for step in common_steps:
+            step_case_rows = {
+                "A": static_rows["A"],
+                "T": static_rows["T"],
+                "I_zero": static_rows["I_zero"],
+                "I_real": snapshots["I_real"][step][1],
+                "I_shuffle": snapshots["I_shuffle"][step][1],
+            }
+            step_metrics = {
+                alias: _classification_metrics_from_rows(rows)
+                for alias, rows in step_case_rows.items()
+            }
+            for alias, metrics in step_metrics.items():
+                summary_rows.append(
+                    {
+                        "suite": suite_name,
+                        "step": int(step),
+                        "alias": alias,
+                        "task_score": float(metrics["accuracy"]),
+                        "macro_f1": float(metrics["macro_f1"]),
+                        "mean_margin": float(metrics["mean_margin"]),
+                        "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
+                    }
+                )
+            for left_alias, right_alias in [("A", "I_real"), ("I_shuffle", "I_real"), ("I_zero", "I_real")]:
+                compare = _pairwise_compare(
+                    {str(row["example_id"]): row for row in step_case_rows[left_alias]},
+                    {str(row["example_id"]): row for row in step_case_rows[right_alias]},
+                )
+                pairwise_rows.append(
+                    {
+                        "suite": suite_name,
+                        "step": int(step),
+                        "left_alias": left_alias,
+                        "right_alias": right_alias,
+                        **compare,
+                    }
+                )
+            pairwise_lookup = {
+                (row["left_alias"], row["right_alias"]): row
+                for row in pairwise_rows
+                if row["suite"] == suite_name and int(row["step"]) == int(step)
+            }
+            suite_i_real_rows.append(
+                {
+                    "step": int(step),
+                    "task_score": float(step_metrics["I_real"]["accuracy"]),
+                    "macro_f1": float(step_metrics["I_real"]["macro_f1"]),
+                    "mean_margin": float(step_metrics["I_real"]["mean_margin"]),
+                    "flip_gain_vs_shuffle": int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]),
+                    "flip_gain_vs_zero": int(pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]),
+                }
+            )
+
+        best_row = max(
+            suite_i_real_rows,
+            key=lambda row: (
+                float(row["macro_f1"]),
+                float(row["task_score"]),
+                float(row["mean_margin"]),
+            ),
+        )
+        final_step = max(common_steps)
+        final_row = next(row for row in suite_i_real_rows if int(row["step"]) == int(final_step))
+        best_suite_metrics[suite_name] = {
+            "best_step": int(best_row["step"]),
+            "best_macro_f1": float(best_row["macro_f1"]),
+            "best_task_score": float(best_row["task_score"]),
+            "best_mean_margin": float(best_row["mean_margin"]),
+            "final_step": int(final_row["step"]),
+            "final_macro_f1": float(final_row["macro_f1"]),
+            "final_task_score": float(final_row["task_score"]),
+            "final_mean_margin": float(final_row["mean_margin"]),
+            "overshoot_detected": bool(int(best_row["step"]) != int(final_row["step"])),
+        }
+        report_lines.extend(
+            [
+                f"## {suite_name}",
+                f"- best_step_by_macro_f1: {best_row['step']}",
+                (
+                    f"- best_real: task_score={best_row['task_score']:.4f}, "
+                    f"macro_f1={best_row['macro_f1']:.4f}, mean_margin={best_row['mean_margin']:.4f}, "
+                    f"flip_gain_vs_shuffle={best_row['flip_gain_vs_shuffle']}, "
+                    f"flip_gain_vs_zero={best_row['flip_gain_vs_zero']}"
+                ),
+                (
+                    f"- final_real: task_score={final_row['task_score']:.4f}, "
+                    f"macro_f1={final_row['macro_f1']:.4f}, mean_margin={final_row['mean_margin']:.4f}"
+                ),
+                f"- overshoot_detected: {best_suite_metrics[suite_name]['overshoot_detected']}",
+                "",
+            ]
+        )
+
+    summary_csv = output_dir / "dynamics_summary.csv"
+    pairwise_csv = output_dir / "dynamics_pairwise.csv"
+    summary_plot = output_dir / "dynamics_summary.svg"
+    _write_csv(summary_csv, summary_rows)
+    _write_csv(pairwise_csv, pairwise_rows)
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['suite']}:{row['alias']}:step{int(row['step']):04d}",
+                "run_dir": f"{row['suite']}-{row['alias']}-step{int(row['step']):04d}",
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+            }
+            for row in summary_rows
+            if row["alias"] == "I_real"
+        ],
+    )
+    report_path = output_dir / "report.md"
+    report_path.write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_shared_injection_dynamics_audit",
+            "suite_count": len(suite_roots),
+            "summary_csv": str(summary_csv.resolve()),
+            "pairwise_csv": str(pairwise_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "report_path": str(report_path.resolve()),
+            "suite_best_metrics": best_suite_metrics,
         },
     )

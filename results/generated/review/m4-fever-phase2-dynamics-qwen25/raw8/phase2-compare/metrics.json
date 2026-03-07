@@ -1,0 +1,14 @@
+{
+  "analysis_mode": "m4_shared_injection_compare",
+  "gate_passed": false,
+  "macro_f1_gap_to_T": -0.3722689075630252,
+  "mean_margin_gap_to_T": -2.6522973789833486,
+  "pairwise_compare_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/arm_pairwise_compare.csv",
+  "real_vs_shuffle_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/real_vs_shuffle_gap.csv",
+  "real_vs_zero_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/real_vs_zero_gap.csv",
+  "regressions_vs_base": 15,
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/report.md",
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/arm_summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/summary.svg",
+  "task_score_gap_to_T": -0.421875
+}

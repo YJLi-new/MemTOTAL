@@ -1,0 +1,6 @@
+case_rows,dominant_label_fraction,macro_f1,mean_margin,mode,primary_metric,primary_score,run_dir
+64,1.0,0.2,-2.557648926973343,A,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-A-selected
+64,0.8125,0.15714285714285714,-2.547791838645935,I_real,accuracy,0.109375,/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-I-real
+64,0.4375,0.46181818181818185,-0.5860064029693604,I_shuffle,accuracy,0.453125,/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-I-shuffle
+64,1.0,0.2,-7.536952942609787,I_zero,accuracy,0.25,/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-I-zero
+64,0.6875,0.5294117647058824,0.10450554033741355,T,accuracy,0.53125,/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-T-selected

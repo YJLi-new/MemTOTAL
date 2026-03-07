@@ -1,0 +1,43 @@
+{
+  "analysis_mode": "m4_shared_injection_dynamics_audit",
+  "pairwise_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_pairwise.csv",
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/dynamics-audit/report.md",
+  "suite_best_metrics": {
+    "m4-fever-phase2-dynamics-qwen25": {
+      "best_macro_f1": 0.5238372093023256,
+      "best_mean_margin": 0.13007625937461853,
+      "best_step": 32,
+      "best_task_score": 0.578125,
+      "final_macro_f1": 0.411214953271028,
+      "final_mean_margin": 1.1342867612838745,
+      "final_step": 64,
+      "final_task_score": 0.6875,
+      "overshoot_detected": true
+    },
+    "raw8": {
+      "best_macro_f1": 0.45718194254445965,
+      "best_mean_margin": -0.001864612102508545,
+      "best_step": 32,
+      "best_task_score": 0.515625,
+      "final_macro_f1": 0.15714285714285714,
+      "final_mean_margin": -2.547791838645935,
+      "final_step": 64,
+      "final_task_score": 0.109375,
+      "overshoot_detected": true
+    },
+    "triad6": {
+      "best_macro_f1": 0.5238372093023256,
+      "best_mean_margin": 0.13007625937461853,
+      "best_step": 32,
+      "best_task_score": 0.578125,
+      "final_macro_f1": 0.411214953271028,
+      "final_mean_margin": 1.1342867612838745,
+      "final_step": 64,
+      "final_task_score": 0.6875,
+      "overshoot_detected": true
+    }
+  },
+  "suite_count": 3,
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_summary.svg"
+}

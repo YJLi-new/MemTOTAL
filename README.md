@@ -8,8 +8,15 @@
 
 ## 最新进展
 
-- 已完成 `M4.1` 的 `FEVER Gate Recovery` 和第一轮真实 `shared generative injection` gate。
-- 当前最新真实结果已经把 blocker 上移到更硬的一层：
+- 已完成 `M4.1` 的 `FEVER Gate Recovery`、第一轮真实 `shared generative injection` gate，以及新一轮 `Phase 2 dynamics` 诊断。
+- 当前最新真实结果已经把 blocker 从“主链路会不会读 prefix”继续收紧成了两件事：
+  - `support variant`
+  - `step / checkpoint selection`
+- 当前最关键的新信号是：
+  - `raw8` support 下，`I-real` 在 `step32` 还有正信号，但继续训到 `step64` 会明显过冲并崩掉
+  - `triad6` support 下，`I-real` 在 `step32` 已经同时优于 `I-shuffle` 和 `I-zero`
+  - 也就是说，shared injection 现在已经不是“完全没用”，而是“已经能出 real-memory 正信号，但默认 support/step 口径会把它毁掉”
+- `Phase 0 / Phase 1` 的上游 gate 仍然保持通过：
   - `Phase 0` 已真实通过：`A_winner=answer_slot_labels`，`T_winner=answer_slot_labels + example_blocks_raw8`
   - `A_winner`：`accuracy=0.29435483870967744`、`macro_f1=0.15160955347871236`、`dominant_label_fraction=1.0`
   - `T_winner`：`accuracy=0.7217741935483871`、`macro_f1=0.6868094914612671`、`dominant_label_fraction=0.5241935483870968`
@@ -19,13 +26,25 @@
   - `verifiability_probe`: `real auroc=0.7724`，高于控制 `0.5568`
   - `polarity_probe`: `real auroc=0.5534`，高于控制 `0.4863`
   - `phase1_gate_passed=true`
-- 但 `Phase 2` 的真实 shared injection 现在给出了更细的新结果：
-  - `A = 0.25 / macro_f1=0.2`
-  - `T = 0.53125 / macro_f1=0.5294`
-  - `I-real = 0.390625 / macro_f1=0.4061`
-  - `I-shuffle = 0.546875 / macro_f1=0.5031`
-  - `I-zero = 0.25 / macro_f1=0.2`
-  - `gate_passed=false`
+- `Phase 2` 现在不再只看单个 final compare，而是新增了 `raw8 / triad6` 两个 support variant 的 step 级诊断：
+  - `raw8 final`
+    - `I-real = 0.109375 / macro_f1=0.1571`
+    - `I-shuffle = 0.453125 / macro_f1=0.4618`
+    - `I-zero = 0.25 / macro_f1=0.2`
+  - `raw8 best step = 32`
+    - `I-real = 0.515625 / macro_f1=0.4572`
+    - `flip_gain_vs_shuffle = 8`
+    - `flip_gain_vs_zero = 17`
+  - `triad6 final`
+    - `T = 0.578125 / macro_f1=0.5755`
+    - `I-real = 0.6875 / macro_f1=0.4112`
+    - `I-shuffle = 0.6875 / macro_f1=0.6135`
+    - `I-zero = 0.25 / macro_f1=0.2`
+  - `triad6 best step = 32`
+    - `I-real = 0.578125 / macro_f1=0.5238`
+    - `flip_gain_vs_shuffle = 16`
+    - `flip_gain_vs_zero = 21`
+- 两个 support variant 都已被 `dynamics-audit` 标成 `overshoot_detected=true`
 - 也就是说，当前不再适合把问题归因成：
   - `FEVER` prompt/support surface 没修好
   - 或 writer 完全没信息
@@ -33,8 +52,8 @@
   - `teacher-text` 明确有用
   - writer latent 也已有可读任务信息
   - prefix 主链路现在已经真正“动起来了”，不再是零效应
-  - 但 current real support latent 的方向仍然是错的：`I-real > I-zero`，却被 `I-shuffle` 反超
-  - 当前问题已从“Qwen 会不会读 prefix”改成“Qwen 正在读 prefix，但 current writer/support family 提供的是坏信号”
+  - `triad6 + step32` 已经给出了 `I-real > I-shuffle > I-zero` 方向的正信号
+  - 当前问题已从“Qwen 会不会读 prefix”进一步改成“如何选对 support bank 和 checkpoint，避免 late-step 过冲毁掉已出现的 real-memory 内容效应”
 - benchmark-native `M3 core4` 主链已经打通：`gsm8k + kodcode + gpqa + story_cloze` 的 `Stage A/B/C`、统一产物、统一分析都可运行。
 - 真实 `Qwen2.5-1.5B-Instruct` 的最小闭环已经打通：`BackboneWrapper(load_mode=hf_causal_lm)` 现支持真实 `summarize_texts`、`score_continuations` 与本地 staged model 目录加载。
 - 最新判别实验已经完成三步：
@@ -119,9 +138,9 @@
 - `M4.1 shared injection recovery` 这轮已经把 blocker 上移到真正的主链路注入与内容方向：
   - `Phase 0` 已通过，显式 support 文本确实能帮助 frozen Qwen
   - `Phase 1 writer audit` 也已通过，当前 writer family 里确实已有可读任务信息
-  - `Phase 2` 真实 shared injection 已不再是 `I-real = I-shuffle = I-zero`
-  - 当前更准确的现象是：`I-real > I-zero`，但 `I-shuffle > I-real`
-  - 当前最合理的解释已变成：这版浅层 input-prefix 注入已经让 frozen Qwen 开始消费 prefix，但 current real support / writer family 还没有把内容压成正确方向的上下文
+  - `Phase 2` 真实 shared injection 已进一步证明：不同 support 口径和不同 step 会给出完全不同的结论
+  - `raw8` 会在 `step64` 明显过冲，而 `triad6` 在 `step32` 已能给出正向 real-memory 内容效应
+  - 当前最合理的解释已变成：浅层 input-prefix 注入本身已经可行，但默认 `support variant + final checkpoint` 还不是正确的 capability gate
 - 因而，当前最重要的下一步已改成：
   - 优先检查和升级 `writer -> prefix -> frozen Qwen` 这条主链路
   - 现在不该回到旧的 score-side residual family
@@ -169,6 +188,14 @@
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/arm_summary.csv`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/real_vs_shuffle_gap.csv`
   - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/real_vs_zero_gap.csv`
+- M4 FEVER phase2 dynamics runs：
+  - `runs/review/m4-fever-phase2-dynamics-qwen25/`
+  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/`
+  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/report.md`
+  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/triad6/phase2-compare/report.md`
+  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/report.md`
+  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_summary.csv`
+  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_pairwise.csv`
 
 ## 现在最重要的下一步
 
@@ -179,9 +206,11 @@
   - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
   - 也不继续修 current `candidate-conditioned residual family`，因为 repair objective 下它仍然 `R-real = R-shuffle = R-zero`
   - 当前更上游的任务已经不再是“先修到能启动 `I-real / I-shuffle / I-zero`”，因为这一步已经跑完
-  - 当前新的核心问题是：为什么在 `T > A` 且 writer audit 通过的前提下，`I-shuffle` 会反超 `I-real`
-  - 因而下一步应优先检查两件事：
-    - frozen Qwen 对 prefix 的真实消费方式
-    - current writer/support family 为什么把 real support 压成了比 shuffled 更差的信号
+  - 当前新的核心问题已经更具体：
+    - `raw8` 为什么会在 late steps 过冲
+    - `triad6` 为什么能在 `step32` 出现正信号，但到 `step64` 又丢掉 `real > shuffle`
+  - 因而下一步应优先做两件事：
+    - 把 `support variant + checkpoint selection` 做成正式 capability gate，而不是只看 `step64`
+    - 在这个 gate 站稳后，再升级到更强的主链路注入（`deep prompt / per-layer prefix`）
   - 只有 shared injection 先证明 `real > shuffle > zero`，才值得回到 candidate-specific / Story / Qwen3
   - `Story Cloze` 只保留为后续 stress test，不再作为当前 candidate 分支的主开发面
