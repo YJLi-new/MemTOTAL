@@ -235,6 +235,8 @@
 - 2026-03-07 04:43 UTC: fresh `results/generated/m3-core4-stage-c-probe-suite-v4/metrics.json` 现显示 official `task_score` 已不再冻结：qwen25 三条线当前都从 `0.6666666666666666 -> 0.8888888888888888`，qwen3 三条线当前都从 `0.5555555555555555 -> 0.7777777777777778`；`q_only` 仍保持 `adaptation_effective=True`。
 - 2026-03-07 04:43 UTC: fresh `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v4/metrics.json` 进一步表明 metric 过粗已不是首要矛盾。qwen25 的 q-only official `accuracy` 现在能从 `0.3333333333333333 -> 0.5555555555555555`，但 qwen3 在当前 target seed 上所有 budget 都仍为 `0.4444444444444444 -> 0.2222222222222222`。下一步应优先补 target-side 多 episode 聚合或 seed sweep，而不是继续盲扫更大的 q-only 预算。
 - 2026-03-07 04:43 UTC: 对 benchmark-native canonical `Stage C`，当前优先采用固定 `target_eval_repeats=3` 的 query-set 聚合来稳定 official metric，而不是继续依赖单一 target query 子集。这一步先解决“official score 是否会动”的问题；若后续仍存在明显 backbone/seed 不对称，再升级到 target support/query 多 episode 聚合。
+- 2026-03-07 05:01 UTC: 已新增 `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`、`src/memtotal/analysis/m3_stage_c_seed_sweep.py` 与 `configs/exp/m3_stage_c_seed_sweep_summary.yaml`，用于把 canonical `q_only` 在多个 target seeds 上的 official gain 分布写成 `seed_sweep.csv/.svg`，不再只看单个 probe seed。
+- 2026-03-07 05:01 UTC: fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep/metrics.json` 当前记录：qwen25 在 5 个 target seeds 上 `positive_gain_rate=0.2`、`mean_task_gain=-0.2`、`worst_task_gain=-0.5555555555555556`；qwen3 当前为 `positive_gain_rate=0.4`、`mean_task_gain=-0.13333333333333333`、`worst_task_gain=-0.4444444444444444`。这说明 canonical q-only 路径已经能在单个 seed 上出现正向 official gain，但 target-side 稳定性仍不足以支撑当前 smoke 均值转正。
 
 ## Surprises & Discoveries
 

@@ -395,6 +395,9 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
 - 已新增 benchmark-native `Stage C q-only budget probe` harness：`scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`
   - 当前固定扫描 `adapt_learning_rate in {0.2, 1.0, 5.0}` 与 `adapt_steps in {3, 10}`
   - 同一 backbone 下所有 budget variant 也强制共用同一个 seed
+- 已新增 benchmark-native `Stage C q-only seed sweep` harness：`scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh` + `configs/exp/m3_stage_c_seed_sweep_summary.yaml`
+  - 当前固定跑 canonical `q_only` 配置，并在每个 backbone 上扫描 5 个 target seeds
+  - 统一汇总会产出 `seed_sweep.csv/.svg` 与 `positive_gain_rate / mean_task_gain`
 - 已新增 benchmark-native `Stage C sensitivity audit`：`scripts/run_m3_core4_stage_c_sensitivity_audit.sh`
   - 当前直接比较 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - 已验证命令：
@@ -435,7 +438,8 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v3/metrics.json` 现进一步说明：两档 backbone 在 official `task_score=0.6666666666666666` 完全打平时，proxy 仍能分出预算差异；当前 qwen25 与 qwen3 的 fresh best budget 都落在 `lr=5.0, steps=10`
   - `results/generated/m3-core4-stage-c-probe-suite-v4/metrics.json` 现进一步显示：将 canonical `Stage C` target 评测改成 `target_eval_repeats=3` 后，official `task_score` 已不再冻结。qwen25 的三条线当前都从 `0.6666666666666666 -> 0.8888888888888888`；qwen3 的三条线当前都从 `0.5555555555555555 -> 0.7777777777777778`
   - `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v4/metrics.json` 同时说明：多 query-set 聚合确实能让 qwen25 的 q-only official `accuracy` 从 `0.3333333333333333 -> 0.5555555555555555`；但 qwen3 在这一组 target seed 上仍是 `0.4444444444444444 -> 0.2222222222222222`，即 target-side不稳定性还没真正消失
-  - 当前剩余 blocker 已从“official metric 本身过粗”进一步收缩成“target episode / support seed 的稳定性与 backbone 间不对称”，而不是继续怀疑 q-only 路径是否有效
+  - `results/generated/m3-core4-stage-c-qonly-seed-sweep/metrics.json` 现进一步说明：把 canonical `q_only` 放到 5 个 target seeds 上后，单 seed 的正向 official 提升还不足以代表稳定规律。当前 qwen25 `positive_gain_rate=0.2`、`mean_task_gain=-0.2`；qwen3 `positive_gain_rate=0.4`、`mean_task_gain=-0.13333333333333333`
+  - 当前剩余 blocker 已从“official metric 本身过粗”进一步收缩成“target-side 多 seed / 多 episode 稳定性仍不足，均值尚未转正”，而不是继续怀疑 q-only 路径是否有效
 - Stage C 适配对象消融：`runs/verify/m3-adaptation-targets-canonical/`
   - `Q-only`：`reader.queries`，`trainable_parameter_count=256`，`0.7023470401763916 -> 0.7023470401763916`
   - `W-only`：`writer`，`trainable_parameter_count=71744`，`0.7023470401763916 -> 0.694838285446167`
