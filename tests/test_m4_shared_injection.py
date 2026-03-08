@@ -18,6 +18,7 @@ from memtotal.analysis.m4_shared_injection import (
 )
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
+    SharedLowRankDeepPrefixProjector,
     _build_support_text_block,
     _choice_task_loss,
     _sample_support_examples_for_training,
@@ -145,6 +146,23 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertTrue(bool(torch.all(slot_norms <= 2.0001)))
         self.assertLessEqual(float(projected.flatten(start_dim=1).norm(dim=1).max().item()), 4.0001)
 
+    def test_shared_low_rank_deep_prefix_projector_outputs_selected_layers(self) -> None:
+        projector = SharedLowRankDeepPrefixProjector(
+            hidden_size=6,
+            prefix_tokens=3,
+            layer_indices=[0, 7, 14],
+            bottleneck_rank=4,
+            slot_max_norm=2.0,
+            total_max_norm=6.0,
+        )
+        memory_slots = torch.full((1, 3, 6), 50.0)
+        projected = projector(memory_slots)
+        self.assertEqual(sorted(projected), [0, 7, 14])
+        self.assertEqual(list(projected[0].shape), [1, 3, 6])
+        for tensor in projected.values():
+            slot_norms = tensor.norm(dim=-1)
+            self.assertTrue(bool(torch.all(slot_norms <= 2.0001)))
+
 
 class SharedInjectionAnalysisTest(unittest.TestCase):
     def _write_run(
@@ -230,7 +248,7 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             ]
             self.assertEqual(len(audit_rows), 12)
 
-    def test_support_masking_preserves_all_three_labels(self) -> None:
+    def test_support_masking_uniformly_samples_target_count(self) -> None:
         support_rows = [
             {"id": "s1", "label": "SUPPORTS", "shuffled_memory_example_id": "s2"},
             {"id": "s2", "label": "SUPPORTS", "shuffled_memory_example_id": "s3"},
@@ -247,7 +265,8 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             generator=generator,
         )
         self.assertEqual(len(sampled), 4)
-        self.assertEqual({row["label"] for row in sampled}, {"SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"})
+        self.assertEqual(len({row["id"] for row in sampled}), 4)
+        self.assertTrue(all(row["id"] in {"s1", "s2", "r1", "r2", "n1", "n2"} for row in sampled))
 
     @mock.patch("memtotal.analysis.m4_shared_injection._build_support_text_block")
     @mock.patch("memtotal.analysis.m4_shared_injection._evaluate_examples")

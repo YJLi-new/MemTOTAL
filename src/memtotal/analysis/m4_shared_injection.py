@@ -80,6 +80,14 @@ def _load_snapshot_eval_rows(
     return snapshots
 
 
+def _load_train_events(run_dir: Path) -> list[dict[str, Any]]:
+    events_path = run_dir / "train_events.json"
+    if not events_path.exists():
+        return []
+    payload = json.loads(events_path.read_text())
+    return list(payload.get("events", []))
+
+
 def _resolve_phase2_suite_roots(root: Path) -> dict[str, Path]:
     suites: dict[str, Path] = {}
 
@@ -451,6 +459,8 @@ def run_m4_phase0_gate_sweep(
             support_text_block="",
             teacher_support_text_block="",
             prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=None,
+            prefix_stats=_prefix_stats(),
             profiler=None,
         )
         a_metrics = _classification_metrics_from_rows(a_case_rows)
@@ -481,6 +491,8 @@ def run_m4_phase0_gate_sweep(
                 support_text_block=support_text_block,
                 teacher_support_text_block=support_text_block,
                 prefix_embeddings=None,
+                layer_prefix_hidden_by_layer=None,
+                prefix_stats=_prefix_stats(),
                 profiler=None,
             )
             t_metrics = _classification_metrics_from_rows(t_case_rows)
@@ -1289,14 +1301,15 @@ def _attention_rows_for_snapshot(
         example_lookup=example_lookup,
         support_serialization_variant=support_serialization_variant,
     )
-    prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
-    prefix_stats = _prefix_stats(prefix_embeddings)
+    prefix_artifacts = runtime.build_prefix_artifacts(support_text_block)
+    prefix_stats = prefix_artifacts.prefix_stats
     rows: list[dict[str, Any]] = []
     for cache in audit_examples:
         scores, diagnostics = runtime.score_example(
             cache,
             support_text_block=support_text_block,
-            prefix_embeddings=prefix_embeddings,
+            prefix_embeddings=prefix_artifacts.prefix_embeddings,
+            layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
             return_diagnostics=True,
         )
         scores_cpu = scores.detach().to(dtype=torch.float32).cpu()
@@ -1305,19 +1318,116 @@ def _attention_rows_for_snapshot(
             key=lambda index: float(scores_cpu[index].item()),
         )
         masses = [float(value) for value in diagnostics["prefix_attention_mass_by_candidate"]]
+        masses_by_layer = {
+            int(layer_index): [float(value) for value in values]
+            for layer_index, values in diagnostics.get("prefix_attention_mass_by_candidate_by_layer", {}).items()
+        }
+        for layer_index in diagnostics.get("diagnostic_layers", []):
+            layer_masses = masses_by_layer.get(int(layer_index), masses)
+            rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": arm_alias,
+                    "layer_index": int(layer_index),
+                    "example_id": str(cache.example["id"]),
+                    "gold_label": cache.candidate_labels[cache.gold_index],
+                    "predicted_label": cache.candidate_labels[int(torch.argmax(scores_cpu).item())],
+                    "mean_prefix_attention_mass": _mean(layer_masses),
+                    "gold_prefix_attention_mass": layer_masses[cache.gold_index],
+                    "competitor_prefix_attention_mass": layer_masses[competitor_index],
+                    "prefix_tokens": int(prefix_stats["prefix_tokens"]),
+                    "prefix_l2": float(prefix_stats["prefix_l2"]),
+                }
+            )
+    return rows
+
+
+def _collect_prefix_norm_rows_for_metrics(
+    *,
+    suite_name: str,
+    step: int,
+    arm_alias: str,
+    metrics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    prefix_stats = dict(metrics.get("prefix_artifact_stats", {}))
+    rows: list[dict[str, Any]] = [
+        {
+            "suite": suite_name,
+            "step": int(step),
+            "arm_alias": arm_alias,
+            "row_type": "snapshot_aggregate",
+            "layer_index": "",
+            "prefix_tokens": float(metrics.get("prefix_tokens", 0.0)),
+            "prefix_l2": float(metrics.get("prefix_l2", 0.0)),
+            "prefix_slot_norm_mean": float(metrics.get("prefix_slot_norm_mean", 0.0)),
+            "prefix_slot_norm_std": float(metrics.get("prefix_slot_norm_std", 0.0)),
+            "prefix_slot_norm_max": float(metrics.get("prefix_slot_norm_max", 0.0)),
+            "writer_memory_l2": float(metrics.get("writer_memory_l2", 0.0)),
+            "writer_slot_norm_mean": float(metrics.get("writer_slot_norm_mean", 0.0)),
+            "writer_slot_norm_std": float(metrics.get("writer_slot_norm_std", 0.0)),
+            "writer_slot_norm_max": float(metrics.get("writer_slot_norm_max", 0.0)),
+        }
+    ]
+    layer_indices = sorted(
+        {
+            *prefix_stats.get("layer_hidden_l2_by_layer", {}).keys(),
+            *prefix_stats.get("layer_key_l2_by_layer", {}).keys(),
+            *prefix_stats.get("layer_value_l2_by_layer", {}).keys(),
+        },
+        key=int,
+    )
+    for layer_index in layer_indices:
         rows.append(
             {
                 "suite": suite_name,
                 "step": int(step),
                 "arm_alias": arm_alias,
-                "example_id": str(cache.example["id"]),
-                "gold_label": cache.candidate_labels[cache.gold_index],
-                "predicted_label": cache.candidate_labels[int(torch.argmax(scores_cpu).item())],
-                "mean_prefix_attention_mass": _mean(masses),
-                "gold_prefix_attention_mass": masses[cache.gold_index],
-                "competitor_prefix_attention_mass": masses[competitor_index],
-                "prefix_tokens": int(prefix_stats["prefix_tokens"]),
-                "prefix_l2": float(prefix_stats["prefix_l2"]),
+                "row_type": "snapshot_layer",
+                "layer_index": int(layer_index),
+                "prefix_tokens": float(metrics.get("prefix_tokens", 0.0)),
+                "prefix_hidden_l2": float(prefix_stats.get("layer_hidden_l2_by_layer", {}).get(layer_index, 0.0)),
+                "prefix_hidden_slot_norm_mean": float(
+                    prefix_stats.get("layer_slot_norm_mean_by_layer", {}).get(layer_index, 0.0)
+                ),
+                "prefix_hidden_slot_norm_std": float(
+                    prefix_stats.get("layer_slot_norm_std_by_layer", {}).get(layer_index, 0.0)
+                ),
+                "prefix_hidden_slot_norm_max": float(
+                    prefix_stats.get("layer_slot_norm_max_by_layer", {}).get(layer_index, 0.0)
+                ),
+                "projected_k_l2": float(prefix_stats.get("layer_key_l2_by_layer", {}).get(layer_index, 0.0)),
+                "projected_v_l2": float(prefix_stats.get("layer_value_l2_by_layer", {}).get(layer_index, 0.0)),
+            }
+        )
+    return rows
+
+
+def _collect_train_event_norm_rows(
+    *,
+    suite_name: str,
+    arm_alias: str,
+    train_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in train_events:
+        rows.append(
+            {
+                "suite": suite_name,
+                "step": int(event.get("step", 0)),
+                "arm_alias": arm_alias,
+                "row_type": "train_event",
+                "layer_index": "",
+                "prefix_tokens": float(event.get("prefix_tokens", 0.0)),
+                "prefix_l2": float(event.get("prefix_l2", 0.0)),
+                "writer_memory_l2": float(event.get("writer_memory_l2", 0.0)),
+                "writer_slot_norm_mean": float(event.get("writer_slot_norm_mean", 0.0)),
+                "writer_slot_norm_std": float(event.get("writer_slot_norm_std", 0.0)),
+                "writer_slot_norm_max": float(event.get("writer_slot_norm_max", 0.0)),
+                "prefix_projector_grad_norm": float(event.get("prefix_projector_grad_norm", 0.0)),
+                "writer_grad_norm": float(event.get("writer_grad_norm", 0.0)),
+                "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
+                "loss": float(event.get("loss", 0.0)),
             }
         )
     return rows
@@ -1351,6 +1461,11 @@ def run_m4_shared_injection_dynamics_recovery(
         if missing:
             raise ValueError(f"Suite {suite_name} is missing required runs: {', '.join(missing)}")
         snapshots = {alias: _load_snapshot_eval_rows(run_dir) for alias, (_, run_dir) in runs.items()}
+        train_events_by_alias = {
+            alias: _load_train_events(run_dir)
+            for alias, (_, run_dir) in runs.items()
+            if alias in {"I_real", "I_shuffle"}
+        }
         static_rows: dict[str, list[dict[str, Any]]] = {}
         for alias in ("A", "T", "I_zero"):
             if 0 in snapshots[alias]:
@@ -1411,43 +1526,31 @@ def run_m4_shared_injection_dynamics_recovery(
                 )
             )
             snapshot_metrics = snapshots["I_real"][step][0]
-            prefix_norm_rows.append(
-                {
-                    "suite": suite_name,
-                    "step": int(step),
-                    "arm_alias": "I_real",
-                    "prefix_tokens": float(snapshot_metrics.get("prefix_tokens", 0.0)),
-                    "prefix_l2": float(snapshot_metrics.get("prefix_l2", 0.0)),
-                    "prefix_slot_norm_mean": float(snapshot_metrics.get("prefix_slot_norm_mean", 0.0)),
-                    "prefix_slot_norm_std": float(snapshot_metrics.get("prefix_slot_norm_std", 0.0)),
-                    "prefix_slot_norm_max": float(snapshot_metrics.get("prefix_slot_norm_max", 0.0)),
-                }
+            prefix_norm_rows.extend(
+                _collect_prefix_norm_rows_for_metrics(
+                    suite_name=suite_name,
+                    step=int(step),
+                    arm_alias="I_real",
+                    metrics=snapshot_metrics,
+                )
             )
             shuffle_snapshot_metrics = snapshots["I_shuffle"][step][0]
-            prefix_norm_rows.append(
-                {
-                    "suite": suite_name,
-                    "step": int(step),
-                    "arm_alias": "I_shuffle",
-                    "prefix_tokens": float(shuffle_snapshot_metrics.get("prefix_tokens", 0.0)),
-                    "prefix_l2": float(shuffle_snapshot_metrics.get("prefix_l2", 0.0)),
-                    "prefix_slot_norm_mean": float(shuffle_snapshot_metrics.get("prefix_slot_norm_mean", 0.0)),
-                    "prefix_slot_norm_std": float(shuffle_snapshot_metrics.get("prefix_slot_norm_std", 0.0)),
-                    "prefix_slot_norm_max": float(shuffle_snapshot_metrics.get("prefix_slot_norm_max", 0.0)),
-                }
+            prefix_norm_rows.extend(
+                _collect_prefix_norm_rows_for_metrics(
+                    suite_name=suite_name,
+                    step=int(step),
+                    arm_alias="I_shuffle",
+                    metrics=shuffle_snapshot_metrics,
+                )
             )
             zero_metrics = snapshots["I_zero"].get(0, (runs["I_zero"][0], static_rows["I_zero"]))[0]
-            prefix_norm_rows.append(
-                {
-                    "suite": suite_name,
-                    "step": int(step),
-                    "arm_alias": "I_zero",
-                    "prefix_tokens": float(zero_metrics.get("prefix_tokens", 0.0)),
-                    "prefix_l2": float(zero_metrics.get("prefix_l2", 0.0)),
-                    "prefix_slot_norm_mean": float(zero_metrics.get("prefix_slot_norm_mean", 0.0)),
-                    "prefix_slot_norm_std": float(zero_metrics.get("prefix_slot_norm_std", 0.0)),
-                    "prefix_slot_norm_max": float(zero_metrics.get("prefix_slot_norm_max", 0.0)),
-                }
+            prefix_norm_rows.extend(
+                _collect_prefix_norm_rows_for_metrics(
+                    suite_name=suite_name,
+                    step=int(step),
+                    arm_alias="I_zero",
+                    metrics=zero_metrics,
+                )
             )
             real_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_real")
             shuffle_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_shuffle")
@@ -1477,6 +1580,14 @@ def run_m4_shared_injection_dynamics_recovery(
                     "i_shuffle_checkpoint_path": str(snapshots["I_shuffle"][step][0].get("checkpoint_path", "")),
                 }
             )
+        for arm_alias, train_events in sorted(train_events_by_alias.items()):
+            prefix_norm_rows.extend(
+                _collect_train_event_norm_rows(
+                    suite_name=suite_name,
+                    arm_alias=arm_alias,
+                    train_events=train_events,
+                )
+            )
 
     passed_candidates = [row for row in candidate_selections if bool(row["passes_selection"])]
     selected = None
@@ -1495,6 +1606,9 @@ def run_m4_shared_injection_dynamics_recovery(
         "selected_step": None if selected is None else int(selected["step"]),
         "selected_support_serialization": None if selected is None else str(selected["support_serialization_variant"]),
         "selected_prompt_variant": None,
+        "screen248_test_gate_passed": False,
+        "fixed64_gate_passed": False,
+        "milestone_gate_passed": False,
         "i_real_checkpoint_path": "" if selected is None else str(selected["i_real_checkpoint_path"]),
         "i_shuffle_checkpoint_path": "" if selected is None else str(selected["i_shuffle_checkpoint_path"]),
         "candidate_rows": candidate_selections,
@@ -1543,6 +1657,7 @@ def run_m4_shared_injection_dynamics_recovery(
     attention_csv = output_dir / "prefix_attention_consumption.csv"
     summary_plot = output_dir / "summary.svg"
     selection_json = output_dir / "selection.json"
+    dual_gate_summary_json = output_dir / "dual_gate_summary.json"
     _write_csv(summary_csv, summary_rows)
     _write_csv(pairwise_csv, pairwise_rows)
     _write_csv(content_gap_csv, content_gap_rows)
@@ -1562,12 +1677,24 @@ def run_m4_shared_injection_dynamics_recovery(
         ],
     )
     write_json(selection_json, selection_payload)
+    write_json(
+        dual_gate_summary_json,
+        {
+            "selection_passed": bool(selection_payload["selection_passed"]),
+            "screen248_test_gate_passed": bool(selection_payload["screen248_test_gate_passed"]),
+            "fixed64_gate_passed": bool(selection_payload["fixed64_gate_passed"]),
+            "milestone_gate_passed": bool(selection_payload["milestone_gate_passed"]),
+        },
+    )
     report_lines.extend(
         [
             f"- selection_passed: {selection_payload['selection_passed']}",
             f"- selected_suite: {selection_payload['selected_suite']}",
             f"- selected_step: {selection_payload['selected_step']}",
             f"- selected_support_serialization: {selection_payload['selected_support_serialization']}",
+            f"- screen248_test_gate_passed: {selection_payload['screen248_test_gate_passed']}",
+            f"- fixed64_gate_passed: {selection_payload['fixed64_gate_passed']}",
+            f"- milestone_gate_passed: {selection_payload['milestone_gate_passed']}",
             "",
             "## Candidate Checkpoints",
         ]
@@ -1595,6 +1722,7 @@ def run_m4_shared_injection_dynamics_recovery(
             "attention_csv": str(attention_csv.resolve()),
             "summary_plot": str(summary_plot.resolve()),
             "selection_json": str(selection_json.resolve()),
+            "dual_gate_summary_json": str(dual_gate_summary_json.resolve()),
             "report_path": str(report_path.resolve()),
         },
     )

@@ -13,6 +13,7 @@
 - `scripts/run_m3_story_cloze_real_pilot_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `story_cloze` decision-interface pilot，会按 `screen256 -> fixed100 -> A/B/C/D/E` 顺序跑完整对照，并把 review 产物镜像回仓库
 - `scripts/run_m4_fever_shared_injection_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `FEVER-first` shared generative injection gate，会先跑 `A=base_only`、`T=teacher-text upper bound`、`writer information audit`，只有 gate 通过后才继续 `I-real / I-shuffle / I-zero`
 - `scripts/run_m4_fever_dynamics_recovery_qwen25.sh`: `M4.3` 的 shared-injection dynamics recovery 入口，会并排跑 `raw8 / triad6` 两条 shared-injection suite，并把 `step0/8/16/24/32/48/64` 的 snapshot case dump 汇总成预注册 validation 的 `dynamics-recovery`
+- `scripts/run_m4_fever_deep_prompt_recovery_qwen25.sh`: `M4.5` 的 triad6 sparse deep-prompt recovery 入口，会固定 `triad6`，使用 `0/7/14/21/27` 五层 shared low-rank deep prompt，在 `screen-val` 做 earliest-pass selection；只有 selection 通过后才依次打开 `screen248-test` 与 `fixed64` 双 gate
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -31,6 +32,8 @@
 - `src/memtotal/training/m3.py`: Stage A/B/C runner，当前同时承载 `toy_meta_smoke` 与 benchmark-native `core4_transfer_smoke`；负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
 - `src/memtotal/training/m3_real_pilot.py`: 真实 `story_cloze` pilot 的并行实验分支，负责 `base_only / shared_summary_late_fusion / candidate_conditioned_late_fusion` 三种决策接口与 `real / shuffled / zero` memory control
 - `src/memtotal/training/m4_shared_injection.py`: 真实 `FEVER` shared generative injection 分支，负责 `teacher-text`、`writer information audit` 的上游协作点，以及 `shared latent prefix injection` 的训练/评测入口
+- `scripts/run_m4_gate_from_selection.py`: 通用 post-selection gate runner；由 selection 结果驱动 `A/T/I_real/I_shuffle/I_zero` 在任意 gate task 上重放，不再绑死 `fixed64`
+- `scripts/update_m4_dual_gate_summary.py`: 汇总 `selection + screen248-test + fixed64` 的双 gate 结论，并回写 `dual_gate_summary.json`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -227,14 +230,20 @@
 - `writer information audit` 当前不是单一线性 probe：
   - 同时提供 `linear` 与 `shallow MLP` probe，避免纯线性假阴性
   - 同时比较 `real / shuffle / zero` 三种控制
-- `shared latent prefix injection` 当前实现为浅层 input-visible continuous prefix：
-  - support text 先过 `backbone.summarize_texts`
-  - 再过 `MemoryWriter`
-  - 再经 `LatentPrefixProjector` 投到 Qwen embedding space
-  - 最终通过 `BackboneWrapper.score_continuations(prefix_embeddings=...)` 直接进入 frozen Qwen 的主打分链路
+- `shared latent prefix injection` 当前实现分成两条兼容路径：
+  - `shallow_prefix`
+    - support text 先过 `backbone.summarize_texts`
+    - 再过 `MemoryWriter`
+    - 再经 `LatentPrefixProjector` 投到 Qwen embedding space
+    - 最终通过 `BackboneWrapper.score_continuations(prefix_embeddings=...)` 进入 frozen Qwen 的主打分链路
+  - `sparse_deep_prefix`
+    - support text 同样先过 `backbone.summarize_texts -> MemoryWriter`
+    - 再经 `SharedLowRankDeepPrefixProjector` 映射成多层 hidden prefix
+    - 当前 canonical 层位是 `0/7/14/21/27`
+    - `BackboneWrapper` 会在层内复用冻结 Qwen 的 `input_layernorm + k_proj + v_proj + rotary` 构造 prefix cache，再通过 `score_continuations(layer_prefix_hidden_by_layer=...)` 进入主链路
 - 第一版训练只允许更新：
   - `MemoryWriter`
-  - `LatentPrefixProjector`
+  - `LatentPrefixProjector` 或 `SharedLowRankDeepPrefixProjector`
   - 并且默认先做 projector warmup，再联合放开 writer，避免随机 projector 早期梯度直接破坏已有 writer 表示
 - 第一版 objective 固定为 task-only：
   - `choice CE + strongest-competitor hinge`
@@ -258,6 +267,19 @@
   - `triad6` 仍只有到 `step64` 才恢复出弱的 `I-real > I-shuffle / I-zero`
   - 但 `selection_passed` 依然是 `false`
   - 因此当前问题已从“norm 爆炸”进一步变成“shallow prefix 的有效信号太脆弱，norm control 会把过冲压住，也会把学习一起压平”
+- `M4.5` 当前又把主线推进到 sparse deep prompt：
+  - canonical 配置固定为 `triad6 + sparse_deep_prefix(0/7/14/21/27) + rank32 + warmup32 + total96`
+  - 新增逻辑 `screen248-test` task alias，并把 `fixed64` 明确降格成 selection 之后才允许打开的 legacy gate
+  - observability 现已升级为：
+    - layer-wise `prefix_attention_consumption.csv`
+    - 含 `writer_memory_l2 / per-layer hidden / per-layer projected K/V` 的 `prefix_norm_drift.csv`
+    - `dual_gate_summary.json`
+  - fresh canonical run 位于 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/`
+  - 最新结论仍是 `selection_passed=false`：
+    - deep prompt 的层内消费已成立
+    - 但 `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap
+    - `I_real` 只在 `step64` 出现弱内容信号，同时伴随 `regressions_vs_base=18`
+    - 因而当前 blocker 已变成 “cap-saturation + label-bias collapse”，而不是 “模型完全不读 prefix”
 - 当前真正新增的关键 observability 是：
   - `prefix_attention_consumption.csv` 已证明 frozen Qwen 确实会消费 prefix，而不是完全忽略
   - `prefix_norm_drift.csv` 同时显示明显的 prefix norm blow-up：

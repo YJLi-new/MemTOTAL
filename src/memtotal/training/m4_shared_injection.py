@@ -39,6 +39,13 @@ class SharedInjectionExampleCache:
     prompt_variant: str
 
 
+@dataclass(frozen=True)
+class PrefixInjectionArtifacts:
+    prefix_embeddings: torch.Tensor | None
+    layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None
+    prefix_stats: dict[str, Any]
+
+
 class LatentPrefixProjector(nn.Module):
     def __init__(
         self,
@@ -79,6 +86,65 @@ class LatentPrefixProjector(nn.Module):
             )
         projected = self.prefix_proj(self.prefix_norm(memory_slots))
         return self._apply_norm_caps(projected)
+
+
+class SharedLowRankDeepPrefixProjector(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        prefix_tokens: int,
+        layer_indices: list[int],
+        *,
+        bottleneck_rank: int = 32,
+        slot_max_norm: float | None = None,
+        total_max_norm: float | None = None,
+    ) -> None:
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.prefix_tokens = int(prefix_tokens)
+        self.layer_indices = tuple(int(layer_index) for layer_index in layer_indices)
+        self.bottleneck_rank = int(bottleneck_rank)
+        self.slot_max_norm = None if slot_max_norm is None else float(slot_max_norm)
+        self.total_max_norm = None if total_max_norm is None else float(total_max_norm)
+        self.prefix_norm = nn.LayerNorm(hidden_size)
+        self.down_proj = nn.Linear(hidden_size, self.bottleneck_rank, bias=False)
+        self.up_proj = nn.Linear(
+            self.bottleneck_rank,
+            len(self.layer_indices) * hidden_size,
+        )
+        nn.init.normal_(self.down_proj.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.up_proj.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(self.up_proj.bias)
+
+    def _apply_norm_caps(self, stacked_hidden: torch.Tensor) -> torch.Tensor:
+        clipped = stacked_hidden
+        if self.slot_max_norm is not None and self.slot_max_norm > 0.0:
+            slot_norms = clipped.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+            slot_scales = torch.clamp(self.slot_max_norm / slot_norms, max=1.0)
+            clipped = clipped * slot_scales
+        if self.total_max_norm is not None and self.total_max_norm > 0.0:
+            total_norms = clipped.flatten(start_dim=1).norm(dim=1, keepdim=True).clamp_min(1e-6)
+            total_scales = torch.clamp(self.total_max_norm / total_norms, max=1.0).view(-1, 1, 1, 1)
+            clipped = clipped * total_scales
+        return clipped
+
+    def forward(self, memory_slots: torch.Tensor) -> dict[int, torch.Tensor]:
+        if memory_slots.ndim != 3:
+            raise ValueError("memory_slots must have shape [batch, slots, hidden_size].")
+        if memory_slots.shape[1] != self.prefix_tokens:
+            raise ValueError(
+                f"SharedLowRankDeepPrefixProjector expected {self.prefix_tokens} slots, got {memory_slots.shape[1]}."
+            )
+        batch_size, slot_count, _ = memory_slots.shape
+        bottleneck = F.gelu(self.down_proj(self.prefix_norm(memory_slots)))
+        expanded = self.up_proj(bottleneck)
+        expanded = expanded.view(batch_size, slot_count, len(self.layer_indices), self.hidden_size)
+        expanded = expanded.permute(0, 2, 1, 3).contiguous()
+        expanded = self._apply_norm_caps(expanded)
+        return {
+            int(layer_index): expanded[:, layer_offset, :, :]
+            for layer_offset, layer_index in enumerate(self.layer_indices)
+        }
 
 
 def _load_task_dataset_with_path(config: dict[str, Any], dataset_path: str) -> list[dict[str, Any]]:
@@ -140,6 +206,27 @@ def _resolve_support_serialization_variant(config: dict[str, Any]) -> str:
             f"Expected one of {', '.join(FEVER_SUPPORT_SERIALIZATION_VARIANTS)}."
         )
     return support_variant
+
+
+def _resolve_injection_mode(config: dict[str, Any]) -> str:
+    injection_mode = str(config["runtime"].get("pilot_injection_mode", "shallow_prefix"))
+    if injection_mode not in {"shallow_prefix", "sparse_deep_prefix"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_injection_mode={injection_mode}. "
+            "Expected one of shallow_prefix, sparse_deep_prefix."
+        )
+    return injection_mode
+
+
+def _resolve_deep_prefix_layers(config: dict[str, Any]) -> list[int]:
+    explicit = config["runtime"].get("pilot_deep_prefix_layers")
+    if explicit is None:
+        return [0, 7, 14, 21, 27]
+    return [int(layer_index) for layer_index in explicit]
+
+
+def _resolve_deep_prefix_rank(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_deep_prefix_rank", 32))
 
 
 def _resolve_snapshot_steps(config: dict[str, Any], *, train_steps: int, warmup_steps: int) -> list[int]:
@@ -214,6 +301,7 @@ def _write_snapshot_eval(
     task_case_dump_path = snapshot_dir / "task_case_dump.jsonl"
     write_jsonl(task_case_dump_path, case_rows)
     metrics = _classification_metrics_from_rows(case_rows)
+    scalar_prefix_stats = _prefix_scalar_summary(prefix_stats or {})
     payload = {
         "training_stage": "shared_injection_snapshot_eval",
         "pilot_arm_alias": arm_alias,
@@ -230,34 +318,152 @@ def _write_snapshot_eval(
         "best_adapt_task_margin": float(metrics["mean_margin"]),
         "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
         "label_recall_by_class": metrics["label_recall_by_class"],
-        "prefix_tokens": int((prefix_stats or {}).get("prefix_tokens", 0)),
-        "prefix_l2": float((prefix_stats or {}).get("prefix_l2", 0.0)),
-        "prefix_slot_norm_mean": float((prefix_stats or {}).get("prefix_slot_norm_mean", 0.0)),
-        "prefix_slot_norm_std": float((prefix_stats or {}).get("prefix_slot_norm_std", 0.0)),
-        "prefix_slot_norm_max": float((prefix_stats or {}).get("prefix_slot_norm_max", 0.0)),
+        "prefix_artifact_stats": prefix_stats or {},
+        "prefix_tokens": int(scalar_prefix_stats.get("prefix_tokens", 0.0)),
+        "prefix_l2": float(scalar_prefix_stats.get("prefix_l2", 0.0)),
+        "prefix_slot_norm_mean": float(scalar_prefix_stats.get("prefix_slot_norm_mean", 0.0)),
+        "prefix_slot_norm_std": float(scalar_prefix_stats.get("prefix_slot_norm_std", 0.0)),
+        "prefix_slot_norm_max": float(scalar_prefix_stats.get("prefix_slot_norm_max", 0.0)),
+        "writer_memory_l2": float(scalar_prefix_stats.get("writer_memory_l2", 0.0)),
+        "writer_slot_norm_mean": float(scalar_prefix_stats.get("writer_slot_norm_mean", 0.0)),
+        "writer_slot_norm_std": float(scalar_prefix_stats.get("writer_slot_norm_std", 0.0)),
+        "writer_slot_norm_max": float(scalar_prefix_stats.get("writer_slot_norm_max", 0.0)),
         "checkpoint_path": "" if checkpoint_path is None else str(checkpoint_path.resolve()),
     }
     write_json(snapshot_dir / "metrics.json", payload)
     return payload
 
 
-def _prefix_stats(prefix_embeddings: torch.Tensor | None) -> dict[str, float]:
+def _slot_norm_summary(slots: torch.Tensor) -> dict[str, float]:
+    slots_cpu = slots.detach().to(dtype=torch.float32, device="cpu")
+    slot_norms = slots_cpu.norm(dim=-1)
+    return {
+        "l2": float(slots_cpu.norm().item()),
+        "slot_norm_mean": float(slot_norms.mean().item()),
+        "slot_norm_std": float(slot_norms.std(unbiased=False).item()),
+        "slot_norm_max": float(slot_norms.max().item()),
+    }
+
+
+def _prefix_scalar_summary(prefix_stats: dict[str, Any]) -> dict[str, float]:
+    return {
+        "prefix_tokens": float(prefix_stats.get("prefix_tokens", 0.0)),
+        "prefix_l2": float(prefix_stats.get("prefix_l2", 0.0)),
+        "prefix_slot_norm_mean": float(prefix_stats.get("prefix_slot_norm_mean", 0.0)),
+        "prefix_slot_norm_std": float(prefix_stats.get("prefix_slot_norm_std", 0.0)),
+        "prefix_slot_norm_max": float(prefix_stats.get("prefix_slot_norm_max", 0.0)),
+        "writer_memory_l2": float(prefix_stats.get("writer_memory_l2", 0.0)),
+        "writer_slot_norm_mean": float(prefix_stats.get("writer_slot_norm_mean", 0.0)),
+        "writer_slot_norm_std": float(prefix_stats.get("writer_slot_norm_std", 0.0)),
+        "writer_slot_norm_max": float(prefix_stats.get("writer_slot_norm_max", 0.0)),
+    }
+
+
+def _prefix_stats(
+    prefix_embeddings: torch.Tensor | None = None,
+    *,
+    layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
+    memory_slots: torch.Tensor | None = None,
+) -> dict[str, Any]:
+    writer_stats = {
+        "writer_memory_l2": 0.0,
+        "writer_slot_norm_mean": 0.0,
+        "writer_slot_norm_std": 0.0,
+        "writer_slot_norm_max": 0.0,
+    }
+    if memory_slots is not None and memory_slots.numel() > 0:
+        writer_summary = _slot_norm_summary(memory_slots)
+        writer_stats = {
+            "writer_memory_l2": float(writer_summary["l2"]),
+            "writer_slot_norm_mean": float(writer_summary["slot_norm_mean"]),
+            "writer_slot_norm_std": float(writer_summary["slot_norm_std"]),
+            "writer_slot_norm_max": float(writer_summary["slot_norm_max"]),
+        }
+    if layer_prefix_hidden_by_layer is not None:
+        if not layer_prefix_hidden_by_layer:
+            return {
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "active_prefix_layers": [],
+                "layer_hidden_l2_by_layer": {},
+                "layer_slot_norm_mean_by_layer": {},
+                "layer_slot_norm_std_by_layer": {},
+                "layer_slot_norm_max_by_layer": {},
+                "layer_key_l2_by_layer": {},
+                "layer_value_l2_by_layer": {},
+                "prefix_tokens": 0.0,
+                "prefix_l2": 0.0,
+                "prefix_slot_norm_mean": 0.0,
+                "prefix_slot_norm_std": 0.0,
+                "prefix_slot_norm_max": 0.0,
+                **writer_stats,
+            }
+        ordered_layers = sorted(int(layer_index) for layer_index in layer_prefix_hidden_by_layer)
+        stacked = torch.stack(
+            [layer_prefix_hidden_by_layer[layer_index] for layer_index in ordered_layers],
+            dim=1,
+        )
+        stacked_cpu = stacked.detach().to(dtype=torch.float32, device="cpu")
+        slot_norms = stacked_cpu.norm(dim=-1)
+        layer_hidden_l2_by_layer: dict[str, float] = {}
+        layer_slot_norm_mean_by_layer: dict[str, float] = {}
+        layer_slot_norm_std_by_layer: dict[str, float] = {}
+        layer_slot_norm_max_by_layer: dict[str, float] = {}
+        for layer_offset, layer_index in enumerate(ordered_layers):
+            layer_tensor = stacked_cpu[:, layer_offset, :, :]
+            layer_summary = _slot_norm_summary(layer_tensor)
+            layer_hidden_l2_by_layer[str(layer_index)] = float(layer_summary["l2"])
+            layer_slot_norm_mean_by_layer[str(layer_index)] = float(layer_summary["slot_norm_mean"])
+            layer_slot_norm_std_by_layer[str(layer_index)] = float(layer_summary["slot_norm_std"])
+            layer_slot_norm_max_by_layer[str(layer_index)] = float(layer_summary["slot_norm_max"])
+        return {
+            "pilot_injection_mode": "sparse_deep_prefix",
+            "active_prefix_layers": ordered_layers,
+            "layer_hidden_l2_by_layer": layer_hidden_l2_by_layer,
+            "layer_slot_norm_mean_by_layer": layer_slot_norm_mean_by_layer,
+            "layer_slot_norm_std_by_layer": layer_slot_norm_std_by_layer,
+            "layer_slot_norm_max_by_layer": layer_slot_norm_max_by_layer,
+            "layer_key_l2_by_layer": {},
+            "layer_value_l2_by_layer": {},
+            "prefix_tokens": float(stacked_cpu.shape[2]),
+            "prefix_l2": float(stacked_cpu.norm().item()),
+            "prefix_slot_norm_mean": float(slot_norms.mean().item()),
+            "prefix_slot_norm_std": float(slot_norms.std(unbiased=False).item()),
+            "prefix_slot_norm_max": float(slot_norms.max().item()),
+            **writer_stats,
+        }
     if prefix_embeddings is None or prefix_embeddings.numel() == 0:
         return {
+            "pilot_injection_mode": "shallow_prefix",
+            "active_prefix_layers": [],
+            "layer_hidden_l2_by_layer": {},
+            "layer_slot_norm_mean_by_layer": {},
+            "layer_slot_norm_std_by_layer": {},
+            "layer_slot_norm_max_by_layer": {},
+            "layer_key_l2_by_layer": {},
+            "layer_value_l2_by_layer": {},
             "prefix_tokens": 0.0,
             "prefix_l2": 0.0,
             "prefix_slot_norm_mean": 0.0,
             "prefix_slot_norm_std": 0.0,
             "prefix_slot_norm_max": 0.0,
+            **writer_stats,
         }
-    prefix_cpu = prefix_embeddings.detach().to(dtype=torch.float32, device="cpu")
-    slot_norms = prefix_cpu.norm(dim=-1)
+    prefix_summary = _slot_norm_summary(prefix_embeddings)
     return {
-        "prefix_tokens": float(prefix_cpu.shape[1]),
-        "prefix_l2": float(prefix_cpu.norm().item()),
-        "prefix_slot_norm_mean": float(slot_norms.mean().item()),
-        "prefix_slot_norm_std": float(slot_norms.std(unbiased=False).item()),
-        "prefix_slot_norm_max": float(slot_norms.max().item()),
+        "pilot_injection_mode": "shallow_prefix",
+        "active_prefix_layers": [],
+        "layer_hidden_l2_by_layer": {},
+        "layer_slot_norm_mean_by_layer": {},
+        "layer_slot_norm_std_by_layer": {},
+        "layer_slot_norm_max_by_layer": {},
+        "layer_key_l2_by_layer": {},
+        "layer_value_l2_by_layer": {},
+        "prefix_tokens": float(prefix_embeddings.shape[1]),
+        "prefix_l2": float(prefix_summary["l2"]),
+        "prefix_slot_norm_mean": float(prefix_summary["slot_norm_mean"]),
+        "prefix_slot_norm_std": float(prefix_summary["slot_norm_std"]),
+        "prefix_slot_norm_max": float(prefix_summary["slot_norm_max"]),
+        **writer_stats,
     }
 
 
@@ -289,6 +495,8 @@ def _save_shared_injection_checkpoint(
             "prompt_variant": prompt_variant,
             "support_serialization_variant": support_serialization_variant,
             "step": int(step),
+            "pilot_injection_mode": str(runtime.injection_mode),
+            "pilot_deep_prefix_layers": list(runtime.deep_prefix_layers),
         },
         output_path,
     )
@@ -479,28 +687,8 @@ def _sample_support_examples_for_training(
     target_count = _resolve_train_support_mask_count(support_serialization_variant)
     if target_count is None or target_count >= len(selected_rows):
         return [dict(row) for row in selected_rows]
-    by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
-    for row in selected_rows:
-        label = str(row.get("label", "")).strip()
-        if label in by_label:
-            by_label[label].append(dict(row))
-    sampled: list[dict[str, Any]] = []
-    used_ids: set[str] = set()
-    for label in FEVER_LABEL_ORDER:
-        pool = by_label[label]
-        if not pool:
-            continue
-        pick_index = int(torch.randint(len(pool), (1,), generator=generator).item())
-        chosen = dict(pool[pick_index])
-        sampled.append(chosen)
-        used_ids.add(str(chosen.get("id", "")))
-    remaining = [dict(row) for row in selected_rows if str(row.get("id", "")) not in used_ids]
-    remaining_slots = max(0, target_count - len(sampled))
-    if remaining_slots > 0 and remaining:
-        permutation = torch.randperm(len(remaining), generator=generator).tolist()
-        for index in permutation[:remaining_slots]:
-            sampled.append(dict(remaining[index]))
-    return sampled
+    permutation = torch.randperm(len(selected_rows), generator=generator).tolist()
+    return [dict(selected_rows[index]) for index in permutation[:target_count]]
 
 
 def _serialize_teacher_prompt(prompt_text: str, support_text_block: str) -> str:
@@ -537,12 +725,24 @@ class SharedInjectionPilotRuntime(nn.Module):
             transformer_layers=int(writer_cfg.get("transformer_layers", 1)),
             dropout=float(writer_cfg.get("dropout", 0.0)),
         )
-        self.prefix_projector = LatentPrefixProjector(
-            hidden_size=self.backbone.hidden_size,
-            prefix_tokens=int(writer_cfg["memory_slots"]),
-            slot_max_norm=config["runtime"].get("pilot_prefix_slot_max_norm"),
-            total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
-        )
+        self.injection_mode = _resolve_injection_mode(config)
+        self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
+        if self.injection_mode == "shallow_prefix":
+            self.prefix_projector = LatentPrefixProjector(
+                hidden_size=self.backbone.hidden_size,
+                prefix_tokens=int(writer_cfg["memory_slots"]),
+                slot_max_norm=config["runtime"].get("pilot_prefix_slot_max_norm"),
+                total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
+            )
+        else:
+            self.prefix_projector = SharedLowRankDeepPrefixProjector(
+                hidden_size=self.backbone.hidden_size,
+                prefix_tokens=int(writer_cfg["memory_slots"]),
+                layer_indices=list(self.deep_prefix_layers),
+                bottleneck_rank=_resolve_deep_prefix_rank(config),
+                slot_max_norm=config["runtime"].get("pilot_prefix_slot_max_norm"),
+                total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
+            )
         self.arm = arm
         self.writer_memory_control = writer_memory_control
         for parameter in self.backbone.parameters():
@@ -563,18 +763,56 @@ class SharedInjectionPilotRuntime(nn.Module):
         for parameter in self.writer.parameters():
             parameter.requires_grad_(enabled)
 
-    def build_prefix_embeddings(self, support_text_block: str) -> torch.Tensor:
+    def _augment_prefix_stats_with_projection(
+        self,
+        *,
+        prefix_stats: dict[str, Any],
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+    ) -> dict[str, Any]:
+        if not layer_prefix_hidden_by_layer:
+            return prefix_stats
+        projection_stats = self.backbone.summarize_layer_prefix_projection(
+            layer_prefix_hidden_by_layer,
+            batch_size=int(next(iter(layer_prefix_hidden_by_layer.values())).shape[0]),
+        )
+        merged = dict(prefix_stats)
+        merged.update(projection_stats)
+        return merged
+
+    def build_prefix_artifacts(self, support_text_block: str) -> PrefixInjectionArtifacts:
         if self.writer_memory_control == "zero":
-            return torch.zeros(
+            memory_slots = torch.zeros(
                 1,
-                self.prefix_projector.prefix_tokens,
+                int(self.writer.memory_slots),
                 self.backbone.hidden_size,
                 dtype=torch.float32,
                 device=self.backbone.device,
             )
-        support_state = self.backbone.summarize_texts([support_text_block])
-        memory_slots = self.writer.write(support_state)
-        return self.prefix_projector(memory_slots)
+        else:
+            support_state = self.backbone.summarize_texts([support_text_block])
+            memory_slots = self.writer.write(support_state)
+        if self.injection_mode == "shallow_prefix":
+            prefix_embeddings = self.prefix_projector(memory_slots)
+            prefix_stats = _prefix_stats(prefix_embeddings, memory_slots=memory_slots)
+            return PrefixInjectionArtifacts(
+                prefix_embeddings=prefix_embeddings,
+                layer_prefix_hidden_by_layer=None,
+                prefix_stats=prefix_stats,
+            )
+        layer_prefix_hidden_by_layer = self.prefix_projector(memory_slots)
+        prefix_stats = _prefix_stats(
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+            memory_slots=memory_slots,
+        )
+        prefix_stats = self._augment_prefix_stats_with_projection(
+            prefix_stats=prefix_stats,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+        )
+        return PrefixInjectionArtifacts(
+            prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+            prefix_stats=prefix_stats,
+        )
 
     def score_example(
         self,
@@ -582,6 +820,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         *,
         support_text_block: str,
         prefix_embeddings: torch.Tensor | None,
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
         return_diagnostics: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, object]]:
         if self.arm == "teacher_text":
@@ -595,6 +834,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             example_cache.prompt_text,
             example_cache.candidate_texts,
             prefix_embeddings=prefix_embeddings,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
             return_diagnostics=return_diagnostics,
         )
 
@@ -647,10 +887,11 @@ def _prediction_row(
     support_text_block: str,
     example_cache: SharedInjectionExampleCache,
     scores: torch.Tensor,
-    prefix_embeddings: torch.Tensor | None,
+    prefix_stats: dict[str, Any] | None,
 ) -> dict[str, Any]:
     predicted_index = int(torch.argmax(scores).item())
     margin, competitor_index = _compute_margin(scores, example_cache.gold_index)
+    scalar_prefix_stats = _prefix_scalar_summary(prefix_stats or {})
     return {
         "example_id": str(example_cache.example["id"]),
         "arm_alias": arm_alias,
@@ -659,8 +900,8 @@ def _prediction_row(
         "prompt_variant": prompt_variant,
         "support_serialization_variant": support_serialization_variant,
         "support_text_block_chars": len(support_text_block),
-        "prefix_tokens": 0 if prefix_embeddings is None else int(prefix_embeddings.shape[1]),
-        "prefix_l2": 0.0 if prefix_embeddings is None else float(prefix_embeddings.norm().item()),
+        "prefix_tokens": int(scalar_prefix_stats.get("prefix_tokens", 0.0)),
+        "prefix_l2": float(scalar_prefix_stats.get("prefix_l2", 0.0)),
         "prompt_text": example_cache.prompt_text,
         "predicted_label": example_cache.candidate_labels[predicted_index],
         "gold_label": example_cache.candidate_labels[example_cache.gold_index],
@@ -686,9 +927,10 @@ def _evaluate_examples(
     support_text_block: str,
     teacher_support_text_block: str,
     prefix_embeddings: torch.Tensor | None,
+    layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+    prefix_stats: dict[str, Any] | None,
     profiler: ProfileTracker | None,
 ) -> list[dict[str, Any]]:
-    prefix_embeddings_cpu = None if prefix_embeddings is None else prefix_embeddings.detach().cpu()
     active_support_text_block = teacher_support_text_block if arm == "teacher_text" else support_text_block
     case_rows: list[dict[str, Any]] = []
     for example_cache in eval_examples:
@@ -701,6 +943,7 @@ def _evaluate_examples(
             example_cache,
             support_text_block=teacher_support_text_block,
             prefix_embeddings=prefix_embeddings,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
         ).detach().to(dtype=torch.float32).cpu()
         case_rows.append(
             _prediction_row(
@@ -712,7 +955,7 @@ def _evaluate_examples(
                 support_text_block=active_support_text_block,
                 example_cache=example_cache,
                 scores=scores,
-                prefix_embeddings=prefix_embeddings_cpu,
+                prefix_stats=prefix_stats,
             )
         )
     return case_rows
@@ -731,13 +974,16 @@ def run_shared_injection_pilot(
     arm_alias = _resolve_pilot_arm_alias(config, arm=arm, writer_memory_control=writer_memory_control)
     prompt_variant = _resolve_prompt_variant(config)
     support_serialization_variant = _resolve_support_serialization_variant(config)
+    injection_mode = _resolve_injection_mode(config)
+    deep_prefix_layers = _resolve_deep_prefix_layers(config)
+    deep_prefix_rank = _resolve_deep_prefix_rank(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
     support_limit = max(0, int(config["runtime"].get("pilot_support_examples", 8)))
-    train_steps = int(config["runtime"].get("pilot_train_steps", 64))
-    projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 16))
-    writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 0.002))
-    projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 0.01))
+    train_steps = int(config["runtime"].get("pilot_train_steps", 96))
+    projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
+    writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 1e-4))
+    projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
     writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
@@ -809,12 +1055,14 @@ def run_shared_injection_pilot(
     support_mask_generator.manual_seed(seed + 101)
 
     def evaluate_snapshot(step: int) -> None:
-        prefix_embeddings = None
-        prefix_stats = None
+        prefix_artifacts = PrefixInjectionArtifacts(
+            prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=None,
+            prefix_stats=_prefix_stats(),
+        )
         snapshot_checkpoint_path = None
         if arm == "injected":
-            prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
-            prefix_stats = _prefix_stats(prefix_embeddings)
+            prefix_artifacts = runtime.build_prefix_artifacts(support_text_block)
             if writer_memory_control != "zero":
                 snapshot_checkpoint_path = (
                     output_dir / "snapshot_evals" / f"step_{step:04d}" / "checkpoint.pt"
@@ -842,7 +1090,9 @@ def run_shared_injection_pilot(
             support_serialization_variant=support_serialization_variant,
             support_text_block=support_text_block,
             teacher_support_text_block=teacher_support_text_block,
-            prefix_embeddings=prefix_embeddings,
+            prefix_embeddings=prefix_artifacts.prefix_embeddings,
+            layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+            prefix_stats=prefix_artifacts.prefix_stats,
             profiler=None,
         )
         metrics = _classification_metrics_from_rows(snapshot_rows)
@@ -857,7 +1107,7 @@ def run_shared_injection_pilot(
             support_serialization_variant=support_serialization_variant,
             support_text_block=support_text_block,
             case_rows=snapshot_rows,
-            prefix_stats=prefix_stats,
+            prefix_stats=prefix_artifacts.prefix_stats,
             checkpoint_path=snapshot_checkpoint_path,
         )
         snapshot_metrics.append(
@@ -869,14 +1119,19 @@ def run_shared_injection_pilot(
                 "dominant_label_fraction": metrics["dominant_label_fraction"],
                 "snapshot_dir": str(snapshot_dir.resolve()),
                 "task_case_dump_path": snapshot_payload["task_case_dump_path"],
-                "checkpoint_path": snapshot_payload["checkpoint_path"],
-                "prefix_tokens": snapshot_payload["prefix_tokens"],
-                "prefix_l2": snapshot_payload["prefix_l2"],
-                "prefix_slot_norm_mean": snapshot_payload["prefix_slot_norm_mean"],
-                "prefix_slot_norm_std": snapshot_payload["prefix_slot_norm_std"],
-                "prefix_slot_norm_max": snapshot_payload["prefix_slot_norm_max"],
-            }
-        )
+                    "checkpoint_path": snapshot_payload["checkpoint_path"],
+                    "prefix_tokens": snapshot_payload["prefix_tokens"],
+                    "prefix_l2": snapshot_payload["prefix_l2"],
+                    "prefix_slot_norm_mean": snapshot_payload["prefix_slot_norm_mean"],
+                    "prefix_slot_norm_std": snapshot_payload["prefix_slot_norm_std"],
+                    "prefix_slot_norm_max": snapshot_payload["prefix_slot_norm_max"],
+                    "writer_memory_l2": snapshot_payload["writer_memory_l2"],
+                    "writer_slot_norm_mean": snapshot_payload["writer_slot_norm_mean"],
+                    "writer_slot_norm_std": snapshot_payload["writer_slot_norm_std"],
+                    "writer_slot_norm_max": snapshot_payload["writer_slot_norm_max"],
+                    "prefix_artifact_stats": snapshot_payload["prefix_artifact_stats"],
+                }
+            )
 
     if 0 in snapshot_steps:
         evaluate_snapshot(0)
@@ -916,11 +1171,12 @@ def run_shared_injection_pilot(
                 preselected_rows=True,
             )
             optimizer.zero_grad(set_to_none=True)
-            prefix_embeddings = runtime.build_prefix_embeddings(masked_support_text_block)
+            prefix_artifacts = runtime.build_prefix_artifacts(masked_support_text_block)
             scores = runtime.score_example(
                 train_example,
                 support_text_block=teacher_support_text_block,
-                prefix_embeddings=prefix_embeddings,
+                prefix_embeddings=prefix_artifacts.prefix_embeddings,
+                layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
             )
             loss = _choice_task_loss(scores, train_example.gold_index, margin_value=choice_margin)
             loss.backward()
@@ -954,7 +1210,8 @@ def run_shared_injection_pilot(
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
                     "writer_grad_norm": writer_grad_norm,
                     "total_grad_norm_pre_clip": total_grad_norm,
-                    **_prefix_stats(prefix_embeddings),
+                    "prefix_artifact_stats": prefix_artifacts.prefix_stats,
+                    **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
                 }
             )
             if (step + 1) in snapshot_steps and (step + 1) != 0:
@@ -967,9 +1224,13 @@ def run_shared_injection_pilot(
         runtime.prefix_projector.eval()
         runtime.set_writer_trainable(True)
 
-    prefix_embeddings = None
+    prefix_artifacts = PrefixInjectionArtifacts(
+        prefix_embeddings=None,
+        layer_prefix_hidden_by_layer=None,
+        prefix_stats=_prefix_stats(),
+    )
     if arm == "injected":
-        prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
+        prefix_artifacts = runtime.build_prefix_artifacts(support_text_block)
     case_rows = _evaluate_examples(
         runtime=runtime,
         eval_examples=eval_caches,
@@ -980,7 +1241,9 @@ def run_shared_injection_pilot(
         support_serialization_variant=support_serialization_variant,
         support_text_block=support_text_block,
         teacher_support_text_block=teacher_support_text_block,
-        prefix_embeddings=prefix_embeddings,
+        prefix_embeddings=prefix_artifacts.prefix_embeddings,
+        layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+        prefix_stats=prefix_artifacts.prefix_stats,
         profiler=profiler,
     )
 
@@ -1004,13 +1267,17 @@ def run_shared_injection_pilot(
 
     task_case_dump_path = output_dir / "task_case_dump.jsonl"
     write_jsonl(task_case_dump_path, case_rows)
-    final_prefix_stats = _prefix_stats(prefix_embeddings)
+    final_prefix_stats = prefix_artifacts.prefix_stats
+    final_prefix_scalar_stats = _prefix_scalar_summary(final_prefix_stats)
     metrics = {
         "mode": "train",
         "training_stage": "shared_injection_pilot",
         "pilot_arm_alias": arm_alias,
         "shared_injection_arm": arm,
         "writer_memory_control": writer_memory_control,
+        "pilot_injection_mode": injection_mode,
+        "pilot_deep_prefix_layers": list(deep_prefix_layers),
+        "pilot_deep_prefix_rank": deep_prefix_rank,
         "prompt_variant": prompt_variant,
         "support_serialization_variant": support_serialization_variant,
         "task_name": config["task"]["name"],
@@ -1048,7 +1315,8 @@ def run_shared_injection_pilot(
         "train_final_loss": train_events[-1]["loss"] if train_events else None,
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         "pilot_checkpoint_path": "" if not injection_checkpoint_path else str(Path(injection_checkpoint_path).resolve()),
-        **final_prefix_stats,
+        "prefix_artifact_stats": final_prefix_stats,
+        **final_prefix_scalar_stats,
         **profile_metrics,
     }
     write_json(output_dir / "metrics.json", metrics)

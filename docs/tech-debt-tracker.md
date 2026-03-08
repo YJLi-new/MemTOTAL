@@ -3,6 +3,16 @@
 ## Open
 
 - 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
+- `M4.5` sparse deep prompt 已经把 shared injection 主线推进到更强主链路注入，但最新 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/selection.json` 仍是 `selection_passed=false`。当前新的第一优先级 tech debt 不再是“有没有层内控制力”，而是：
+  - `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap
+  - `I_real` 虽然在 `step64` 出现 `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=2`
+  - 但同一步仍有 `regressions_vs_base=18`
+  - `dominant_label_fraction` 从 `step16` 起基本塌到 `1.0`
+  - 这说明 deep prompt 当前更像在学强偏置前缀，而不是稳定的 content-sensitive memory use
+- 因而，当前 top tech debt 已进一步收缩成：
+  - 如何防止 sparse deep prompt 在早期直接撞上 norm cap
+  - 如何把 `real` 与 `shuffle` 的层内控制轨迹真正拉开
+  - 如果继续收紧 projector 自由度仍不过 gate，何时重写 writer objective，使 latent 直接对齐 frozen reasoner 的最终行为
 - 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
 - `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。
 - `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
@@ -13,6 +23,7 @@
   - `raw8` 更像负对照，不再适合承担主恢复路线
   - `triad6` 才是当前唯一值得继续押的 support variant
   - 下一轮若继续 shared injection，优先级应转向 `deep prompt / per-layer prefix`，而不是继续堆更多浅层 prefix 的 score-side小修补
+- 这条 tech debt 现在已经不再是“下一轮若继续 shared injection”；`M4.5` 已经把 deep prompt 实做出来并真实跑完。因此当前文档里凡是还把 `deep prompt / per-layer prefix` 写成“未来 fallback”的地方，都应视为待清理历史表述。
 - 因而当前最应优先补的不是新的 score-side residual family，而是：
   - 继续把 `shared injection` 当作主线
   - 在 `screen248-train / screen248-val / fixed64-test` 的预注册口径下继续做稳定训练

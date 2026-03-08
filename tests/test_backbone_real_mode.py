@@ -48,46 +48,105 @@ class _FakeTokenizer:
         return base
 
 
+class _FakeRotaryEmbedding:
+    def __call__(self, x, position_ids):
+        batch, seq = position_ids.shape
+        head_dim = 4
+        cos = torch.ones(batch, seq, head_dim, dtype=x.dtype, device=x.device)
+        sin = torch.zeros(batch, seq, head_dim, dtype=x.dtype, device=x.device)
+        return cos, sin
+
+
+class _FakeSelfAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.head_dim = 4
+        self.k_proj = torch.nn.Linear(8, 4, bias=False)
+        self.v_proj = torch.nn.Linear(8, 4, bias=False)
+        with torch.no_grad():
+            self.k_proj.weight.copy_(
+                torch.tensor(
+                    [
+                        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                    ],
+                    dtype=torch.float32,
+                )
+            )
+            self.v_proj.weight.copy_(self.k_proj.weight)
+
+
+class _FakeDecoderLayer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.input_layernorm = torch.nn.LayerNorm(8)
+        self.self_attn = _FakeSelfAttention()
+
+
 class _FakeModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.config = types.SimpleNamespace(hidden_size=8)
+        self.config = types.SimpleNamespace(hidden_size=8, num_hidden_layers=2)
         self.embedding = torch.nn.Embedding(64, 8)
+        self.model = types.SimpleNamespace(
+            layers=torch.nn.ModuleList([_FakeDecoderLayer(), _FakeDecoderLayer()]),
+            rotary_emb=_FakeRotaryEmbedding(),
+        )
         with torch.no_grad():
             self.embedding.weight.copy_(torch.arange(64 * 8, dtype=torch.float32).view(64, 8) / 100.0)
 
     def get_input_embeddings(self):
         return self.embedding
 
-    def forward(self, input_ids=None, attention_mask=None, inputs_embeds=None, output_hidden_states=False, use_cache=False):
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        output_hidden_states=False,
+        use_cache=False,
+        output_attentions=False,
+        past_key_values=None,
+        cache_position=None,
+    ):
         if inputs_embeds is not None:
             hidden = inputs_embeds.to(dtype=torch.float32)
             batch, seq, _ = hidden.shape
-            token_basis = hidden[..., 0].round().to(dtype=torch.long).clamp(min=0)
         else:
             assert input_ids is not None
+            hidden = self.embedding(input_ids).to(dtype=torch.float32)
             batch, seq = input_ids.shape
-            token_basis = input_ids.to(dtype=torch.long)
-            hidden = torch.stack(
-                [
-                    input_ids.to(dtype=torch.float32),
-                    input_ids.to(dtype=torch.float32) * 0.5,
-                    input_ids.to(dtype=torch.float32) * 0.25,
-                    input_ids.to(dtype=torch.float32) * 0.125,
-                    input_ids.to(dtype=torch.float32) * 0.0625,
-                    input_ids.to(dtype=torch.float32) * 0.03125,
-                    input_ids.to(dtype=torch.float32) * 0.015625,
-                    input_ids.to(dtype=torch.float32) * 0.0078125,
-                ],
-                dim=-1,
-            )
+        past_length = 0
+        if past_key_values is not None:
+            past_length = int(past_key_values.get_seq_length())
+            if past_length > 0:
+                prefix_signal = past_key_values.layers[0].values.mean(dim=(1, 2, 3), keepdim=False).view(batch, 1, 1)
+                hidden = hidden + prefix_signal
+        token_basis = (hidden[..., 0] * 10.0).round().to(dtype=torch.long).clamp(min=0)
         logits = torch.zeros(batch, seq, 64, dtype=torch.float32)
         logits.scatter_(
             -1,
             (token_basis % 64).unsqueeze(-1),
             ((token_basis % 64).to(dtype=torch.float32) / 10.0).unsqueeze(-1),
         )
-        return types.SimpleNamespace(logits=logits, hidden_states=[hidden, hidden])
+        attentions = None
+        if output_attentions:
+            attentions = []
+            for layer_index in range(self.config.num_hidden_layers):
+                layer_past = 0
+                if past_key_values is not None and layer_index < len(past_key_values.layers):
+                    layer = past_key_values.layers[layer_index]
+                    if layer.keys is not None:
+                        layer_past = int(layer.keys.shape[-2])
+                total_kv = layer_past + seq
+                layer_attention = torch.full((batch, 1, seq, total_kv), 1.0 / max(1, total_kv), dtype=torch.float32)
+                if layer_past > 0:
+                    layer_attention[:, :, :, :layer_past] += 0.05
+                    layer_attention = layer_attention / layer_attention.sum(dim=-1, keepdim=True)
+                attentions.append(layer_attention)
+        return types.SimpleNamespace(logits=logits, hidden_states=[hidden, hidden], attentions=tuple(attentions) if attentions is not None else None)
 
     def generate(self, input_ids, attention_mask=None, max_new_tokens=32, do_sample=False, pad_token_id=0, eos_token_id=1):
         append = torch.full((input_ids.shape[0], 2), 7, dtype=torch.long, device=input_ids.device)
@@ -119,6 +178,21 @@ class BackboneRealModeTest(unittest.TestCase):
         self.assertEqual(list(prefixed_scores.shape), [2])
         self.assertNotEqual(float(prefixed_scores.abs().sum().item()), 0.0)
         self.assertNotEqual(float(prefixed_scores[0].item()), float(prefixed_scores[1].item()))
+        deep_prefix = {
+            0: torch.ones(1, 3, 8, dtype=torch.float32),
+            1: torch.full((1, 3, 8), 0.5, dtype=torch.float32),
+        }
+        deep_scores, diagnostics = backbone.score_continuations(
+            "Prompt",
+            ["good ending", "bad"],
+            layer_prefix_hidden_by_layer=deep_prefix,
+            return_diagnostics=True,
+        )
+        self.assertEqual(list(deep_scores.shape), [2])
+        self.assertEqual(diagnostics["diagnostic_layers"], [0, 1])
+        self.assertEqual(sorted(diagnostics["prefix_attention_mass_by_candidate_by_layer"]), [0, 1])
+        projection = backbone.summarize_layer_prefix_projection(deep_prefix)
+        self.assertEqual(sorted(projection["layer_key_l2_by_layer"]), ["0", "1"])
         generations = backbone.generate(["Prompt"])
         self.assertEqual(len(generations), 1)
         self.assertTrue(generations[0])

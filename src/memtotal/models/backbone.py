@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 import hashlib
 import os
-from typing import Iterable
+from typing import Any, Iterable
 
 import torch
 from torch import nn
@@ -200,38 +200,247 @@ class BackboneWrapper(nn.Module):
         self,
         texts: list[str],
         prefix_embeddings: torch.Tensor | None,
-    ) -> tuple[dict[str, torch.Tensor], int]:
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if prefix_embeddings is not None and layer_prefix_hidden_by_layer is not None:
+            raise ValueError(
+                "prefix_embeddings and layer_prefix_hidden_by_layer are mutually exclusive."
+            )
         encoded = self._prepare_hf_inputs(texts)
-        if prefix_embeddings is None:
-            return encoded, 0
+        metadata = {
+            "prefix_length": 0,
+            "score_input_ids": encoded["input_ids"],
+            "score_attention_mask": encoded["attention_mask"],
+            "token_logit_slice_start": 0,
+            "attention_query_offset": 0,
+            "diagnostic_layers": [],
+        }
+        if prefix_embeddings is None and layer_prefix_hidden_by_layer is None:
+            return encoded, metadata
         if self.model is None:
             raise RuntimeError("Real backbone model is not initialized.")
-        if prefix_embeddings.ndim != 3:
-            raise ValueError("prefix_embeddings must have shape [batch, prefix_tokens, hidden_size].")
-        batch_size = encoded["input_ids"].shape[0]
-        if prefix_embeddings.shape[0] == 1 and batch_size > 1:
-            prefix_embeddings = prefix_embeddings.expand(batch_size, -1, -1)
-        if prefix_embeddings.shape[0] != batch_size:
-            raise ValueError(
-                "prefix_embeddings batch dimension must be 1 or match the number of candidate sequences."
+        if prefix_embeddings is not None:
+            if prefix_embeddings.ndim != 3:
+                raise ValueError("prefix_embeddings must have shape [batch, prefix_tokens, hidden_size].")
+            batch_size = encoded["input_ids"].shape[0]
+            if prefix_embeddings.shape[0] == 1 and batch_size > 1:
+                prefix_embeddings = prefix_embeddings.expand(batch_size, -1, -1)
+            if prefix_embeddings.shape[0] != batch_size:
+                raise ValueError(
+                    "prefix_embeddings batch dimension must be 1 or match the number of candidate sequences."
+                )
+            if prefix_embeddings.shape[2] != self.hidden_size:
+                raise ValueError(
+                    f"prefix_embeddings hidden size must match backbone hidden size {self.hidden_size}, "
+                    f"got {prefix_embeddings.shape[2]}."
+                )
+            prefix_embeddings = prefix_embeddings.to(device=self.device, dtype=self._resolve_torch_dtype())
+            input_embeddings = self.model.get_input_embeddings()(encoded["input_ids"])
+            model_kwargs = dict(encoded)
+            model_kwargs.pop("input_ids")
+            prefix_mask = torch.ones(
+                batch_size,
+                prefix_embeddings.shape[1],
+                dtype=encoded["attention_mask"].dtype,
+                device=self.device,
             )
-        if prefix_embeddings.shape[2] != self.hidden_size:
-            raise ValueError(
-                f"prefix_embeddings hidden size must match backbone hidden size {self.hidden_size}, "
-                f"got {prefix_embeddings.shape[2]}."
+            model_kwargs["inputs_embeds"] = torch.cat([prefix_embeddings, input_embeddings], dim=1)
+            model_kwargs["attention_mask"] = torch.cat([prefix_mask, encoded["attention_mask"]], dim=1)
+            metadata.update(
+                {
+                    "prefix_length": int(prefix_embeddings.shape[1]),
+                    "token_logit_slice_start": int(prefix_embeddings.shape[1]),
+                    "attention_query_offset": int(prefix_embeddings.shape[1]),
+                    "diagnostic_layers": [max(0, int(getattr(self.model.config, "num_hidden_layers", 1)) - 1)],
+                }
             )
-        prefix_embeddings = prefix_embeddings.to(device=self.device, dtype=self._resolve_torch_dtype())
-        input_embeddings = self.model.get_input_embeddings()(encoded["input_ids"])
-        encoded.pop("input_ids")
+            return model_kwargs, metadata
+        return self._prepare_deep_prefixed_hf_inputs(encoded, layer_prefix_hidden_by_layer or {})
+
+    def _decoder_layers(self) -> list[nn.Module]:
+        if self.model is None:
+            raise RuntimeError("Real backbone model is not initialized.")
+        decoder = getattr(self.model, "model", None)
+        layers = getattr(decoder, "layers", None)
+        if layers is None:
+            raise NotImplementedError(
+                "layer_prefix_hidden_by_layer requires a decoder backbone exposing model.layers."
+            )
+        return list(layers)
+
+    def _expand_layer_prefix_hidden(
+        self,
+        *,
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor],
+        batch_size: int,
+    ) -> tuple[dict[int, torch.Tensor], int]:
+        normalized: dict[int, torch.Tensor] = {}
+        prefix_length: int | None = None
+        torch_dtype = self._resolve_torch_dtype()
+        num_layers = len(self._decoder_layers())
+        for raw_layer_index, hidden_states in sorted(layer_prefix_hidden_by_layer.items()):
+            layer_index = int(raw_layer_index)
+            if layer_index < 0 or layer_index >= num_layers:
+                raise ValueError(
+                    f"layer_prefix_hidden_by_layer includes layer {layer_index}, "
+                    f"but backbone exposes layers [0, {num_layers - 1}]."
+                )
+            if hidden_states.ndim != 3:
+                raise ValueError(
+                    "Each layer_prefix_hidden_by_layer tensor must have shape [batch, prefix_tokens, hidden_size]."
+                )
+            if hidden_states.shape[0] == 1 and batch_size > 1:
+                hidden_states = hidden_states.expand(batch_size, -1, -1)
+            if hidden_states.shape[0] != batch_size:
+                raise ValueError(
+                    "layer_prefix_hidden_by_layer batch dimension must be 1 or match the number of candidate sequences."
+                )
+            if hidden_states.shape[2] != self.hidden_size:
+                raise ValueError(
+                    f"layer_prefix_hidden_by_layer hidden size must match backbone hidden size {self.hidden_size}, "
+                    f"got {hidden_states.shape[2]}."
+                )
+            if prefix_length is None:
+                prefix_length = int(hidden_states.shape[1])
+            elif int(hidden_states.shape[1]) != prefix_length:
+                raise ValueError("All layer_prefix_hidden_by_layer tensors must share the same prefix token count.")
+            normalized[layer_index] = hidden_states.to(device=self.device, dtype=torch_dtype)
+        if not normalized:
+            raise ValueError("layer_prefix_hidden_by_layer must not be empty when deep prefix injection is enabled.")
+        return normalized, int(prefix_length or 0)
+
+    def _prepare_deep_prefixed_hf_inputs(
+        self,
+        encoded: dict[str, torch.Tensor],
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self.model is None:
+            raise RuntimeError("Real backbone model is not initialized.")
+        batch_size, query_length = encoded["input_ids"].shape
+        normalized_layers, prefix_length = self._expand_layer_prefix_hidden(
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+            batch_size=batch_size,
+        )
+        decoder_layers = self._decoder_layers()
+        base_model = getattr(self.model, "model", None)
+        rotary_emb = getattr(base_model, "rotary_emb", None)
+        if rotary_emb is None:
+            raise NotImplementedError(
+                "layer_prefix_hidden_by_layer requires a backbone exposing model.rotary_emb."
+            )
+        from transformers.cache_utils import DynamicCache
+        from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
+
+        prefix_position_ids = torch.arange(prefix_length, device=self.device).unsqueeze(0).expand(batch_size, -1)
+        prefix_cache = DynamicCache()
+        zero_hidden_template = torch.zeros(
+            batch_size,
+            prefix_length,
+            self.hidden_size,
+            device=self.device,
+            dtype=self._resolve_torch_dtype(),
+        )
+        for layer_index, decoder_layer in enumerate(decoder_layers):
+            hidden_states = normalized_layers.get(layer_index, zero_hidden_template)
+            attn_input = decoder_layer.input_layernorm(hidden_states)
+            key_states = decoder_layer.self_attn.k_proj(attn_input)
+            value_states = decoder_layer.self_attn.v_proj(attn_input)
+            head_dim = int(decoder_layer.self_attn.head_dim)
+            key_head_count = max(1, int(key_states.shape[-1] // head_dim))
+            value_head_count = max(1, int(value_states.shape[-1] // head_dim))
+            key_states = key_states.view(batch_size, prefix_length, key_head_count, head_dim).transpose(1, 2)
+            value_states = value_states.view(batch_size, prefix_length, value_head_count, head_dim).transpose(1, 2)
+            cos, sin = rotary_emb(hidden_states, prefix_position_ids)
+            dummy_queries = torch.zeros_like(key_states)
+            _, key_states = apply_rotary_pos_emb(dummy_queries, key_states, cos, sin)
+            prefix_cache.update(key_states, value_states, layer_index)
         prefix_mask = torch.ones(
             batch_size,
-            prefix_embeddings.shape[1],
+            prefix_length,
             dtype=encoded["attention_mask"].dtype,
             device=self.device,
         )
-        encoded["inputs_embeds"] = torch.cat([prefix_embeddings, input_embeddings], dim=1)
-        encoded["attention_mask"] = torch.cat([prefix_mask, encoded["attention_mask"]], dim=1)
-        return encoded, int(prefix_embeddings.shape[1])
+        model_kwargs: dict[str, Any] = {
+            "input_ids": encoded["input_ids"],
+            "attention_mask": torch.cat([prefix_mask, encoded["attention_mask"]], dim=1),
+            "past_key_values": prefix_cache,
+            "cache_position": torch.arange(
+                prefix_length,
+                prefix_length + query_length,
+                device=self.device,
+            ),
+            "use_cache": True,
+        }
+        metadata = {
+            "prefix_length": prefix_length,
+            "score_input_ids": encoded["input_ids"],
+            "score_attention_mask": encoded["attention_mask"],
+            "token_logit_slice_start": 0,
+            "attention_query_offset": 0,
+            "diagnostic_layers": sorted(int(layer_index) for layer_index in normalized_layers),
+        }
+        return model_kwargs, metadata
+
+    def summarize_layer_prefix_projection(
+        self,
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor],
+        *,
+        batch_size: int = 1,
+    ) -> dict[str, dict[str, float]]:
+        if self.load_mode != "hf_causal_lm":
+            return {
+                "layer_hidden_l2_by_layer": {},
+                "layer_key_l2_by_layer": {},
+                "layer_value_l2_by_layer": {},
+            }
+        if self.model is None:
+            raise RuntimeError("Real backbone model is not initialized.")
+        normalized_layers, _ = self._expand_layer_prefix_hidden(
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+            batch_size=batch_size,
+        )
+        decoder_layers = self._decoder_layers()
+        base_model = getattr(self.model, "model", None)
+        rotary_emb = getattr(base_model, "rotary_emb", None)
+        if rotary_emb is None:
+            raise NotImplementedError(
+                "layer_prefix_hidden_by_layer requires a backbone exposing model.rotary_emb."
+            )
+        from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
+
+        layer_hidden_l2_by_layer: dict[str, float] = {}
+        layer_key_l2_by_layer: dict[str, float] = {}
+        layer_value_l2_by_layer: dict[str, float] = {}
+        for layer_index, hidden_states in sorted(normalized_layers.items()):
+            decoder_layer = decoder_layers[layer_index]
+            prefix_length = hidden_states.shape[1]
+            prefix_position_ids = torch.arange(prefix_length, device=self.device).unsqueeze(0).expand(batch_size, -1)
+            attn_input = decoder_layer.input_layernorm(hidden_states)
+            key_states = decoder_layer.self_attn.k_proj(attn_input)
+            value_states = decoder_layer.self_attn.v_proj(attn_input)
+            head_dim = int(decoder_layer.self_attn.head_dim)
+            key_head_count = max(1, int(key_states.shape[-1] // head_dim))
+            value_head_count = max(1, int(value_states.shape[-1] // head_dim))
+            key_states = key_states.view(batch_size, prefix_length, key_head_count, head_dim).transpose(1, 2)
+            value_states = value_states.view(batch_size, prefix_length, value_head_count, head_dim).transpose(1, 2)
+            cos, sin = rotary_emb(hidden_states, prefix_position_ids)
+            dummy_queries = torch.zeros_like(key_states)
+            _, key_states = apply_rotary_pos_emb(dummy_queries, key_states, cos, sin)
+            layer_key = str(layer_index)
+            layer_hidden_l2_by_layer[layer_key] = float(
+                hidden_states.detach().to(dtype=torch.float32, device="cpu").norm().item()
+            )
+            layer_key_l2_by_layer[layer_key] = float(
+                key_states.detach().to(dtype=torch.float32, device="cpu").norm().item()
+            )
+            layer_value_l2_by_layer[layer_key] = float(
+                value_states.detach().to(dtype=torch.float32, device="cpu").norm().item()
+            )
+        return {
+            "layer_hidden_l2_by_layer": layer_hidden_l2_by_layer,
+            "layer_key_l2_by_layer": layer_key_l2_by_layer,
+            "layer_value_l2_by_layer": layer_value_l2_by_layer,
+        }
 
     def score_continuations(
         self,
@@ -239,6 +448,7 @@ class BackboneWrapper(nn.Module):
         candidate_texts: list[str],
         *,
         prefix_embeddings: torch.Tensor | None = None,
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
         return_diagnostics: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, object]]:
         if self.load_mode != "hf_causal_lm":
@@ -247,36 +457,44 @@ class BackboneWrapper(nn.Module):
             raise RuntimeError("Real backbone is not initialized.")
         prompt_with_sep = prompt if prompt.endswith((" ", "\n", "\t")) else f"{prompt} "
         full_texts = [f"{prompt_with_sep}{candidate_text}" for candidate_text in candidate_texts]
-        encoded, prefix_length = self._prepare_prefixed_hf_inputs(full_texts, prefix_embeddings)
+        model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
+            full_texts,
+            prefix_embeddings,
+            layer_prefix_hidden_by_layer,
+        )
+        prefix_length = int(metadata["prefix_length"])
         prompt_length = len(self.tokenizer(prompt_with_sep, add_special_tokens=True)["input_ids"])
-        model_context = torch.inference_mode if prefix_embeddings is None else nullcontext
-        model_kwargs = {
-            **encoded,
-            "use_cache": False,
-        }
+        model_context = (
+            torch.inference_mode
+            if prefix_embeddings is None and layer_prefix_hidden_by_layer is None
+            else nullcontext
+        )
+        model_kwargs = dict(model_kwargs)
+        if "use_cache" not in model_kwargs:
+            model_kwargs["use_cache"] = False
         if return_diagnostics:
             model_kwargs["output_attentions"] = True
         with model_context():
             outputs = self.model(**model_kwargs)
         logits = outputs.logits
-        log_probs = torch.log_softmax(logits[:, :-1, :].to(dtype=torch.float32), dim=-1)
-        labels_source = encoded.get("input_ids")
-        # When prefix embeddings are injected, encoded no longer carries input_ids.
-        # In that case token_log_probs is gathered against the original unprefixed
-        # label sequence, so subsequent span indices must stay in that same frame.
-        label_position_offset = prefix_length
-        if labels_source is None:
-            labels_source = self._prepare_hf_inputs(full_texts)["input_ids"]
-            label_position_offset = 0
+        token_logit_slice_start = int(metadata["token_logit_slice_start"])
+        log_probs = torch.log_softmax(
+            logits[:, token_logit_slice_start:-1, :].to(dtype=torch.float32),
+            dim=-1,
+        )
+        labels_source = metadata["score_input_ids"]
         labels = labels_source[:, 1:]
         token_log_probs = log_probs.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
         scores: list[torch.Tensor] = []
         prefix_attention_masses: list[float] = []
-        sequence_lengths = encoded["attention_mask"].sum(dim=1).tolist()
+        attention_query_offset = int(metadata["attention_query_offset"])
+        diagnostic_layers = [int(layer_index) for layer_index in metadata["diagnostic_layers"]]
+        attention_by_layer: dict[int, list[float]] = {layer_index: [] for layer_index in diagnostic_layers}
+        sequence_lengths = metadata["score_attention_mask"].sum(dim=1).tolist()
         for row_index, sequence_length_value in enumerate(sequence_lengths):
-            sequence_length = int(sequence_length_value) - prefix_length
-            start_index = max(0, label_position_offset + prompt_length - 1)
-            end_index = max(start_index, label_position_offset + sequence_length - 1)
+            sequence_length = int(sequence_length_value)
+            start_index = max(0, prompt_length - 1)
+            end_index = max(start_index, sequence_length - 1)
             scores.append(token_log_probs[row_index, start_index:end_index].sum())
             if return_diagnostics:
                 if prefix_length <= 0:
@@ -284,18 +502,25 @@ class BackboneWrapper(nn.Module):
                 else:
                     if outputs.attentions is None:
                         raise RuntimeError("Attention diagnostics requested but model did not return attentions.")
-                    attention_start = max(0, prefix_length + prompt_length - 1)
-                    attention_end = max(attention_start, prefix_length + sequence_length - 1)
-                    last_attention = outputs.attentions[-1][row_index].to(dtype=torch.float32)
-                    candidate_query_attention = last_attention[
-                        :,
-                        attention_start:attention_end,
-                        :prefix_length,
-                    ]
-                    if candidate_query_attention.numel() == 0:
-                        prefix_attention_masses.append(0.0)
-                    else:
-                        prefix_attention_masses.append(float(candidate_query_attention.mean().item()))
+                    attention_start = max(0, attention_query_offset + prompt_length - 1)
+                    attention_end = max(attention_start, attention_query_offset + sequence_length - 1)
+                    layer_masses: list[float] = []
+                    for layer_index in diagnostic_layers:
+                        layer_attention = outputs.attentions[layer_index][row_index].to(dtype=torch.float32)
+                        candidate_query_attention = layer_attention[
+                            :,
+                            attention_start:attention_end,
+                            :prefix_length,
+                        ]
+                        if candidate_query_attention.numel() == 0:
+                            layer_mass = 0.0
+                        else:
+                            layer_mass = float(candidate_query_attention.mean().item())
+                        attention_by_layer[layer_index].append(layer_mass)
+                        layer_masses.append(layer_mass)
+                    prefix_attention_masses.append(
+                        float(sum(layer_masses) / max(1, len(layer_masses)))
+                    )
         score_tensor = torch.stack(scores)
         if not return_diagnostics:
             return score_tensor
@@ -303,6 +528,8 @@ class BackboneWrapper(nn.Module):
             "prefix_length": int(prefix_length),
             "prefix_attention_mass_by_candidate": prefix_attention_masses,
             "prompt_length": int(prompt_length),
+            "prefix_attention_mass_by_candidate_by_layer": attention_by_layer,
+            "diagnostic_layers": diagnostic_layers,
         }
         return score_tensor, diagnostics
 

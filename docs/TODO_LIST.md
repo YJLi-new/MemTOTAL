@@ -23,6 +23,14 @@
 
 > 任何任务若无法服务于这六类产物，应降低优先级。
 
+### Current Active Blocker
+- `M4.5` 的 `triad6 + sparse deep prompt` 已真实跑完，但 `screen248-val` 仍未通过 selection。
+- 当前 canonical 结果位于 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/`。
+- 当前最优先问题不是“是否继续 deep prompt”，而是：
+  - 如何阻止 `I_real / I_shuffle` 在 `step16` 起同时撞上 prefix cap
+  - 如何避免 `dominant_label_fraction -> 1.0` 的标签偏置塌缩
+  - 若更强 bottleneck / regularization 仍不过 gate，何时转入 writer objective 重写
+
 ---
 
 ## 1) Agent-first 执行协议（workflow contract）
