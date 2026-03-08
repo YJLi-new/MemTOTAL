@@ -18,6 +18,34 @@ sync_dir() {
     "${src}/" "${dst}/"
 }
 
+sync_first_available() {
+  local dst="$1"
+  shift
+  local src
+  for src in "$@"; do
+    if [[ -d "${src}" ]]; then
+      sync_dir "${src}" "${dst}"
+      return 0
+    fi
+  done
+  echo "missing source: $*" >&2
+  return 0
+}
+
+rebuild_docs_bundle() {
+  local bundle_path="docs_review_bundle.zip"
+  local temp_bundle
+  temp_bundle="$(mktemp "${bundle_path}.tmp.XXXXXX")"
+  rm -f "${temp_bundle}"
+  mapfile -t doc_files < <(find docs -type f | sort)
+  if [[ "${#doc_files[@]}" -eq 0 ]]; then
+    echo "missing docs content for ${bundle_path}" >&2
+    return 1
+  fi
+  zip -q -X "${temp_bundle}" "${doc_files[@]}"
+  mv "${temp_bundle}" "${bundle_path}"
+}
+
 sync_dir "runs/verify/m3-core4-qwen25/stage-b" "runs/review/m3-core4-qwen25-stage-b"
 sync_dir "runs/verify/m3-core4-qwen3/stage-b" "runs/review/m3-core4-qwen3-stage-b"
 sync_dir "runs/verify/m3-story-cloze-real-pilot-qwen25" "runs/review/m3-story-cloze-real-pilot-qwen25"
@@ -25,6 +53,9 @@ sync_dir "runs/verify/m3-fever-real-pilot-qwen25" "runs/review/m3-fever-real-pil
 sync_dir "runs/verify/m4-fever-shared-injection-qwen25" "runs/review/m4-fever-shared-injection-qwen25"
 sync_dir "runs/verify/m4-fever-dynamics-recovery-qwen25" "runs/review/m4-fever-dynamics-recovery-qwen25"
 sync_dir "runs/verify/m4-fever-dynamics-recovery-stabilized-qwen25" "runs/review/m4-fever-dynamics-recovery-stabilized-qwen25"
+sync_first_available "runs/review/m4-fever-deep-prompt-recovery-qwen25" \
+  "runs/verify/m4-fever-deep-prompt-recovery-qwen25" \
+  "/root/autodl-tmp/runs/verify/m4-fever-deep-prompt-recovery-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -35,6 +66,9 @@ sync_dir "results/generated/m3-fever-real-pilot-qwen25" "results/generated/revie
 sync_dir "results/generated/m4-fever-shared-injection-qwen25" "results/generated/review/m4-fever-shared-injection-qwen25"
 sync_dir "results/generated/m4-fever-dynamics-recovery-qwen25" "results/generated/review/m4-fever-dynamics-recovery-qwen25"
 sync_dir "results/generated/m4-fever-dynamics-recovery-stabilized-qwen25" "results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25"
+sync_first_available "results/generated/review/m4-fever-deep-prompt-recovery-qwen25" \
+  "results/generated/m4-fever-deep-prompt-recovery-qwen25" \
+  "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -43,5 +77,7 @@ sync_dir "results/generated/m3-core4-stage-c-error-attribution-v1" "results/gene
 sync_dir "results/generated/m3-core4-stage-c-margin-audit-v3-fixed-holdout" "results/generated/review/m3-core4-stage-c-margin-audit-v3-fixed-holdout"
 sync_dir "results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout" "results/generated/review/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout"
 sync_dir "results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout" "results/generated/review/m3-core4-stage-c-curve-suite-v3-fixed-holdout"
+
+rebuild_docs_bundle
 
 echo "review artifacts refreshed"
