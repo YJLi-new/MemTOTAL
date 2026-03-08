@@ -3532,3 +3532,188 @@ def compare_tl_reader_rg2_runs(
         "move_to_rg3": move_to_rg3,
         "failure_reason": failure_reason,
     }
+
+
+def _rg3_collapse_score(collapse_onset_step: int | None) -> int:
+    return 10_000 if collapse_onset_step is None else int(collapse_onset_step)
+
+
+def _rg3_arm_delta(
+    control: dict[str, float | bool | int | None],
+    arm: dict[str, float | bool | int | None],
+) -> dict[str, float | bool]:
+    control_collapse = control.get("dominant_label_collapse_onset_step")
+    arm_collapse = arm.get("dominant_label_collapse_onset_step")
+    collapse_delta = float(_rg3_collapse_score(arm_collapse) - _rg3_collapse_score(control_collapse))
+    short_rank_delta = float(arm["best_memory_short_effective_rank"]) - float(
+        control["best_memory_short_effective_rank"]
+    )
+    readout_rank_delta = float(arm["best_reader_readout_effective_rank"]) - float(
+        control["best_reader_readout_effective_rank"]
+    )
+    selection_alive = bool(arm["selection_passed"]) and not bool(control["selection_passed"])
+    geometry_alive_gain = bool(arm["geometry_alive"]) and not bool(control["geometry_alive"])
+    partial_gain = bool(
+        geometry_alive_gain
+        or selection_alive
+        or collapse_delta >= 4.0
+        or readout_rank_delta >= 0.05
+        or short_rank_delta >= 0.05
+    )
+    return {
+        "collapse_delta": collapse_delta,
+        "short_rank_delta": short_rank_delta,
+        "readout_rank_delta": readout_rank_delta,
+        "selection_alive": selection_alive,
+        "geometry_alive_gain": geometry_alive_gain,
+        "partial_gain": partial_gain,
+    }
+
+
+def compare_tl_reader_rg3_runs(
+    *,
+    control_summary_json: str,
+    bootstrap_summary_json: str,
+    bootstrap_reconstruction_summary_json: str,
+    control_train_events_json: str | None = None,
+    bootstrap_train_events_json: str | None = None,
+    bootstrap_reconstruction_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _rg2_geometry_gate_summary(
+        summary_json=control_summary_json,
+        train_events_json=control_train_events_json,
+    )
+    bootstrap = _rg2_geometry_gate_summary(
+        summary_json=bootstrap_summary_json,
+        train_events_json=bootstrap_train_events_json,
+    )
+    bootstrap_reconstruction = _rg2_geometry_gate_summary(
+        summary_json=bootstrap_reconstruction_summary_json,
+        train_events_json=bootstrap_reconstruction_train_events_json,
+    )
+    bootstrap_delta = _rg3_arm_delta(control, bootstrap)
+    bootstrap_reconstruction_delta = _rg3_arm_delta(control, bootstrap_reconstruction)
+    geometry_alive = bool(
+        bool(control["geometry_alive"])
+        or bool(bootstrap["geometry_alive"])
+        or bool(bootstrap_reconstruction["geometry_alive"])
+    )
+
+    if bool(bootstrap["geometry_alive"]):
+        primary_interpretation = "rg3_bootstrap_geometry_alive"
+        comparison_conclusion = "success"
+        recommended_arm = "bootstrap_only"
+        move_to_rg4 = True
+        failure_reason = ""
+        final_classification = "B-1_resolved_geometry_alive"
+        stop_after_rg3 = False
+    elif bool(bootstrap_reconstruction["geometry_alive"]):
+        primary_interpretation = "rg3_bootstrap_reconstruction_geometry_alive"
+        comparison_conclusion = "success"
+        recommended_arm = "bootstrap_reconstruction"
+        move_to_rg4 = True
+        failure_reason = ""
+        final_classification = "B-1_resolved_geometry_alive"
+        stop_after_rg3 = False
+    elif bool(bootstrap_reconstruction_delta["partial_gain"]) and not bool(bootstrap_delta["partial_gain"]):
+        primary_interpretation = "rg3_bootstrap_reconstruction_only_partial_gain"
+        comparison_conclusion = "informative"
+        recommended_arm = "bootstrap_reconstruction"
+        move_to_rg4 = False
+        failure_reason = "b2_candidate_downstream_flattening"
+        final_classification = "B-2_candidate_downstream_flattening"
+        stop_after_rg3 = True
+    elif bool(bootstrap_delta["partial_gain"]) and not bool(bootstrap_reconstruction_delta["partial_gain"]):
+        primary_interpretation = "rg3_bootstrap_only_partial_gain"
+        comparison_conclusion = "informative"
+        recommended_arm = "bootstrap_only"
+        move_to_rg4 = False
+        failure_reason = "b2_candidate_downstream_flattening"
+        final_classification = "B-2_candidate_downstream_flattening"
+        stop_after_rg3 = True
+    elif bool(bootstrap_delta["partial_gain"]) or bool(bootstrap_reconstruction_delta["partial_gain"]):
+        bootstrap_wins = (
+            float(bootstrap_delta["collapse_delta"]),
+            float(bootstrap_delta["readout_rank_delta"]),
+            float(bootstrap_delta["short_rank_delta"]),
+        ) >= (
+            float(bootstrap_reconstruction_delta["collapse_delta"]),
+            float(bootstrap_reconstruction_delta["readout_rank_delta"]),
+            float(bootstrap_reconstruction_delta["short_rank_delta"]),
+        )
+        primary_interpretation = "rg3_partial_gain_but_not_geometry_alive"
+        comparison_conclusion = "informative"
+        recommended_arm = "bootstrap_only" if bootstrap_wins else "bootstrap_reconstruction"
+        move_to_rg4 = False
+        failure_reason = "b2_candidate_downstream_flattening"
+        final_classification = "B-2_candidate_downstream_flattening"
+        stop_after_rg3 = True
+    else:
+        primary_interpretation = "rg3_no_geometry_gain"
+        comparison_conclusion = "failure"
+        recommended_arm = "control"
+        move_to_rg4 = False
+        failure_reason = "rg3_local_bootstrap_insufficient"
+        final_classification = "B-1_local_bootstrap_failed"
+        stop_after_rg3 = True
+
+    return {
+        "control_selection_passed": bool(control["selection_passed"]),
+        "control_geometry_alive": bool(control["geometry_alive"]),
+        "control_geometry_alive_step": control["geometry_alive_step"],
+        "control_dominant_label_collapse_onset_step": control["dominant_label_collapse_onset_step"],
+        "control_best_reader_attention_pairwise_cosine_mean": control[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "control_best_reader_attention_entropy_mean": control["best_reader_attention_entropy_mean"],
+        "control_best_memory_short_effective_rank": control["best_memory_short_effective_rank"],
+        "control_best_reader_readout_effective_rank": control["best_reader_readout_effective_rank"],
+        "bootstrap_selection_passed": bool(bootstrap["selection_passed"]),
+        "bootstrap_geometry_alive": bool(bootstrap["geometry_alive"]),
+        "bootstrap_geometry_alive_step": bootstrap["geometry_alive_step"],
+        "bootstrap_dominant_label_collapse_onset_step": bootstrap["dominant_label_collapse_onset_step"],
+        "bootstrap_best_reader_attention_pairwise_cosine_mean": bootstrap[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "bootstrap_best_reader_attention_entropy_mean": bootstrap["best_reader_attention_entropy_mean"],
+        "bootstrap_best_memory_short_effective_rank": bootstrap["best_memory_short_effective_rank"],
+        "bootstrap_best_reader_readout_effective_rank": bootstrap["best_reader_readout_effective_rank"],
+        "bootstrap_collapse_delta": bootstrap_delta["collapse_delta"],
+        "bootstrap_short_rank_delta": bootstrap_delta["short_rank_delta"],
+        "bootstrap_readout_rank_delta": bootstrap_delta["readout_rank_delta"],
+        "bootstrap_selection_alive": bootstrap_delta["selection_alive"],
+        "bootstrap_partial_gain": bootstrap_delta["partial_gain"],
+        "bootstrap_reconstruction_selection_passed": bool(bootstrap_reconstruction["selection_passed"]),
+        "bootstrap_reconstruction_geometry_alive": bool(bootstrap_reconstruction["geometry_alive"]),
+        "bootstrap_reconstruction_geometry_alive_step": bootstrap_reconstruction["geometry_alive_step"],
+        "bootstrap_reconstruction_dominant_label_collapse_onset_step": bootstrap_reconstruction[
+            "dominant_label_collapse_onset_step"
+        ],
+        "bootstrap_reconstruction_best_reader_attention_pairwise_cosine_mean": bootstrap_reconstruction[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "bootstrap_reconstruction_best_reader_attention_entropy_mean": bootstrap_reconstruction[
+            "best_reader_attention_entropy_mean"
+        ],
+        "bootstrap_reconstruction_best_memory_short_effective_rank": bootstrap_reconstruction[
+            "best_memory_short_effective_rank"
+        ],
+        "bootstrap_reconstruction_best_reader_readout_effective_rank": bootstrap_reconstruction[
+            "best_reader_readout_effective_rank"
+        ],
+        "bootstrap_reconstruction_collapse_delta": bootstrap_reconstruction_delta["collapse_delta"],
+        "bootstrap_reconstruction_short_rank_delta": bootstrap_reconstruction_delta["short_rank_delta"],
+        "bootstrap_reconstruction_readout_rank_delta": bootstrap_reconstruction_delta[
+            "readout_rank_delta"
+        ],
+        "bootstrap_reconstruction_selection_alive": bootstrap_reconstruction_delta["selection_alive"],
+        "bootstrap_reconstruction_partial_gain": bootstrap_reconstruction_delta["partial_gain"],
+        "geometry_alive": geometry_alive,
+        "primary_interpretation": primary_interpretation,
+        "comparison_conclusion": comparison_conclusion,
+        "recommended_arm": recommended_arm,
+        "move_to_rg4": move_to_rg4,
+        "final_classification": final_classification,
+        "stop_after_rg3": stop_after_rg3,
+        "failure_reason": failure_reason,
+    }

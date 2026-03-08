@@ -1,0 +1,11 @@
+includes:
+  - tl_reader_local_bootstrap_fever_qwen25_bootstrap_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_reader_local_bootstrap_fever_qwen25_dynamics_recovery_bootstrap_partition_none_linear_h4_k4
+  stage: TL-Reader-Geometry-RG3
+  method_variant: fever-tl-reader-rg3-dynamics-bootstrap-partition-none-linear-h4-k4
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl

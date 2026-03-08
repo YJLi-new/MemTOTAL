@@ -16,6 +16,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_objective_runs,
     compare_tl_reader_geometry_runs,
     compare_tl_reader_rg2_runs,
+    compare_tl_reader_rg3_runs,
     compare_tl_bridge_rescue_runs,
     compare_tl_slot_basis_runs,
     compare_tl_poc_runs,
@@ -41,10 +42,13 @@ from memtotal.training.m4_shared_injection import (
     _build_support_text_block,
     _class_entropy,
     _choice_task_loss,
+    _conditioned_query_orthogonality_loss,
     _effective_rank,
     _latent_anchor_loss,
     _prefix_stats,
     _reader_attention_diversity_loss,
+    _reader_fuser_bootstrap_active,
+    _reader_short_reconstruction_loss,
     _scheduled_linear_decay_weight,
     _sample_support_examples_for_training,
     _slot_diversity_loss,
@@ -280,6 +284,29 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         specialized = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
         self.assertGreater(float(_reader_attention_diversity_loss(identical).item()), 0.9)
         self.assertLess(float(_reader_attention_diversity_loss(specialized).item()), 0.1)
+
+    def test_conditioned_query_orthogonality_loss_prefers_separated_queries(self) -> None:
+        collapsed = torch.tensor([[[1.0, 0.0], [1.0, 0.0]]], dtype=torch.float32)
+        separated = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        self.assertGreater(float(_conditioned_query_orthogonality_loss(collapsed).item()), 0.5)
+        self.assertLess(float(_conditioned_query_orthogonality_loss(separated).item()), 0.1)
+
+    def test_reader_short_reconstruction_loss_prefers_matching_readouts(self) -> None:
+        memory_short = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        matching = memory_short.clone()
+        mismatched = torch.tensor([[[0.0, 1.0], [1.0, 0.0]]], dtype=torch.float32)
+        matching_loss = _reader_short_reconstruction_loss(memory_short, matching)
+        mismatched_loss = _reader_short_reconstruction_loss(memory_short, mismatched)
+        self.assertIsNotNone(matching_loss)
+        self.assertIsNotNone(mismatched_loss)
+        self.assertLess(float(matching_loss.item()), 1e-6)
+        self.assertGreater(float(mismatched_loss.item()), float(matching_loss.item()))
+
+    def test_reader_fuser_bootstrap_active_respects_step_window(self) -> None:
+        self.assertTrue(_reader_fuser_bootstrap_active(current_step=1, bootstrap_steps=8))
+        self.assertTrue(_reader_fuser_bootstrap_active(current_step=8, bootstrap_steps=8))
+        self.assertFalse(_reader_fuser_bootstrap_active(current_step=9, bootstrap_steps=8))
+        self.assertFalse(_reader_fuser_bootstrap_active(current_step=1, bootstrap_steps=0))
 
     def test_writer_slot_basis_orthogonality_loss_prefers_orthogonal_slots(self) -> None:
         writer = MemoryWriter(embed_dim=4, memory_slots=2, arch="transformer", num_heads=2)
@@ -2502,6 +2529,189 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertFalse(summary["geometry_alive"])
             self.assertEqual(summary["bridge_failure_submode"], "B-1b_attention_symmetry_collapse")
             self.assertTrue(summary["move_to_rg3"])
+
+    def test_compare_tl_reader_rg3_runs_marks_bootstrap_geometry_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_train_events(name: str, events: list[dict[str, object]]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": events}))
+                return path
+
+            control_summary = write_payload(
+                "control.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 0},
+            )
+            control_events = write_train_events(
+                "control_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.0,
+                        "reader_attention_entropy_mean": 0.69,
+                        "memory_short_effective_rank": 3.98,
+                        "memory_short_pairwise_cosine_mean": 0.01,
+                        "reader_readout_effective_rank": 1.23,
+                        "fuser_output_effective_rank": 3.98,
+                    }
+                ],
+            )
+            bootstrap_summary = write_payload(
+                "bootstrap.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 12},
+            )
+            bootstrap_events = write_train_events(
+                "bootstrap_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.0,
+                        "reader_attention_entropy_mean": 0.69,
+                        "memory_short_effective_rank": 3.99,
+                        "memory_short_pairwise_cosine_mean": 0.01,
+                        "reader_readout_effective_rank": 1.30,
+                        "fuser_output_effective_rank": 3.99,
+                    }
+                ],
+            )
+            bootstrap_reconstruction_summary = write_payload(
+                "bootstrap_reconstruction.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 6},
+            )
+            bootstrap_reconstruction_events = write_train_events(
+                "bootstrap_reconstruction_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.0,
+                        "reader_attention_entropy_mean": 0.69,
+                        "memory_short_effective_rank": 3.99,
+                        "memory_short_pairwise_cosine_mean": 0.01,
+                        "reader_readout_effective_rank": 1.28,
+                        "fuser_output_effective_rank": 3.99,
+                    }
+                ],
+            )
+
+            summary = compare_tl_reader_rg3_runs(
+                control_summary_json=str(control_summary),
+                bootstrap_summary_json=str(bootstrap_summary),
+                bootstrap_reconstruction_summary_json=str(bootstrap_reconstruction_summary),
+                control_train_events_json=str(control_events),
+                bootstrap_train_events_json=str(bootstrap_events),
+                bootstrap_reconstruction_train_events_json=str(bootstrap_reconstruction_events),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "success")
+            self.assertEqual(summary["primary_interpretation"], "rg3_bootstrap_geometry_alive")
+            self.assertTrue(summary["bootstrap_geometry_alive"])
+            self.assertTrue(summary["geometry_alive"])
+            self.assertEqual(summary["recommended_arm"], "bootstrap_only")
+            self.assertTrue(summary["move_to_rg4"])
+            self.assertEqual(summary["final_classification"], "B-1_resolved_geometry_alive")
+            self.assertFalse(summary["stop_after_rg3"])
+
+    def test_compare_tl_reader_rg3_runs_marks_bootstrap_reconstruction_partial_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_train_events(name: str, events: list[dict[str, object]]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": events}))
+                return path
+
+            control_summary = write_payload(
+                "control.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 0},
+            )
+            control_events = write_train_events(
+                "control_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.0,
+                        "reader_attention_entropy_mean": 0.69,
+                        "memory_short_effective_rank": 3.98,
+                        "memory_short_pairwise_cosine_mean": 0.01,
+                        "reader_readout_effective_rank": 1.23,
+                        "fuser_output_effective_rank": 3.98,
+                    }
+                ],
+            )
+            bootstrap_summary = write_payload(
+                "bootstrap.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 2},
+            )
+            bootstrap_events = write_train_events(
+                "bootstrap_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.0,
+                        "reader_attention_entropy_mean": 0.69,
+                        "memory_short_effective_rank": 3.98,
+                        "memory_short_pairwise_cosine_mean": 0.01,
+                        "reader_readout_effective_rank": 1.23,
+                        "fuser_output_effective_rank": 3.98,
+                    }
+                ],
+            )
+            bootstrap_reconstruction_summary = write_payload(
+                "bootstrap_reconstruction.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 6},
+            )
+            bootstrap_reconstruction_events = write_train_events(
+                "bootstrap_reconstruction_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.0,
+                        "reader_attention_entropy_mean": 0.69,
+                        "memory_short_effective_rank": 3.98,
+                        "memory_short_pairwise_cosine_mean": 0.01,
+                        "reader_readout_effective_rank": 1.31,
+                        "fuser_output_effective_rank": 3.98,
+                    }
+                ],
+            )
+
+            summary = compare_tl_reader_rg3_runs(
+                control_summary_json=str(control_summary),
+                bootstrap_summary_json=str(bootstrap_summary),
+                bootstrap_reconstruction_summary_json=str(bootstrap_reconstruction_summary),
+                control_train_events_json=str(control_events),
+                bootstrap_train_events_json=str(bootstrap_events),
+                bootstrap_reconstruction_train_events_json=str(bootstrap_reconstruction_events),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "informative")
+            self.assertEqual(
+                summary["primary_interpretation"],
+                "rg3_bootstrap_reconstruction_only_partial_gain",
+            )
+            self.assertFalse(summary["geometry_alive"])
+            self.assertTrue(summary["bootstrap_reconstruction_partial_gain"])
+            self.assertEqual(summary["recommended_arm"], "bootstrap_reconstruction")
+            self.assertFalse(summary["move_to_rg4"])
+            self.assertEqual(summary["final_classification"], "B-2_candidate_downstream_flattening")
+            self.assertTrue(summary["stop_after_rg3"])
 
 
 if __name__ == "__main__":

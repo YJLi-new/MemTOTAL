@@ -54,6 +54,8 @@ class PrefixInjectionArtifacts:
     reader_gates: torch.Tensor | None = None
     reader_queries: torch.Tensor | None = None
     reader_context: torch.Tensor | None = None
+    reader_conditioned_queries: torch.Tensor | None = None
+    reader_readouts: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -516,6 +518,18 @@ def _resolve_memory_short_diversity_weight(config: dict[str, Any]) -> float:
 
 def _resolve_reader_attention_diversity_weight(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_reader_attention_diversity_weight", 0.0))
+
+
+def _resolve_reader_conditioned_query_orthogonality_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_reader_conditioned_query_orthogonality_weight", 0.0))
+
+
+def _resolve_reader_short_reconstruction_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_reader_short_reconstruction_weight", 0.0))
+
+
+def _resolve_reader_fuser_bootstrap_steps(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_reader_fuser_bootstrap_steps", 0))
 
 
 def _resolve_writer_slot_basis_orthogonality_weight(config: dict[str, Any]) -> float:
@@ -2022,6 +2036,10 @@ class SharedInjectionPilotRuntime(nn.Module):
         for parameter in self.support_encoder.parameters():
             parameter.requires_grad_(enabled)
 
+    def set_prefix_projector_trainable(self, enabled: bool) -> None:
+        for parameter in self.prefix_projector.parameters():
+            parameter.requires_grad_(enabled)
+
     def _prompt_summary(self, prompt_text: str | None) -> torch.Tensor | None:
         if self.reader_context_mode == "none" or not prompt_text:
             return None
@@ -2197,6 +2215,8 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_gates=reader_gates,
                 reader_queries=None if self.reader is None else self.reader.queries.detach(),
                 reader_context=reader_context,
+                reader_conditioned_queries=reader_conditioned_queries,
+                reader_readouts=reader_readouts,
             )
         layer_prefix_hidden_by_layer = self.prefix_projector(projector_source)
         prefix_stats = _prefix_stats(
@@ -2230,6 +2250,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             reader_gates=reader_gates,
             reader_queries=None if self.reader is None else self.reader.queries.detach(),
             reader_context=reader_context,
+            reader_conditioned_queries=reader_conditioned_queries,
+            reader_readouts=reader_readouts,
         )
 
     def score_example(
@@ -2532,6 +2554,26 @@ def _reader_attention_diversity_loss(attention: torch.Tensor | None) -> torch.Te
     return torch.mean(off_diag)
 
 
+def _conditioned_query_orthogonality_loss(conditioned_queries: torch.Tensor | None) -> torch.Tensor | None:
+    if conditioned_queries is None or conditioned_queries.ndim != 3 or conditioned_queries.shape[1] <= 1:
+        return None
+    return _slot_diversity_loss(conditioned_queries)
+
+
+def _reader_short_reconstruction_loss(
+    memory_short: torch.Tensor | None,
+    reader_readouts: torch.Tensor | None,
+) -> torch.Tensor | None:
+    if memory_short is None or reader_readouts is None:
+        return None
+    if tuple(memory_short.shape) != tuple(reader_readouts.shape):
+        return None
+    return F.smooth_l1_loss(
+        memory_short.to(dtype=torch.float32),
+        reader_readouts.detach().to(dtype=torch.float32),
+    )
+
+
 def _writer_slot_basis_orthogonality_loss(writer: MemoryWriter | None) -> torch.Tensor | None:
     if writer is None or writer.arch != "transformer":
         return None
@@ -2539,6 +2581,10 @@ def _writer_slot_basis_orthogonality_loss(writer: MemoryWriter | None) -> torch.
     if slot_embeddings.ndim != 2 or slot_embeddings.shape[0] <= 1:
         return None
     return _slot_diversity_loss(slot_embeddings.unsqueeze(0))
+
+
+def _reader_fuser_bootstrap_active(*, current_step: int, bootstrap_steps: int) -> bool:
+    return int(current_step) <= max(0, int(bootstrap_steps))
 
 
 def _pairwise_cosine_mean(slots: torch.Tensor | None) -> float:
@@ -2712,6 +2758,11 @@ def run_shared_injection_pilot(
     memory_long_diversity_weight = _resolve_memory_long_diversity_weight(config)
     memory_short_diversity_weight = _resolve_memory_short_diversity_weight(config)
     reader_attention_diversity_weight = _resolve_reader_attention_diversity_weight(config)
+    reader_conditioned_query_orthogonality_weight = (
+        _resolve_reader_conditioned_query_orthogonality_weight(config)
+    )
+    reader_short_reconstruction_weight = _resolve_reader_short_reconstruction_weight(config)
+    reader_fuser_bootstrap_steps = _resolve_reader_fuser_bootstrap_steps(config)
     writer_slot_basis_orthogonality_weight = _resolve_writer_slot_basis_orthogonality_weight(config)
     orthogonalize_writer_slot_basis = _resolve_writer_orthogonalize_slot_basis(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
@@ -3006,9 +3057,19 @@ def run_shared_injection_pilot(
             optimizer_groups
         )
         for step in range(train_steps):
-            writer_frozen = bool(trainable_variant == "projector_only" or step < projector_warmup_steps)
+            bootstrap_active = _reader_fuser_bootstrap_active(
+                current_step=step + 1,
+                bootstrap_steps=reader_fuser_bootstrap_steps,
+            )
+            writer_frozen = bool(
+                trainable_variant == "projector_only"
+                or step < projector_warmup_steps
+                or bootstrap_active
+            )
+            projector_frozen = bool(bootstrap_active)
             runtime.set_writer_trainable(not writer_frozen)
             runtime.set_support_encoder_trainable(not writer_frozen)
+            runtime.set_prefix_projector_trainable(not projector_frozen)
             train_example = train_caches[step % len(train_caches)]
             selected_episode_id = ""
             selected_episode_source_split = ""
@@ -3120,6 +3181,15 @@ def run_shared_injection_pilot(
             reader_attention_diversity_loss = _reader_attention_diversity_loss(
                 prefix_artifacts.reader_attention
             )
+            reader_conditioned_query_orthogonality_loss = None
+            if runtime.reader is not None and runtime.reader.conditioning_mode != "none":
+                reader_conditioned_query_orthogonality_loss = _conditioned_query_orthogonality_loss(
+                    prefix_artifacts.reader_conditioned_queries
+                )
+            reader_short_reconstruction_loss = _reader_short_reconstruction_loss(
+                prefix_artifacts.memory_short,
+                prefix_artifacts.reader_readouts,
+            )
             writer_slot_basis_orthogonality_loss = _writer_slot_basis_orthogonality_loss(runtime.writer)
             if memory_long_diversity_weight > 0.0 and memory_long_diversity_loss is not None:
                 loss = loss + (memory_long_diversity_weight * memory_long_diversity_loss)
@@ -3130,6 +3200,21 @@ def run_shared_injection_pilot(
                 and reader_attention_diversity_loss is not None
             ):
                 loss = loss + (reader_attention_diversity_weight * reader_attention_diversity_loss)
+            if (
+                reader_conditioned_query_orthogonality_weight > 0.0
+                and reader_conditioned_query_orthogonality_loss is not None
+            ):
+                loss = loss + (
+                    reader_conditioned_query_orthogonality_weight
+                    * reader_conditioned_query_orthogonality_loss
+                )
+            if (
+                reader_short_reconstruction_weight > 0.0
+                and reader_short_reconstruction_loss is not None
+            ):
+                loss = loss + (
+                    reader_short_reconstruction_weight * reader_short_reconstruction_loss
+                )
             if (
                 writer_slot_basis_orthogonality_weight > 0.0
                 and writer_slot_basis_orthogonality_loss is not None
@@ -3253,6 +3338,20 @@ def run_shared_injection_pilot(
                         else float(reader_attention_diversity_loss.item())
                     ),
                     "reader_attention_diversity_weight": float(reader_attention_diversity_weight),
+                    "reader_conditioned_query_orthogonality_loss": (
+                        0.0
+                        if reader_conditioned_query_orthogonality_loss is None
+                        else float(reader_conditioned_query_orthogonality_loss.item())
+                    ),
+                    "reader_conditioned_query_orthogonality_weight": float(
+                        reader_conditioned_query_orthogonality_weight
+                    ),
+                    "reader_short_reconstruction_loss": (
+                        0.0
+                        if reader_short_reconstruction_loss is None
+                        else float(reader_short_reconstruction_loss.item())
+                    ),
+                    "reader_short_reconstruction_weight": float(reader_short_reconstruction_weight),
                     "writer_slot_basis_orthogonality_loss": (
                         0.0
                         if writer_slot_basis_orthogonality_loss is None
@@ -3268,6 +3367,8 @@ def run_shared_injection_pilot(
                     ),
                     "train_example_id": str(train_example.example["id"]),
                     "writer_frozen": writer_frozen,
+                    "projector_frozen": projector_frozen,
+                    "reader_fuser_bootstrap_active": bootstrap_active,
                     "train_support_mode": train_support_mode,
                     "support_episode_id": selected_episode_id,
                     "support_episode_source_split": selected_episode_source_split,
@@ -3365,6 +3466,7 @@ def run_shared_injection_pilot(
         runtime.prefix_projector.eval()
         runtime.set_writer_trainable(True)
         runtime.set_support_encoder_trainable(True)
+        runtime.set_prefix_projector_trainable(True)
 
     prefix_artifacts = PrefixInjectionArtifacts(
         prefix_embeddings=None,
@@ -3508,6 +3610,11 @@ def run_shared_injection_pilot(
         "pilot_memory_long_diversity_weight": memory_long_diversity_weight,
         "pilot_memory_short_diversity_weight": memory_short_diversity_weight,
         "pilot_reader_attention_diversity_weight": reader_attention_diversity_weight,
+        "pilot_reader_conditioned_query_orthogonality_weight": (
+            reader_conditioned_query_orthogonality_weight
+        ),
+        "pilot_reader_short_reconstruction_weight": reader_short_reconstruction_weight,
+        "pilot_reader_fuser_bootstrap_steps": reader_fuser_bootstrap_steps,
         "pilot_writer_slot_basis_orthogonality_weight": writer_slot_basis_orthogonality_weight,
         "pilot_gradient_clip_norm": gradient_clip_norm,
         "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
@@ -3541,6 +3648,12 @@ def run_shared_injection_pilot(
         ),
         "train_final_reader_attention_diversity_loss": (
             train_events[-1]["reader_attention_diversity_loss"] if train_events else None
+        ),
+        "train_final_reader_conditioned_query_orthogonality_loss": (
+            train_events[-1]["reader_conditioned_query_orthogonality_loss"] if train_events else None
+        ),
+        "train_final_reader_short_reconstruction_loss": (
+            train_events[-1]["reader_short_reconstruction_loss"] if train_events else None
         ),
         "train_final_writer_slot_basis_orthogonality_loss": (
             train_events[-1]["writer_slot_basis_orthogonality_loss"] if train_events else None
@@ -3583,6 +3696,10 @@ def run_shared_injection_pilot(
         ),
         "train_final_support_state_effective_rank": (
             train_events[-1]["support_state_effective_rank"] if train_events else None
+        ),
+        "train_final_projector_frozen": train_events[-1]["projector_frozen"] if train_events else None,
+        "train_final_reader_fuser_bootstrap_active": (
+            train_events[-1]["reader_fuser_bootstrap_active"] if train_events else None
         ),
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         "pilot_checkpoint_path": "" if not injection_checkpoint_path else str(Path(injection_checkpoint_path).resolve()),

@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/tl_reader_local_bootstrap_fever_qwen25_dynamics_recovery_bootstrap_reconstruction_partition_none_linear_h4_k4.yaml",
+    "--seed",
+    "26191",
+    "--output_dir",
+    "/root/autodl-tmp/results/generated/tl-reader-local-bootstrap-fever-qwen25/rg3-bootstrap-reconstruction-partition-none-linear-h4-k4/dynamics-recovery",
+    "--input_root",
+    "/root/autodl-tmp/runs/verify/tl-reader-local-bootstrap-fever-qwen25/rg3-bootstrap-reconstruction-partition-none-linear-h4-k4"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "tl_reader_local_bootstrap_fever_qwen25_dynamics_recovery_bootstrap_reconstruction_partition_none_linear_h4_k4",
+  "git_hash": "f75ef85ca70d7997c30848de6420e07043cc720c",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-tl-reader-rg3-dynamics-bootstrap-reconstruction-partition-none-linear-h4-k4",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 26191,
+  "smoke_subset": "real_screen_val_m46_canonical",
+  "stage": "TL-Reader-Geometry-RG3",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_val_m46_canonical",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-08T19:37:49.484937+00:00",
+  "torch_version": "2.8.0+cu128"
+}

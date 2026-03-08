@@ -1,0 +1,13 @@
+includes:
+  - tl_reader_local_bootstrap_fever_qwen25_control_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_reader_local_bootstrap_fever_qwen25_bootstrap_partition_none_linear_h4_k4
+  stage: TL-Reader-Geometry-RG3
+  method_variant: fever-tl-reader-rg3-bootstrap-partition-none-linear-h4-k4
+
+runtime:
+  pilot_projector_warmup_steps: 0
+  pilot_reader_conditioned_query_orthogonality_weight: 0.0
+  pilot_reader_short_reconstruction_weight: 0.0
+  pilot_reader_fuser_bootstrap_steps: 8
