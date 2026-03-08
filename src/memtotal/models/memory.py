@@ -68,6 +68,12 @@ class MemoryWriter(ManagedMemoryModule):
         elif arch == "transformer":
             self.state_proj = nn.Linear(embed_dim, embed_dim)
             self.slot_embeddings = nn.Parameter(torch.randn(memory_slots, embed_dim) * 0.02)
+            self.support_cross_attn = nn.MultiheadAttention(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                dropout=dropout,
+                batch_first=True,
+            )
             layer = nn.TransformerEncoderLayer(
                 d_model=embed_dim,
                 nhead=num_heads,
@@ -88,20 +94,44 @@ class MemoryWriter(ManagedMemoryModule):
             return state.mean(dim=1)
         raise ValueError(f"Unsupported state rank for writer: {state.ndim}")
 
-    def write(self, state: torch.Tensor) -> torch.Tensor:
-        pooled_state = self._pool_state(state)
-        if pooled_state.shape[-1] != self.embed_dim:
+    def write(self, state: torch.Tensor, *, input_schema: str = "pooled_state") -> torch.Tensor:
+        if input_schema not in {"pooled_state", "support_set"}:
             raise ValueError(
-                f"Writer expected state hidden size {self.embed_dim}, got {pooled_state.shape[-1]}."
+                f"Unsupported writer input_schema={input_schema}. "
+                "Expected one of pooled_state, support_set."
             )
-        batch_size = pooled_state.shape[0]
+        if state.shape[-1] != self.embed_dim:
+            raise ValueError(
+                f"Writer expected state hidden size {self.embed_dim}, got {state.shape[-1]}."
+            )
+        if input_schema == "pooled_state":
+            pooled_state = self._pool_state(state)
+            batch_size = pooled_state.shape[0]
+        else:
+            _ensure_rank("state", state, 3)
+            if self.arch != "transformer":
+                raise ValueError("MemoryWriter(input_schema='support_set') requires arch='transformer'.")
+            batch_size = state.shape[0]
         if self.arch == "mlp":
+            if input_schema != "pooled_state":
+                raise ValueError("MLP MemoryWriter only supports input_schema='pooled_state'.")
             memory = self.proj(pooled_state)
             return memory.view(batch_size, self.memory_slots, self.embed_dim)
 
         slots = self.slot_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-        conditioned_slots = slots + self.state_proj(pooled_state).unsqueeze(1)
-        return self.output_norm(self.encoder(conditioned_slots))
+        if input_schema == "pooled_state":
+            conditioned_slots = slots + self.state_proj(pooled_state).unsqueeze(1)
+            return self.output_norm(self.encoder(conditioned_slots))
+
+        pooled_support_state = state.mean(dim=1)
+        conditioned_slots = slots + self.state_proj(pooled_support_state).unsqueeze(1)
+        attended_slots, _ = self.support_cross_attn(
+            query=conditioned_slots,
+            key=state,
+            value=state,
+            need_weights=False,
+        )
+        return self.output_norm(self.encoder(attended_slots))
 
 
 class MemoryReader(ManagedMemoryModule):

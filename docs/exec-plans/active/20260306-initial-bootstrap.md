@@ -54,6 +54,9 @@
 
 ## Progress
 
+- 2026-03-08 09:03 UTC: 已完成 `M4.7 shared injection alignment` 的代码实现与真实三臂主跑：新增 `StructuredSupportSetEncoder`、`MemoryWriter(input_schema=support_set)`、`pilot_support_encoder_mode`、`pilot_trainable_variant`、`teacher_margin` dormant hook，以及 `scripts/run_m4_fever_alignment_qwen25.sh` / `scripts/update_m4_alignment_summary.py`。
+- 2026-03-08 09:03 UTC: `M4.7` 真实结果位于 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/` 与 `runs/review/m4-fever-shared-injection-alignment-qwen25/`。顶层 `alignment-summary.json` 当前记录：`canonical_selection_passed=false`、`freeze_writer_selection_passed=false`、`pooled_block_selection_passed=false`，因此 `comparison_conclusion=canonical_failed_selection`。
+- 2026-03-08 09:03 UTC: 但这轮也把 blocker 收紧得更清楚：canonical structured path 的最佳点在 `step64`，拿到 `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3`、`macro_f1=0.2259`，明显强于 `freeze-writer / pooled-block` 两个 ablation（两者都只恢复出弱的 `vs_zero` 信号）。因此当前最合理的下一步已从“继续修 support protocol”转成 `M5.1 writer–reasoner alignment under shared injection`，并明确不应把“简单拉长训练步数”当主药。
 - 2026-03-08 07:18 UTC: 已完成 `M4.6 anti-shortcut recovery` 的代码实现与真实主跑：训练侧新增 `episode_bank` support mode、`screen-train` 支持集构建器、`screen248-test heldout A/B`、`Run A vs Run B` 对照、per-run `run-summary.json` 与顶层 `anti-shortcut-comparison.{json,md}`。
 - 2026-03-08 07:18 UTC: `M4.6` 真实结果位于 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/` 与 `runs/review/m4-fever-anti-shortcut-recovery-qwen25/`。最新结论为：`run_a_selection_passed=false`、`run_b_selection_passed=false`、`comparison_conclusion=run_a_equals_run_b`；两条 run 都在 `step4` 出现 `dominant_label_collapse`，并在 `step80` 左右进入 cap saturation。
 - 2026-03-08 07:18 UTC: 因而，当前 blocker 已不再像“static triad6 memorization 是首因”。shared injection 仍然是主线，但下一步更应进入 `M5 writer–reasoner alignment under shared injection`，而不是继续做 support-bank 微调或回到旧 residual family。

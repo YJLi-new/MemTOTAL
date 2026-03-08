@@ -55,6 +55,62 @@ class SupportEpisode:
     label_counts: dict[str, int]
 
 
+class StructuredSupportSetEncoder(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        *,
+        label_count: int,
+        max_items: int = 8,
+        num_heads: int = 4,
+        transformer_layers: int = 1,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.max_items = int(max_items)
+        self.label_embeddings = nn.Embedding(int(label_count), self.hidden_size)
+        self.position_embeddings = nn.Embedding(self.max_items, self.hidden_size)
+        layer = nn.TransformerEncoderLayer(
+            d_model=self.hidden_size,
+            nhead=int(num_heads),
+            dim_feedforward=2 * self.hidden_size,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=int(transformer_layers))
+        self.output_norm = nn.LayerNorm(self.hidden_size)
+
+    def forward(self, item_states: torch.Tensor, label_ids: torch.Tensor) -> torch.Tensor:
+        if item_states.ndim != 3:
+            raise ValueError("item_states must have shape [batch, item_count, hidden_size].")
+        if label_ids.ndim != 2:
+            raise ValueError("label_ids must have shape [batch, item_count].")
+        if item_states.shape[:2] != label_ids.shape:
+            raise ValueError("item_states and label_ids must agree on [batch, item_count].")
+        if item_states.shape[-1] != self.hidden_size:
+            raise ValueError(
+                f"StructuredSupportSetEncoder expected hidden size {self.hidden_size}, got {item_states.shape[-1]}."
+            )
+        item_count = int(item_states.shape[1])
+        if item_count > self.max_items:
+            raise ValueError(
+                f"StructuredSupportSetEncoder max_items={self.max_items}, got item_count={item_count}."
+            )
+        position_ids = torch.arange(
+            item_count,
+            device=item_states.device,
+            dtype=torch.long,
+        ).unsqueeze(0).expand(item_states.shape[0], -1)
+        enriched = (
+            item_states
+            + self.label_embeddings(label_ids.to(device=item_states.device, dtype=torch.long))
+            + self.position_embeddings(position_ids)
+        )
+        return self.output_norm(self.encoder(enriched))
+
+
 class LatentPrefixProjector(nn.Module):
     def __init__(
         self,
@@ -287,6 +343,46 @@ def _resolve_deep_prefix_rank(config: dict[str, Any]) -> int:
     return int(config["runtime"].get("pilot_deep_prefix_rank", 32))
 
 
+def _resolve_support_encoder_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_support_encoder_mode", "pooled_block"))
+    if mode not in {"pooled_block", "structured_support_set"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_support_encoder_mode={mode}. "
+            "Expected one of pooled_block, structured_support_set."
+        )
+    return mode
+
+
+def _resolve_trainable_variant(config: dict[str, Any]) -> str:
+    variant = str(config["runtime"].get("pilot_trainable_variant", "full"))
+    if variant not in {"full", "projector_only"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_trainable_variant={variant}. "
+            "Expected one of full, projector_only."
+        )
+    return variant
+
+
+def _resolve_alignment_aux_mode(config: dict[str, Any]) -> str:
+    raw_mode = config["runtime"].get("pilot_alignment_aux_mode", "off")
+    if isinstance(raw_mode, bool):
+        mode = "teacher_margin" if raw_mode else "off"
+    elif raw_mode is None:
+        mode = "off"
+    else:
+        mode = str(raw_mode)
+    if mode not in {"off", "teacher_margin"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_alignment_aux_mode={mode}. "
+            "Expected one of off, teacher_margin."
+        )
+    return mode
+
+
+def _resolve_alignment_aux_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_alignment_aux_weight", 0.0))
+
+
 def _resolve_train_support_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_train_support_mode", "static_support_rows"))
     if mode not in {"static_support_rows", "episode_bank"}:
@@ -375,6 +471,7 @@ def _write_snapshot_eval(
         "pilot_arm_alias": arm_alias,
         "shared_injection_arm": arm,
         "writer_memory_control": writer_memory_control,
+        "pilot_support_encoder_mode": str((prefix_stats or {}).get("pilot_support_encoder_mode", "pooled_block")),
         "prompt_variant": prompt_variant,
         "support_serialization_variant": support_serialization_variant,
         "support_text_block_chars": len(support_text_block),
@@ -396,6 +493,11 @@ def _write_snapshot_eval(
         "writer_slot_norm_mean": float(scalar_prefix_stats.get("writer_slot_norm_mean", 0.0)),
         "writer_slot_norm_std": float(scalar_prefix_stats.get("writer_slot_norm_std", 0.0)),
         "writer_slot_norm_max": float(scalar_prefix_stats.get("writer_slot_norm_max", 0.0)),
+        "support_item_count": float(scalar_prefix_stats.get("support_item_count", 0.0)),
+        "support_item_hidden_l2": float(scalar_prefix_stats.get("support_item_hidden_l2", 0.0)),
+        "support_item_hidden_norm_mean": float(scalar_prefix_stats.get("support_item_hidden_norm_mean", 0.0)),
+        "support_item_hidden_norm_std": float(scalar_prefix_stats.get("support_item_hidden_norm_std", 0.0)),
+        "support_item_hidden_norm_max": float(scalar_prefix_stats.get("support_item_hidden_norm_max", 0.0)),
         "checkpoint_path": "" if checkpoint_path is None else str(checkpoint_path.resolve()),
     }
     write_json(snapshot_dir / "metrics.json", payload)
@@ -424,6 +526,11 @@ def _prefix_scalar_summary(prefix_stats: dict[str, Any]) -> dict[str, float]:
         "writer_slot_norm_mean": float(prefix_stats.get("writer_slot_norm_mean", 0.0)),
         "writer_slot_norm_std": float(prefix_stats.get("writer_slot_norm_std", 0.0)),
         "writer_slot_norm_max": float(prefix_stats.get("writer_slot_norm_max", 0.0)),
+        "support_item_count": float(prefix_stats.get("support_item_count", 0.0)),
+        "support_item_hidden_l2": float(prefix_stats.get("support_item_hidden_l2", 0.0)),
+        "support_item_hidden_norm_mean": float(prefix_stats.get("support_item_hidden_norm_mean", 0.0)),
+        "support_item_hidden_norm_std": float(prefix_stats.get("support_item_hidden_norm_std", 0.0)),
+        "support_item_hidden_norm_max": float(prefix_stats.get("support_item_hidden_norm_max", 0.0)),
     }
 
 
@@ -432,6 +539,7 @@ def _prefix_stats(
     *,
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
     memory_slots: torch.Tensor | None = None,
+    support_item_states: torch.Tensor | None = None,
 ) -> dict[str, Any]:
     writer_stats = {
         "writer_memory_l2": 0.0,
@@ -447,10 +555,27 @@ def _prefix_stats(
             "writer_slot_norm_std": float(writer_summary["slot_norm_std"]),
             "writer_slot_norm_max": float(writer_summary["slot_norm_max"]),
         }
+    support_stats = {
+        "support_item_count": 0.0,
+        "support_item_hidden_l2": 0.0,
+        "support_item_hidden_norm_mean": 0.0,
+        "support_item_hidden_norm_std": 0.0,
+        "support_item_hidden_norm_max": 0.0,
+    }
+    if support_item_states is not None and support_item_states.numel() > 0:
+        support_summary = _slot_norm_summary(support_item_states)
+        support_stats = {
+            "support_item_count": float(support_item_states.shape[1]),
+            "support_item_hidden_l2": float(support_summary["l2"]),
+            "support_item_hidden_norm_mean": float(support_summary["slot_norm_mean"]),
+            "support_item_hidden_norm_std": float(support_summary["slot_norm_std"]),
+            "support_item_hidden_norm_max": float(support_summary["slot_norm_max"]),
+        }
     if layer_prefix_hidden_by_layer is not None:
         if not layer_prefix_hidden_by_layer:
             return {
                 "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_support_encoder_mode": "pooled_block",
                 "active_prefix_layers": [],
                 "layer_hidden_l2_by_layer": {},
                 "layer_slot_norm_mean_by_layer": {},
@@ -464,6 +589,7 @@ def _prefix_stats(
                 "prefix_slot_norm_std": 0.0,
                 "prefix_slot_norm_max": 0.0,
                 **writer_stats,
+                **support_stats,
             }
         ordered_layers = sorted(int(layer_index) for layer_index in layer_prefix_hidden_by_layer)
         stacked = torch.stack(
@@ -485,6 +611,9 @@ def _prefix_stats(
             layer_slot_norm_max_by_layer[str(layer_index)] = float(layer_summary["slot_norm_max"])
         return {
             "pilot_injection_mode": "sparse_deep_prefix",
+            "pilot_support_encoder_mode": (
+                "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
+            ),
             "active_prefix_layers": ordered_layers,
             "layer_hidden_l2_by_layer": layer_hidden_l2_by_layer,
             "layer_slot_norm_mean_by_layer": layer_slot_norm_mean_by_layer,
@@ -498,10 +627,14 @@ def _prefix_stats(
             "prefix_slot_norm_std": float(slot_norms.std(unbiased=False).item()),
             "prefix_slot_norm_max": float(slot_norms.max().item()),
             **writer_stats,
+            **support_stats,
         }
     if prefix_embeddings is None or prefix_embeddings.numel() == 0:
         return {
             "pilot_injection_mode": "shallow_prefix",
+            "pilot_support_encoder_mode": (
+                "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
+            ),
             "active_prefix_layers": [],
             "layer_hidden_l2_by_layer": {},
             "layer_slot_norm_mean_by_layer": {},
@@ -515,10 +648,14 @@ def _prefix_stats(
             "prefix_slot_norm_std": 0.0,
             "prefix_slot_norm_max": 0.0,
             **writer_stats,
+            **support_stats,
         }
     prefix_summary = _slot_norm_summary(prefix_embeddings)
     return {
         "pilot_injection_mode": "shallow_prefix",
+        "pilot_support_encoder_mode": (
+            "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
+        ),
         "active_prefix_layers": [],
         "layer_hidden_l2_by_layer": {},
         "layer_slot_norm_mean_by_layer": {},
@@ -532,6 +669,7 @@ def _prefix_stats(
         "prefix_slot_norm_std": float(prefix_summary["slot_norm_std"]),
         "prefix_slot_norm_max": float(prefix_summary["slot_norm_max"]),
         **writer_stats,
+        **support_stats,
     }
 
 
@@ -553,6 +691,9 @@ def _save_shared_injection_checkpoint(
     torch.save(
         {
             "writer_state": runtime.writer.state_dict(),
+            "support_encoder_state": (
+                None if runtime.support_encoder is None else runtime.support_encoder.state_dict()
+            ),
             "prefix_projector_state": runtime.prefix_projector.state_dict(),
             "seed": seed,
             "arm_alias": arm_alias,
@@ -562,6 +703,7 @@ def _save_shared_injection_checkpoint(
             "support_text_block": support_text_block,
             "prompt_variant": prompt_variant,
             "support_serialization_variant": support_serialization_variant,
+            "pilot_support_encoder_mode": str(runtime.support_encoder_mode),
             "step": int(step),
             "pilot_injection_mode": str(runtime.injection_mode),
             "pilot_deep_prefix_layers": list(runtime.deep_prefix_layers),
@@ -663,6 +805,21 @@ def _serialize_support_row(
     )
 
 
+def _serialize_support_rows(
+    support_rows: list[dict[str, Any]],
+    *,
+    support_serialization_variant: str,
+) -> list[str]:
+    return [
+        _serialize_support_row(
+            row,
+            support_index=index + 1,
+            support_serialization_variant=support_serialization_variant,
+        )
+        for index, row in enumerate(support_rows)
+    ]
+
+
 def _select_support_rows_for_variant(
     support_examples: list[dict[str, Any]],
     *,
@@ -693,6 +850,42 @@ def _select_support_rows_for_variant(
     return selected
 
 
+def _resolve_support_rows_for_memory_control(
+    support_examples: list[dict[str, Any]],
+    *,
+    memory_control: str,
+    example_lookup: dict[str, dict[str, Any]],
+    support_serialization_variant: str,
+    preselected_rows: bool = False,
+) -> list[dict[str, Any]]:
+    if memory_control == "zero":
+        return []
+    if preselected_rows:
+        selected_rows = [dict(example) for example in support_examples]
+    else:
+        selected_rows = _select_support_rows_for_variant(
+            support_examples,
+            support_serialization_variant=support_serialization_variant,
+        )
+    if memory_control == "real":
+        return [dict(example) for example in selected_rows]
+    rows: list[dict[str, Any]] = []
+    for example in selected_rows:
+        shuffled_id = str(example.get("shuffled_memory_example_id", "")).strip()
+        if not shuffled_id:
+            raise ValueError(
+                f"Support example {example['id']} is missing shuffled_memory_example_id for shuffled control."
+            )
+        shuffled_example = dict(example_lookup[shuffled_id])
+        if (
+            support_serialization_variant == "triad_curated6"
+            and str(shuffled_example.get("label", "")) == "NOT_ENOUGH_INFO"
+        ):
+            shuffled_example["evidence"] = FEVER_TRIAD_NEI_EVIDENCE
+        rows.append(shuffled_example)
+    return rows
+
+
 def _build_support_text_block(
     support_examples: list[dict[str, Any]],
     *,
@@ -701,37 +894,34 @@ def _build_support_text_block(
     support_serialization_variant: str,
     preselected_rows: bool = False,
 ) -> str:
-    if memory_control == "zero":
-        return ""
-    if preselected_rows:
-        selected_rows = [dict(example) for example in support_examples]
-    else:
-        selected_rows = _select_support_rows_for_variant(
-            support_examples,
-            support_serialization_variant=support_serialization_variant,
-        )
-    rows: list[dict[str, Any]] = []
-    if memory_control == "real":
-        rows = [dict(example) for example in selected_rows]
-    else:
-        for example in selected_rows:
-            shuffled_id = str(example.get("shuffled_memory_example_id", "")).strip()
-            if not shuffled_id:
-                raise ValueError(
-                    f"Support example {example['id']} is missing shuffled_memory_example_id for shuffled control."
-                )
-            shuffled_example = dict(example_lookup[shuffled_id])
-            if support_serialization_variant == "triad_curated6" and str(shuffled_example.get("label", "")) == "NOT_ENOUGH_INFO":
-                shuffled_example["evidence"] = FEVER_TRIAD_NEI_EVIDENCE
-            rows.append(shuffled_example)
-    return "\n\n".join(
-        _serialize_support_row(
-            row,
-            support_index=index + 1,
-            support_serialization_variant=support_serialization_variant,
-        )
-        for index, row in enumerate(rows)
+    rows = _resolve_support_rows_for_memory_control(
+        support_examples,
+        memory_control=memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+        preselected_rows=preselected_rows,
     )
+    return "\n\n".join(
+        _serialize_support_rows(
+            rows,
+            support_serialization_variant=support_serialization_variant,
+        )
+    )
+
+
+def _support_label_ids(
+    support_rows: list[dict[str, Any]],
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    label_ids = []
+    for row in support_rows:
+        label = str(row.get("label", "")).strip()
+        try:
+            label_ids.append(FEVER_LABEL_ORDER.index(label))
+        except ValueError as exc:
+            raise ValueError(f"Unsupported support label {label!r} for structured support-set encoding.") from exc
+    return torch.tensor([label_ids], dtype=torch.long, device=device)
 
 
 def _resolve_train_support_mask_count(
@@ -806,7 +996,22 @@ class SharedInjectionPilotRuntime(nn.Module):
             dropout=float(writer_cfg.get("dropout", 0.0)),
         )
         self.injection_mode = _resolve_injection_mode(config)
+        self.support_encoder_mode = _resolve_support_encoder_mode(config)
+        self.trainable_variant = _resolve_trainable_variant(config)
+        self.alignment_aux_mode = _resolve_alignment_aux_mode(config)
+        self.alignment_aux_weight = _resolve_alignment_aux_weight(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
+        self.support_serialization_variant = _resolve_support_serialization_variant(config)
+        self.support_encoder: StructuredSupportSetEncoder | None = None
+        if self.support_encoder_mode == "structured_support_set":
+            self.support_encoder = StructuredSupportSetEncoder(
+                hidden_size=self.backbone.hidden_size,
+                label_count=len(FEVER_LABEL_ORDER),
+                max_items=int(config["runtime"].get("pilot_support_encoder_max_items", 8)),
+                num_heads=int(config["runtime"].get("pilot_support_encoder_num_heads", 4)),
+                transformer_layers=int(config["runtime"].get("pilot_support_encoder_layers", 1)),
+                dropout=float(config["runtime"].get("pilot_support_encoder_dropout", 0.0)),
+            )
         if self.injection_mode == "shallow_prefix":
             self.prefix_projector = LatentPrefixProjector(
                 hidden_size=self.backbone.hidden_size,
@@ -831,16 +1036,24 @@ class SharedInjectionPilotRuntime(nn.Module):
 
     def load_writer(self, resume: str | None) -> None:
         writer_path = _resolve_artifact_path(resume, "writer.ckpt")
-        self.writer.load_from(writer_path, map_location="cpu")
+        self.writer.load_from(writer_path, map_location="cpu", strict=False)
 
     def load_injection_checkpoint(self, checkpoint_path: str | Path) -> dict[str, Any]:
         checkpoint = torch.load(Path(checkpoint_path), map_location="cpu")
         self.writer.load_state_dict(checkpoint["writer_state"])
+        if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
+            self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
         self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
         return checkpoint
 
     def set_writer_trainable(self, enabled: bool) -> None:
         for parameter in self.writer.parameters():
+            parameter.requires_grad_(enabled)
+
+    def set_support_encoder_trainable(self, enabled: bool) -> None:
+        if self.support_encoder is None:
+            return
+        for parameter in self.support_encoder.parameters():
             parameter.requires_grad_(enabled)
 
     def _augment_prefix_stats_with_projection(
@@ -859,7 +1072,12 @@ class SharedInjectionPilotRuntime(nn.Module):
         merged.update(projection_stats)
         return merged
 
-    def build_prefix_artifacts(self, support_text_block: str) -> PrefixInjectionArtifacts:
+    def build_prefix_artifacts(
+        self,
+        support_text_block: str,
+        *,
+        support_rows: list[dict[str, Any]] | None = None,
+    ) -> PrefixInjectionArtifacts:
         if self.writer_memory_control == "zero":
             memory_slots = torch.zeros(
                 1,
@@ -868,12 +1086,40 @@ class SharedInjectionPilotRuntime(nn.Module):
                 dtype=torch.float32,
                 device=self.backbone.device,
             )
+            support_item_states = None
         else:
-            support_state = self.backbone.summarize_texts([support_text_block])
-            memory_slots = self.writer.write(support_state)
+            if self.support_encoder_mode == "structured_support_set":
+                if not support_rows:
+                    raise ValueError(
+                        "Structured support-set encoding requires non-empty support_rows for injected arms."
+                    )
+                support_row_texts = _serialize_support_rows(
+                    support_rows,
+                    support_serialization_variant=self.support_serialization_variant,
+                )
+                support_item_states = self.backbone.summarize_texts(support_row_texts).unsqueeze(0)
+                if self.support_encoder is None:
+                    raise RuntimeError("support_encoder_mode=structured_support_set requires support_encoder.")
+                encoded_support_states = self.support_encoder(
+                    support_item_states,
+                    _support_label_ids(support_rows, device=self.backbone.device),
+                )
+                memory_slots = self.writer.write(
+                    encoded_support_states,
+                    input_schema="support_set",
+                )
+                support_item_states = encoded_support_states
+            else:
+                support_state = self.backbone.summarize_texts([support_text_block])
+                memory_slots = self.writer.write(support_state, input_schema="pooled_state")
+                support_item_states = None
         if self.injection_mode == "shallow_prefix":
             prefix_embeddings = self.prefix_projector(memory_slots)
-            prefix_stats = _prefix_stats(prefix_embeddings, memory_slots=memory_slots)
+            prefix_stats = _prefix_stats(
+                prefix_embeddings,
+                memory_slots=memory_slots,
+                support_item_states=support_item_states,
+            )
             return PrefixInjectionArtifacts(
                 prefix_embeddings=prefix_embeddings,
                 layer_prefix_hidden_by_layer=None,
@@ -883,6 +1129,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         prefix_stats = _prefix_stats(
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
             memory_slots=memory_slots,
+            support_item_states=support_item_states,
         )
         prefix_stats = self._augment_prefix_stats_with_projection(
             prefix_stats=prefix_stats,
@@ -947,7 +1194,35 @@ def _choice_task_loss(scores: torch.Tensor, gold_index: int, *, margin_value: fl
     return ce_loss + margin_loss
 
 
-def _grad_norm(module: nn.Module) -> float:
+def _score_margin_tensor(scores: torch.Tensor, gold_index: int) -> torch.Tensor:
+    competitor_index = _strongest_competitor_index(scores, gold_index)
+    return scores[gold_index] - scores[competitor_index]
+
+
+def _alignment_aux_loss(
+    *,
+    mode: str,
+    active_scores: torch.Tensor,
+    base_scores: torch.Tensor,
+    teacher_scores: torch.Tensor,
+    gold_index: int,
+) -> tuple[torch.Tensor | None, bool]:
+    if mode == "off":
+        return None, False
+    if mode != "teacher_margin":
+        raise ValueError(f"Unsupported alignment aux mode: {mode}.")
+    base_margin = float(_score_margin_tensor(base_scores, gold_index).detach().item())
+    teacher_margin = float(_score_margin_tensor(teacher_scores, gold_index).detach().item())
+    if teacher_margin <= base_margin:
+        return None, False
+    target = torch.tensor(teacher_margin, dtype=torch.float32, device=active_scores.device)
+    aux_loss = F.smooth_l1_loss(_score_margin_tensor(active_scores, gold_index), target)
+    return aux_loss, True
+
+
+def _grad_norm(module: nn.Module | None) -> float:
+    if module is None:
+        return 0.0
     total = 0.0
     for parameter in module.parameters():
         if parameter.grad is None:
@@ -1055,6 +1330,10 @@ def run_shared_injection_pilot(
     prompt_variant = _resolve_prompt_variant(config)
     support_serialization_variant = _resolve_support_serialization_variant(config)
     injection_mode = _resolve_injection_mode(config)
+    support_encoder_mode = _resolve_support_encoder_mode(config)
+    trainable_variant = _resolve_trainable_variant(config)
+    alignment_aux_mode = _resolve_alignment_aux_mode(config)
+    alignment_aux_weight = _resolve_alignment_aux_weight(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
     train_support_mode = _resolve_train_support_mode(config)
@@ -1138,6 +1417,12 @@ def run_shared_injection_pilot(
         example_lookup=example_lookup,
         support_serialization_variant=support_serialization_variant,
     )
+    support_rows_for_prefix = _resolve_support_rows_for_memory_control(
+        [cache.example for cache in support_caches],
+        memory_control=writer_memory_control if arm == "injected" else "real",
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
     teacher_support_text_block = _build_support_text_block(
         [cache.example for cache in support_caches],
         memory_control="real",
@@ -1183,7 +1468,10 @@ def run_shared_injection_pilot(
         )
         snapshot_checkpoint_path = None
         if arm == "injected":
-            prefix_artifacts = runtime.build_prefix_artifacts(support_text_block)
+            prefix_artifacts = runtime.build_prefix_artifacts(
+                support_text_block,
+                support_rows=support_rows_for_prefix,
+            )
             if writer_memory_control != "zero":
                 snapshot_checkpoint_path = (
                     output_dir / "snapshot_evals" / f"step_{step:04d}" / "checkpoint.pt"
@@ -1250,6 +1538,11 @@ def run_shared_injection_pilot(
                 "writer_slot_norm_mean": snapshot_payload["writer_slot_norm_mean"],
                 "writer_slot_norm_std": snapshot_payload["writer_slot_norm_std"],
                 "writer_slot_norm_max": snapshot_payload["writer_slot_norm_max"],
+                "support_item_count": snapshot_payload["support_item_count"],
+                "support_item_hidden_l2": snapshot_payload["support_item_hidden_l2"],
+                "support_item_hidden_norm_mean": snapshot_payload["support_item_hidden_norm_mean"],
+                "support_item_hidden_norm_std": snapshot_payload["support_item_hidden_norm_std"],
+                "support_item_hidden_norm_max": snapshot_payload["support_item_hidden_norm_max"],
                 "prefix_artifact_stats": snapshot_payload["prefix_artifact_stats"],
             }
         )
@@ -1259,25 +1552,38 @@ def run_shared_injection_pilot(
 
     if arm == "injected" and writer_memory_control != "zero" and train_steps > 0:
         runtime.writer.train()
+        if runtime.support_encoder is not None:
+            runtime.support_encoder.train()
         runtime.prefix_projector.train()
         runtime.set_writer_trainable(False)
-        optimizer = torch.optim.AdamW(
-            [
+        runtime.set_support_encoder_trainable(False)
+        optimizer_groups = [
+            {
+                "params": list(runtime.prefix_projector.parameters()),
+                "lr": projector_learning_rate,
+                "weight_decay": projector_weight_decay,
+            },
+            {
+                "params": list(runtime.writer.parameters()),
+                "lr": writer_learning_rate,
+                "weight_decay": writer_weight_decay,
+            },
+        ]
+        if runtime.support_encoder is not None:
+            optimizer_groups.append(
                 {
-                    "params": list(runtime.prefix_projector.parameters()),
-                    "lr": projector_learning_rate,
-                    "weight_decay": projector_weight_decay,
-                },
-                {
-                    "params": list(runtime.writer.parameters()),
+                    "params": list(runtime.support_encoder.parameters()),
                     "lr": writer_learning_rate,
                     "weight_decay": writer_weight_decay,
-                },
-            ]
+                }
+            )
+        optimizer = torch.optim.AdamW(
+            optimizer_groups
         )
         for step in range(train_steps):
-            writer_frozen = step < projector_warmup_steps
+            writer_frozen = bool(trainable_variant == "projector_only" or step < projector_warmup_steps)
             runtime.set_writer_trainable(not writer_frozen)
+            runtime.set_support_encoder_trainable(not writer_frozen)
             train_example = train_caches[step % len(train_caches)]
             selected_episode_id = ""
             selected_episode_source_split = ""
@@ -1313,8 +1619,18 @@ def run_shared_injection_pilot(
                 support_serialization_variant=support_serialization_variant,
                 preselected_rows=True,
             )
+            masked_support_rows_for_prefix = _resolve_support_rows_for_memory_control(
+                masked_support_rows,
+                memory_control=writer_memory_control,
+                example_lookup=example_lookup,
+                support_serialization_variant=support_serialization_variant,
+                preselected_rows=True,
+            )
             optimizer.zero_grad(set_to_none=True)
-            prefix_artifacts = runtime.build_prefix_artifacts(masked_support_text_block)
+            prefix_artifacts = runtime.build_prefix_artifacts(
+                masked_support_text_block,
+                support_rows=masked_support_rows_for_prefix,
+            )
             scores = runtime.score_example(
                 train_example,
                 support_text_block=teacher_support_text_block,
@@ -1322,9 +1638,36 @@ def run_shared_injection_pilot(
                 layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
             )
             loss = _choice_task_loss(scores, train_example.gold_index, margin_value=choice_margin)
+            aux_loss = None
+            aux_active = False
+            if alignment_aux_mode != "off" and alignment_aux_weight > 0.0:
+                with torch.no_grad():
+                    base_scores = runtime.backbone.score_continuations(
+                        train_example.prompt_text,
+                        train_example.candidate_texts,
+                    )
+                    teacher_scores = runtime.backbone.score_continuations(
+                        _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
+                        train_example.candidate_texts,
+                    )
+                aux_loss, aux_active = _alignment_aux_loss(
+                    mode=alignment_aux_mode,
+                    active_scores=scores,
+                    base_scores=base_scores,
+                    teacher_scores=teacher_scores,
+                    gold_index=train_example.gold_index,
+                )
+                if aux_loss is not None:
+                    loss = loss + (alignment_aux_weight * aux_loss)
             loss.backward()
+            support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
             writer_grad_norm = _grad_norm(runtime.writer)
+            writer_to_projector_grad_ratio = (
+                0.0
+                if prefix_projector_grad_norm <= 0.0
+                else float((writer_grad_norm + support_encoder_grad_norm) / prefix_projector_grad_norm)
+            )
             total_grad_norm = 0.0
             if gradient_clip_norm > 0.0:
                 parameters = [
@@ -1354,8 +1697,15 @@ def run_shared_injection_pilot(
                     "support_episode_label_counts": selected_episode_label_counts,
                     "masked_support_rows": len(masked_support_rows),
                     "masked_support_ids": [str(row["id"]) for row in masked_support_rows],
+                    "pilot_support_encoder_mode": support_encoder_mode,
+                    "pilot_trainable_variant": trainable_variant,
+                    "alignment_aux_mode": alignment_aux_mode,
+                    "alignment_aux_active": bool(aux_active),
+                    "alignment_aux_loss": 0.0 if aux_loss is None else float(aux_loss.item()),
+                    "support_encoder_grad_norm": support_encoder_grad_norm,
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
                     "writer_grad_norm": writer_grad_norm,
+                    "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
                     "total_grad_norm_pre_clip": total_grad_norm,
                     "prefix_artifact_stats": prefix_artifacts.prefix_stats,
                     **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
@@ -1363,13 +1713,20 @@ def run_shared_injection_pilot(
             )
             if (step + 1) in snapshot_steps and (step + 1) != 0:
                 runtime.writer.eval()
+                if runtime.support_encoder is not None:
+                    runtime.support_encoder.eval()
                 runtime.prefix_projector.eval()
                 evaluate_snapshot(step + 1)
                 runtime.writer.train()
+                if runtime.support_encoder is not None:
+                    runtime.support_encoder.train()
                 runtime.prefix_projector.train()
         runtime.writer.eval()
+        if runtime.support_encoder is not None:
+            runtime.support_encoder.eval()
         runtime.prefix_projector.eval()
         runtime.set_writer_trainable(True)
+        runtime.set_support_encoder_trainable(True)
 
     prefix_artifacts = PrefixInjectionArtifacts(
         prefix_embeddings=None,
@@ -1377,7 +1734,10 @@ def run_shared_injection_pilot(
         prefix_stats=_prefix_stats(),
     )
     if arm == "injected":
-        prefix_artifacts = runtime.build_prefix_artifacts(support_text_block)
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            support_text_block,
+            support_rows=support_rows_for_prefix,
+        )
     case_rows = _evaluate_examples(
         runtime=runtime,
         eval_examples=eval_caches,
@@ -1423,6 +1783,10 @@ def run_shared_injection_pilot(
         "shared_injection_arm": arm,
         "writer_memory_control": writer_memory_control,
         "pilot_injection_mode": injection_mode,
+        "pilot_support_encoder_mode": support_encoder_mode,
+        "pilot_trainable_variant": trainable_variant,
+        "pilot_alignment_aux_mode": alignment_aux_mode,
+        "pilot_alignment_aux_weight": alignment_aux_weight,
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
         "pilot_train_support_mode": train_support_mode,
@@ -1469,6 +1833,7 @@ def run_shared_injection_pilot(
         "snapshot_metrics": snapshot_metrics,
         "stage_c_choice_margin": choice_margin,
         "train_final_loss": train_events[-1]["loss"] if train_events else None,
+        "train_final_alignment_aux_loss": train_events[-1]["alignment_aux_loss"] if train_events else None,
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         "pilot_checkpoint_path": "" if not injection_checkpoint_path else str(Path(injection_checkpoint_path).resolve()),
         "prefix_artifact_stats": final_prefix_stats,

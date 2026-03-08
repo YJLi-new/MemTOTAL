@@ -1,0 +1,16 @@
+{
+  "alignment_claim_supported": false,
+  "canonical_fixed64_gate_passed": false,
+  "canonical_fixed64_report_generated": false,
+  "canonical_primary_gate_passed": false,
+  "canonical_selected_step": null,
+  "canonical_selection_passed": false,
+  "canonical_support_bank_brittle": false,
+  "comparison_conclusion": "canonical_failed_selection",
+  "freeze_writer_primary_gate_passed": false,
+  "freeze_writer_selected_step": null,
+  "freeze_writer_selection_passed": false,
+  "pooled_block_primary_gate_passed": false,
+  "pooled_block_selected_step": null,
+  "pooled_block_selection_passed": false
+}

@@ -19,7 +19,7 @@
 - `Phase 0` 已通过：显式 support 文本对 frozen Qwen 有帮助
 - `Phase 1` 已通过：当前 writer family 产出的 latent 不是“完全没信息”
 - `Phase 2` 不论 shallow 还是 deep path，都已经出现过非零 main-chain consumption 与局部 `I_real > I_shuffle / I_zero` 信号
-- `M4.6` 的 anti-shortcut 对照已真实跑完：把固定 `triad6` 换成 `32` 个 `2/2/2` train episode bank，本身并没有让 selection 通过
+- `M4.7` 的 structured support-set alignment 已真实跑完：`canonical / freeze-writer / pooled-block` 三臂都没有通过 selection，但 canonical structured path 的最佳点明显强于两个 ablation
 
 所以当前 blocker 不再是：
 - `Qwen` 会不会读 prefix
@@ -31,12 +31,12 @@
 - shared injection 仍然没有在预注册 `screen248-val` 规则下稳定过 selection gate
 - shallow prefix 会失稳，stabilized shallow prefix 会把有效学习压平
 - sparse deep prompt 虽然提供了更强主链路带宽，但当前会很快塌成强标签偏置
-- `M4.6` 的 `Run A/B` 都在 `step4` 就出现 `dominant_label_fraction=1.0` 式塌缩，并在 `step80` 左右进入 cap saturation
-- 当前更像是 `projector / writer / frozen reasoner` 的动力学或目标错配，而不只是 static support memorization
+- `M4.7` 的三臂都在 `step0` 就落在 `dominant_label_fraction=1.0` 的塌缩态，且没有任何一臂触发 selection
+- 当前更像是 `support representation -> writer -> projector -> frozen reasoner` 的对齐问题，而不只是 static support memorization 或 projector 容量不足
 
 ## 当前最可信的结论
 
-`M4.3` 已把 shared injection 放到预注册 validation 口径下重新检查，`M4.4` 又补了一轮显式稳定化，`M4.5` 把注入升级成 `5` 层稀疏 shared low-rank deep prompt，最新 `M4.6` 则专门测试了 anti-shortcut support protocol。
+`M4.3` 已把 shared injection 放到预注册 validation 口径下重新检查，`M4.4` 又补了一轮显式稳定化，`M4.5` 把注入升级成 `5` 层稀疏 shared low-rank deep prompt，`M4.6` 专门测试了 anti-shortcut support protocol，最新 `M4.7` 则把 injected path 改成了 `structured support-set encoder -> writer -> sparse deep prompt -> frozen Qwen` 的三臂判因矩阵。
 
 真实运行路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
@@ -47,6 +47,8 @@
 - `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/`
 - `runs/review/m4-fever-anti-shortcut-recovery-qwen25/`
 - `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/`
+- `runs/review/m4-fever-shared-injection-alignment-qwen25/`
+- `results/generated/review/m4-fever-shared-injection-alignment-qwen25/`
 
 关键结果：
 - [selection.json](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json)
@@ -124,10 +126,23 @@
   - writer latent 虽 probe-readable，但还没有稳定对齐到 frozen reasoner 真正会消费的方向
   - 下一轮应进入 `M5 writer–reasoner alignment under shared injection`
 
+`M4.7 shared injection alignment` 的最新结论是：
+- `canonical / freeze-writer / pooled-block` 三臂都没有通过 `screen248-val` earliest-pass selection，因此没有任何一臂打开 `screen248-test`
+- 但 canonical structured path 的最佳候选明显强于两个 ablation：
+  - canonical `step64`: `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3`、`macro_f1=0.2259`、`task_score=0.3443`、`regressions_vs_base=16`
+  - freeze-writer 最佳只到 `flip_gain_vs_zero=2`，且 `macro_f1=0.1646`、`regressions_vs_base=18`
+  - pooled-block 最佳同样只到 `flip_gain_vs_zero=2`，且 `macro_f1=0.1646`、`regressions_vs_base=18`
+- 三臂都从 `step0` 起表现为 `dominant_label_fraction=1.0`，说明当前失败不是“晚期过冲才塌”，而是 injected path 从一开始就更容易落到 label-biased attractor
+- 因而，`structured support-set encoder + trainable writer` 这个方向有增量，但增量还不足以跨过预注册 selection gate
+- 当前最准确的 blocker 已进一步收紧成：
+  - pooled support block 确实比 structured support set 更差
+  - freeze-writer 也确实比 trainable writer 更差
+  - 但 canonical 仍然没有稳定到可过 gate，所以问题已经上移到 `writer–reasoner alignment`，而不再只是 support protocol 或 projector 结构
+
 因此，最新最稳妥的判断是：
 
 > shared injection 这条路已经出现了正信号，但这个正信号目前仍是“可训练、可消费、但不稳健”。  
-> `M4.6` 又进一步说明：仅靠 anti-shortcut support protocol 还不够。当前最该修的是 writer/projector/reasoner 的对齐与动力学，而不是再回去修 score-side residual family。
+> `M4.7` 进一步说明：structured support set 与 trainable writer 确实比两个 ablation 更接近有效方向，但还没有强到穿过预注册 selection gate。当前最该修的是 writer–reasoner alignment，而不是再回去修 score-side residual family。
 
 ## 现在不该做什么
 
@@ -143,11 +158,13 @@
 - 保持 `sparse deep prompt` 这条主链路，不回旧 residual family
 - 把 `screen248-test` 固定为 primary capability gate，`fixed64` 只保留为 legacy report
 - 把 `episode bank vs static triad6` 这类 support-side 对照降级为辅线，因为 `M4.6` 已经证明它不是当前第一主因
-- 进入 `M5 writer–reasoner alignment under shared injection`
+- 进入 `M5.1 writer–reasoner alignment under shared injection`
 
 更具体地说，下一步应优先做：
-- 保持 `task-only` 为主目标，但把 writer/projector 的训练直接对齐到 frozen Qwen 的最终 choice margin
-- 先尝试更对题的 `task loss + strongest-competitor margin` 重写，再决定是否引入极轻量、晚启用的 teacher-aided margin distillation
+- 不把“简单把总步数从 96 拉长”当主药；先收紧 trainable stack 的自由度、support representation 和初始化语义
+- `freeze-writer` ablation 必须绑定有意义的初始化：至少与 canonical 同源，或直接使用已通过 `Phase 1` audit 的 writer checkpoint，而不是冻结随机 writer
+- canonical 继续保持 `task-only`，teacher margin 只保留 dormant hook，不进入主实验矩阵
+- 先尝试更对题的 `task loss + strongest-competitor margin` 对齐，再决定是否引入极轻量、晚启用的 teacher-aided margin distillation
 - 继续保留现有 layer-wise attention / grad ratio / collapse observability，用来判断 shortcut 是谁先学出来的
 - 只有当 `screen248-test` 真正稳定通过后，才打开：
   - `fixed64` legacy report
@@ -162,6 +179,7 @@
 - [m4-fever-dynamics-recovery-stabilized-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25)
 - [m4-fever-deep-prompt-recovery-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-deep-prompt-recovery-qwen25)
 - [m4-fever-anti-shortcut-recovery-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-anti-shortcut-recovery-qwen25)
+- [m4-fever-shared-injection-alignment-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-shared-injection-alignment-qwen25)
 - [20260307-m4-shared-injection-brief.md](/root/mydir/MemTOTAL/docs/briefs/20260307-m4-shared-injection-brief.md)
 
 ### 已判死的旧分支

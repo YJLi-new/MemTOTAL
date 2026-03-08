@@ -24,12 +24,12 @@
 > 任何任务若无法服务于这六类产物，应降低优先级。
 
 ### Current Active Blocker
-- `M4.6` 的 anti-shortcut deep prompt 已真实跑完，但 `Run A` 与 `Run B` 都没有通过 `screen248-val` selection。
-- 当前 canonical 结果位于 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/`。
-- 当前最优先问题已经不是“static triad6 是否导致 shortcut”，而是：
-  - 为什么 `episode_bank` 与 `static triad6` 都会在 `step4` 就塌成 `dominant_label_fraction -> 1.0`
-  - 为什么两条 run 都会在 `step80` 左右进入 cap saturation
-  - 当前是否已经该从 `M4 support protocol` 转入 `M5 writer–reasoner alignment`
+- `M4.7` 的 structured support-set alignment 已真实跑完，但 `canonical / freeze-writer / pooled-block` 三臂都没有通过 `screen248-val` selection。
+- 当前 canonical 结果位于 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/`。
+- 当前最优先问题已经不是“static triad6 是否导致 shortcut”，也不是“pooled block 是否已经足够”，而是：
+  - 为什么 canonical structured path 虽然能在 `step64` 做到 `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3`，却仍伴随 `regressions_vs_base=16`
+  - 为什么 `freeze-writer` 与 `pooled-block` 都明显弱于 canonical，但三臂又都从 `step0` 起表现为 `dominant_label_fraction -> 1.0`
+  - 下一轮 `M5.1` 是否应正式转向 `writer–reasoner alignment`，并把“更长训练”降级为次要调参，而不是主解
 
 ---
 

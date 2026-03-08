@@ -15,6 +15,7 @@
 - `scripts/run_m4_fever_dynamics_recovery_qwen25.sh`: `M4.3` 的 shared-injection dynamics recovery 入口，会并排跑 `raw8 / triad6` 两条 shared-injection suite，并把 `step0/8/16/24/32/48/64` 的 snapshot case dump 汇总成预注册 validation 的 `dynamics-recovery`
 - `scripts/run_m4_fever_deep_prompt_recovery_qwen25.sh`: `M4.5` 的 triad6 sparse deep-prompt recovery 入口，会固定 `triad6`，使用 `0/7/14/21/27` 五层 shared low-rank deep prompt，在 `screen-val` 做 earliest-pass selection；只有 selection 通过后才依次打开 `screen248-test` 与 `fixed64` 双 gate
 - `scripts/run_m4_fever_anti_shortcut_recovery_qwen25.sh`: `M4.6` 的 anti-shortcut recovery 入口，会先构建 `32` 个 `2/2/2` train triad episodes 和 `screen-val / screen248-test / heldout A/B` support banks，再并排跑 `Run A=episode_bank` 与 `Run B=static triad6`，最后生成 top-level anti-shortcut comparison
+- `scripts/run_m4_fever_alignment_qwen25.sh`: `M4.7` 的 structured support-set alignment 入口，会并排跑 `canonical / freeze-writer / pooled-block` 三臂，并生成 top-level alignment summary
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -37,6 +38,7 @@
 - `scripts/update_m4_dual_gate_summary.py`: 汇总 `selection + screen248-test + fixed64` 的双 gate 结论，并回写 `dual_gate_summary.json`
 - `scripts/update_m4_run_summary.py`: 汇总单条 `M4.6` run 的 `selection / screen248-test / heldout sanity / fixed64 legacy` 状态，并回写 `run-summary.json`
 - `scripts/update_m4_anti_shortcut_summary.py`: 汇总 `Run A vs Run B` 的 anti-shortcut comparison，并生成 `anti-shortcut-comparison.{json,md}`
+- `scripts/update_m4_alignment_summary.py`: 汇总 `canonical / freeze-writer / pooled-block` 三臂 alignment 结果，并生成 `alignment-summary.{json,md}`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -244,6 +246,16 @@
     - 再经 `SharedLowRankDeepPrefixProjector` 映射成多层 hidden prefix
     - 当前 canonical 层位是 `0/7/14/21/27`
     - `BackboneWrapper` 会在层内复用冻结 Qwen 的 `input_layernorm + k_proj + v_proj + rotary` 构造 prefix cache，再通过 `score_continuations(layer_prefix_hidden_by_layer=...)` 进入主链路
+- `M4.7` 又在 injected path 的上游补了一层结构化 support representation：
+  - `runtime.pilot_support_encoder_mode in {pooled_block, structured_support_set}`
+  - `structured_support_set` 会对 `6` 条 support row 单独 `summarize_texts`
+  - 再过 `StructuredSupportSetEncoder`
+  - 再调用 `MemoryWriter.write(..., input_schema=support_set)`
+  - `pooled_block` 则保留旧的 `support_text_block -> summarize_texts([block]) -> writer.write(..., input_schema=pooled_state)` 路径
+- `M4.7` 还新增了两条训练语义开关：
+  - `runtime.pilot_trainable_variant in {full, projector_only}`
+  - `runtime.pilot_alignment_aux_mode in {off, teacher_margin}`
+  - 当前真实主跑固定 `teacher_margin=off`，只保留 dormant hook，不进入 canonical 主矩阵
 - `M4.6` 又在训练侧补了一层 support-source 解耦：
   - `task.support_dataset_path` 继续表示 eval-time 单个 support bank
   - `task.train_support_dataset_path` 允许 train-time 静态 support rows
@@ -312,6 +324,22 @@
     - 不回 residual family
     - 进入 `M5 writer–reasoner alignment under shared injection`
     - 等 `screen248-test` 真正过 gate 后，再把 `fixed64 / Story Cloze / candidate-conditioned / Qwen3-8B` 打开
+- `M4.7` 当前又把主线推进到 structured support-set alignment：
+  - `canonical` 使用 `StructuredSupportSetEncoder + trainable writer + sparse deep prompt`
+  - `freeze-writer` 与 canonical 共享同源 writer 初始化，但冻结 support encoder + writer，只训 projector
+  - `pooled-block` 保留旧的 pooled support block path，其余 budget 与 canonical 对齐
+  - 顶层 comparison 位于 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.{json,md}`
+  - 最新真实结论是：
+    - 三臂都 `selection_passed=false`
+    - canonical structured path 的最佳点强于两个 ablation：
+      - canonical `step64`: `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3`、`macro_f1=0.2259`、`regressions_vs_base=16`
+      - `freeze-writer / pooled-block` 最佳都只有弱的 `vs_zero`
+    - 但三臂都没有强到可过 `screen248-val` earliest-pass
+  - 因而：
+    - structured support set 比 pooled block 更对
+    - trainable writer 比 freeze-writer 更对
+    - 但 blocker 已进一步上移到 `writer–reasoner alignment`
+    - 下一步不应被写成“简单延长训练步数”，而应先收紧 writer 初始化语义、trainable stack 自由度和 task-first 对齐目标
 
 ## M3 Failure Checks
 

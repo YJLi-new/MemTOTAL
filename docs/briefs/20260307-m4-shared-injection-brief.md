@@ -2,9 +2,10 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不是“完全没信号”，但截至 `M4.6` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 anti-shortcut 实验说明：把固定 `triad6` 换成 episode bank 也没有救回 selection；当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
+`shared injection` 已经不是“完全没信号”，但截至 `M4.7` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 structured-alignment 实验说明：把 injected path 改成 `structured support set -> writer -> deep prompt` 之后，canonical 的确比 `freeze-writer / pooled-block` 更强，但仍没有强到穿过 selection gate。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
 
-> main-chain consumption 已成立，deep prompt 也已成立；但当前系统仍会极早塌成 label-biased shortcut，而且 episode-bank support protocol 还不足以把它拉回稳定的 real-memory content effect。
+> main-chain consumption 已成立，deep prompt 也已成立；structured support set 与 trainable writer 也已显示出方向性增量。  
+> 但当前系统仍会极早塌成 label-biased shortcut，而这条增量还不足以稳定固化成能通过预注册 selection 的能力信号。
 
 ## 已经坐实的前提
 
@@ -20,7 +21,7 @@
 
 `candidate-conditioned residual family` 在更对题的 repair/content audit 下仍然表现为 `real = shuffle = zero`，不再是当前主线。
 
-## M4.3 / M4.4 / M4.5 / M4.6 的连续结论
+## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 的连续结论
 
 review 路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
@@ -31,6 +32,8 @@ review 路径：
 - `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/`
 - `runs/review/m4-fever-anti-shortcut-recovery-qwen25/`
 - `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/`
+- `runs/review/m4-fever-shared-injection-alignment-qwen25/`
+- `results/generated/review/m4-fever-shared-injection-alignment-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -41,6 +44,8 @@ review 路径：
 - `dynamics-recovery/content_gap_curve.csv`
 - `anti-shortcut-comparison.json`
 - `anti-shortcut-comparison.md`
+- `alignment-summary.json`
+- `alignment-summary.md`
 
 ### M4.3 shallow dynamics recovery
 
@@ -124,6 +129,51 @@ canonical 设计：
 - 把 support protocol 换成 episode bank，并没有阻止系统极早塌成 label bias
 - 当前更接近的是 `writer/projector/frozen-reasoner` 对齐问题，而不是 support bank 组织问题
 
+### M4.7 structured support-set alignment
+
+canonical 设计：
+- injected path 不再走 `support_text_block -> pooled summarize`
+- 改成 `6` 条 support row 单独 `summarize_texts`
+- 再过 `StructuredSupportSetEncoder`
+- 再过 `MemoryWriter(input_schema=support_set)`
+- 最后进入同一条 `sparse_deep_prefix(0/7/14/21/27, rank=16)` receiver
+- 同时并排做三臂：
+  - `canonical`
+  - `freeze-writer`
+  - `pooled-block`
+
+真实结果：
+- 三臂都没有通过 `screen248-val` earliest-pass selection
+- 因此三臂都没有打开 `screen248-test`，也没有生成 `fixed64` legacy report
+- 但 canonical structured path 的最佳点明显强于两个 ablation：
+  - `step64`
+  - `flip_gain_vs_shuffle=3`
+  - `flip_gain_vs_zero=3`
+  - `macro_f1=0.2259`
+  - `task_score=0.3443`
+  - `regressions_vs_base=16`
+- `freeze-writer` 最佳只恢复出弱的 `vs_zero`：
+  - 最佳在 `step80/96`
+  - `flip_gain_vs_shuffle=0`
+  - `flip_gain_vs_zero=2`
+  - `macro_f1=0.1646`
+  - `regressions_vs_base=18`
+- `pooled-block` 也只恢复出弱的 `vs_zero`：
+  - 最佳在 `step64/80/96`
+  - `flip_gain_vs_shuffle=0`
+  - `flip_gain_vs_zero=2`
+  - `macro_f1=0.1646`
+  - `regressions_vs_base=18`
+- 三臂都从 `step0` 起表现为 `dominant_label_fraction=1.0`
+
+含义：
+- structured support set 确实比 pooled block 更对
+- trainable writer 也确实比 freeze-writer 更对
+- 但当前这两个改动带来的增量还不足以通过 selection gate
+- 所以 blocker 已进一步收紧成：
+  - `support representation -> writer -> frozen reasoner` 的对齐仍然不够
+  - 问题已经不再只是 support protocol，也不再只是 projector 结构
+
 ## 当前最稳妥的解释
 
 当前已经可以排除：
@@ -135,7 +185,7 @@ canonical 设计：
 当前更合理的解释是：
 
 > shared injection 这条路已经证明了 main-chain access 和局部内容效应都存在。  
-> 但无论 shallow、deep，还是 anti-shortcut episode bank，当前训练动力学都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
+> 但无论 shallow、deep、episode bank，还是 structured support-set alignment，当前训练动力学都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
 
 ## 现在不该做什么
 
@@ -145,6 +195,7 @@ canonical 设计：
 - 不直接上 `Story Cloze` 或 `Qwen3-8B`
 - 不先上 KL / teacher matching
 - 不再把 `episode bank vs static triad6` 当作当前第一主线
+- 不把“简单拉长训练步数”当成下一轮主药
 
 ## 现在最该做什么
 
@@ -156,6 +207,7 @@ canonical 设计：
   - real-vs-shuffle 的层内分离
   - label-bias collapse
 - 下一轮优先进入：
-  - `M5 writer–reasoner alignment under shared injection`
+  - `M5.1 writer–reasoner alignment under shared injection`
   - 先做 task-first 的 objective rewrite
-  - 如仍需要 teacher signal，只引入轻量、晚启用的 margin-style distillation
+  - `freeze-writer` 必须绑定有意义的初始化，而不是冻结随机 writer
+  - 如仍需要 teacher signal，只保留 dormant hook；不把 teacher alignment 放进 canonical 主矩阵

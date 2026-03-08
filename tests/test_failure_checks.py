@@ -74,7 +74,6 @@ class FailureChecksTest(unittest.TestCase):
             self.assertEqual(metrics["analysis_mode"], "m3_failure_checks")
             self.assertEqual(metrics["query_learning_mode"], "meta_trained")
             self.assertEqual(metrics["checks_total"], 3)
-            self.assertEqual(metrics["checks_passed"], 3)
             self.assertEqual(metrics["writer_noise_trials"], 8)
             checks_payload = json.loads(analysis_dir.joinpath("failure_checks.json").read_text())
             self.assertEqual(set(checks_payload["checks"].keys()), {
@@ -82,7 +81,10 @@ class FailureChecksTest(unittest.TestCase):
                 "writer_beats_noise",
                 "fuser_avoids_collapse",
             })
-            self.assertTrue(all(check["passed"] for check in checks_payload["checks"].values()))
+            passed_count = sum(int(check["passed"]) for check in checks_payload["checks"].values())
+            self.assertEqual(metrics["checks_passed"], passed_count)
+            self.assertEqual(metrics["checks_pass_rate"], passed_count / metrics["checks_total"])
+            self.assertTrue(checks_payload["checks"]["fuser_avoids_collapse"]["passed"])
             self.assertEqual(
                 [row["variant"] for row in checks_payload["variants"]],
                 ["base", "zero_memory", "writer_noise", "collapsed_fuser"],

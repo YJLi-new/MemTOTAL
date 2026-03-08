@@ -26,6 +26,7 @@ from memtotal.training.m4_shared_injection import (
     _evaluate_examples,
     _merge_example_lookup,
     _prefix_stats,
+    _resolve_support_rows_for_memory_control,
     _resolve_support_lookup_dataset_paths,
 )
 from memtotal.training.m4_shared_injection import _load_task_dataset_with_path
@@ -1481,7 +1482,16 @@ def _attention_rows_for_snapshot(
         example_lookup=example_lookup,
         support_serialization_variant=support_serialization_variant,
     )
-    prefix_artifacts = runtime.build_prefix_artifacts(support_text_block)
+    support_rows = _resolve_support_rows_for_memory_control(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    prefix_artifacts = runtime.build_prefix_artifacts(
+        support_text_block,
+        support_rows=support_rows,
+    )
     prefix_stats = prefix_artifacts.prefix_stats
     rows: list[dict[str, Any]] = []
     for cache in audit_examples:
@@ -1538,6 +1548,7 @@ def _collect_prefix_norm_rows_for_metrics(
             "arm_alias": arm_alias,
             "row_type": "snapshot_aggregate",
             "layer_index": "",
+            "pilot_support_encoder_mode": str(metrics.get("pilot_support_encoder_mode", "pooled_block")),
             "prefix_tokens": float(metrics.get("prefix_tokens", 0.0)),
             "prefix_l2": float(metrics.get("prefix_l2", 0.0)),
             "prefix_slot_norm_mean": float(metrics.get("prefix_slot_norm_mean", 0.0)),
@@ -1547,6 +1558,11 @@ def _collect_prefix_norm_rows_for_metrics(
             "writer_slot_norm_mean": float(metrics.get("writer_slot_norm_mean", 0.0)),
             "writer_slot_norm_std": float(metrics.get("writer_slot_norm_std", 0.0)),
             "writer_slot_norm_max": float(metrics.get("writer_slot_norm_max", 0.0)),
+            "support_item_count": float(metrics.get("support_item_count", 0.0)),
+            "support_item_hidden_l2": float(metrics.get("support_item_hidden_l2", 0.0)),
+            "support_item_hidden_norm_mean": float(metrics.get("support_item_hidden_norm_mean", 0.0)),
+            "support_item_hidden_norm_std": float(metrics.get("support_item_hidden_norm_std", 0.0)),
+            "support_item_hidden_norm_max": float(metrics.get("support_item_hidden_norm_max", 0.0)),
         }
     ]
     layer_indices = sorted(
@@ -1604,8 +1620,20 @@ def _collect_train_event_norm_rows(
                 "writer_slot_norm_mean": float(event.get("writer_slot_norm_mean", 0.0)),
                 "writer_slot_norm_std": float(event.get("writer_slot_norm_std", 0.0)),
                 "writer_slot_norm_max": float(event.get("writer_slot_norm_max", 0.0)),
+                "support_item_count": float(event.get("support_item_count", 0.0)),
+                "support_item_hidden_l2": float(event.get("support_item_hidden_l2", 0.0)),
+                "support_item_hidden_norm_mean": float(event.get("support_item_hidden_norm_mean", 0.0)),
+                "support_item_hidden_norm_std": float(event.get("support_item_hidden_norm_std", 0.0)),
+                "support_item_hidden_norm_max": float(event.get("support_item_hidden_norm_max", 0.0)),
+                "pilot_support_encoder_mode": str(event.get("pilot_support_encoder_mode", "pooled_block")),
+                "pilot_trainable_variant": str(event.get("pilot_trainable_variant", "")),
+                "alignment_aux_mode": str(event.get("alignment_aux_mode", "off")),
+                "alignment_aux_active": bool(event.get("alignment_aux_active", False)),
+                "alignment_aux_loss": float(event.get("alignment_aux_loss", 0.0)),
+                "support_encoder_grad_norm": float(event.get("support_encoder_grad_norm", 0.0)),
                 "prefix_projector_grad_norm": float(event.get("prefix_projector_grad_norm", 0.0)),
                 "writer_grad_norm": float(event.get("writer_grad_norm", 0.0)),
+                "writer_to_projector_grad_ratio": float(event.get("writer_to_projector_grad_ratio", 0.0)),
                 "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
                 "loss": float(event.get("loss", 0.0)),
             }
@@ -2087,5 +2115,52 @@ def compare_m4_anti_shortcut_runs(
         "run_b_cap_saturation_onset_step": run_b.get("cap_saturation_onset_step"),
         "run_a_dominant_label_collapse_onset_step": run_a.get("dominant_label_collapse_onset_step"),
         "run_b_dominant_label_collapse_onset_step": run_b.get("dominant_label_collapse_onset_step"),
+        "comparison_conclusion": conclusion,
+    }
+
+
+def compare_m4_alignment_runs(
+    *,
+    canonical_summary_json: str,
+    freeze_writer_summary_json: str,
+    pooled_block_summary_json: str,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    freeze_writer = json.loads(Path(freeze_writer_summary_json).read_text())
+    pooled_block = json.loads(Path(pooled_block_summary_json).read_text())
+
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_not_brittle = not bool(canonical.get("support_bank_brittle", False))
+    freeze_primary = bool(freeze_writer.get("screen248_test_gate_passed", False))
+    pooled_primary = bool(pooled_block.get("screen248_test_gate_passed", False))
+    alignment_claim_supported = bool(
+        canonical_primary
+        and canonical_not_brittle
+        and not freeze_primary
+        and not pooled_primary
+    )
+    if alignment_claim_supported:
+        conclusion = "canonical_passes_both_ablations_fail"
+    elif canonical_primary and (freeze_primary or pooled_primary):
+        conclusion = "canonical_pass_ambiguous"
+    elif bool(canonical.get("selection_passed", False)):
+        conclusion = "canonical_selected_but_primary_gate_failed"
+    else:
+        conclusion = "canonical_failed_selection"
+
+    return {
+        "canonical_selection_passed": bool(canonical.get("selection_passed", False)),
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": bool(canonical.get("support_bank_brittle", False)),
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "freeze_writer_selection_passed": bool(freeze_writer.get("selection_passed", False)),
+        "freeze_writer_selected_step": freeze_writer.get("selected_step"),
+        "freeze_writer_primary_gate_passed": freeze_primary,
+        "pooled_block_selection_passed": bool(pooled_block.get("selection_passed", False)),
+        "pooled_block_selected_step": pooled_block.get("selected_step"),
+        "pooled_block_primary_gate_passed": pooled_primary,
+        "alignment_claim_supported": alignment_claim_supported,
         "comparison_conclusion": conclusion,
     }

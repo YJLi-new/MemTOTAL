@@ -1,0 +1,9 @@
+{
+  "fixed64_gate_passed": false,
+  "fixed64_report_generated": false,
+  "heldout_sane_bank_count": 0,
+  "milestone_gate_passed": false,
+  "screen248_test_gate_passed": false,
+  "selection_passed": false,
+  "support_bank_brittle": false
+}

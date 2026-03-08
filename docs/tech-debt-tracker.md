@@ -3,6 +3,10 @@
 ## Open
 
 - 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
+- `M4.7` structured support-set alignment 已经把“pooled support block 是否就是主瓶颈”和“writer 是否必须可训练”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.json` 显示 `comparison_conclusion=canonical_failed_selection`。当前新的第一优先级 tech debt 不再是“support block 要不要结构化”本身，而是：
+  - 为什么 canonical structured path 虽然优于 `freeze-writer / pooled-block`，却仍无法通过 selection
+  - 为什么三臂都会从 `step0` 起落在 `dominant_label_fraction=1.0`
+  - canonical `step64` 的 `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3` 为什么仍然伴随 `regressions_vs_base=16`
 - `M4.6` anti-shortcut deep prompt 已经把“static support memorization 是否是主因”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/anti-shortcut-comparison.json` 显示 `comparison_conclusion=run_a_equals_run_b`。当前新的第一优先级 tech debt 不再是“要不要把 triad6 换成 episode bank”，而是：
   - 为什么 `Run A=episode_bank` 与 `Run B=static triad6` 都会在 `step4` 出现 `dominant_label_collapse`
   - 为什么两条 run 都会在 `step80` 左右进入 cap saturation
@@ -10,8 +14,9 @@
   - 当前是否已经需要把 writer latent 直接对齐到 frozen Qwen 的决策方向
 - 因而，当前 top tech debt 已进一步收缩成：
   - `shared injection` 的 shortcut attractor 是如何形成的
+  - structured support representation 进入 writer 之后，为什么仍会快速塌成 label-biased prefix
   - writer / projector / frozen-reasoner 的梯度与表示错配具体发生在哪里
-  - 下一轮 `M5 writer–reasoner alignment` 应采用怎样的 task-first objective，才能把 probe-readable latent 变成 reasoner-readable control
+  - 下一轮 `M5.1 writer–reasoner alignment` 应采用怎样的 task-first objective，才能把 probe-readable latent 变成 reasoner-readable control
 - 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
 - `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。
 - `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
@@ -28,7 +33,8 @@
   - 在 `screen248-train / screen248-val / screen248-test` 的预注册口径下继续做稳定训练
   - `fixed64` 只保留为 legacy report，不再做硬 veto
   - 但不再把“再换一个 support bank / 再补一个浅层 tweak”当成主解
-  - 更合理的 next step 已经变成 `M5 writer–reasoner alignment under shared injection`
+  - 更合理的 next step 已经变成 `M5.1 writer–reasoner alignment under shared injection`
+  - 这一步不应被表述成“把训练步数简单拉长”，而应先收紧 trainable stack 的自由度、writer 初始化语义和 task-first 对齐目标
   - 只有 `screen248-test` 真正稳定通过后，再进入 `fixed64 / Story Cloze / Qwen3-8B`
 - 旧的 `candidate-conditioned residual family` 现已进入停止维护状态：`FEVER-first repair` fresh pilot 已证明 `R-real = R-shuffle = R-zero = 0.25`，当前没有任何继续在这条 family 上叠 router / sign selector / 更多 sweep 的理由。后续若回到 candidate-specific `Stage C`，必须建立在 shared injection 已先证明 `real > shuffle > zero` 的前提上。
 - 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。

@@ -9,6 +9,7 @@ from unittest import mock
 import torch
 
 from memtotal.analysis.m4_shared_injection import (
+    compare_m4_alignment_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
     run_m4_prepare_fever_validation_splits,
@@ -19,9 +20,12 @@ from memtotal.analysis.m4_shared_injection import (
     run_m4_shared_injection_dynamics_audit,
     run_m4_writer_information_audit,
 )
+from memtotal.models.memory import MemoryWriter
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     SharedLowRankDeepPrefixProjector,
+    StructuredSupportSetEncoder,
+    _alignment_aux_loss,
     _build_support_text_block,
     _choice_task_loss,
     _sample_support_examples_for_training,
@@ -165,6 +169,93 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         for tensor in projected.values():
             slot_norms = tensor.norm(dim=-1)
             self.assertTrue(bool(torch.all(slot_norms <= 2.0001)))
+
+    def test_structured_support_set_encoder_preserves_shape(self) -> None:
+        encoder = StructuredSupportSetEncoder(
+            hidden_size=6,
+            label_count=3,
+            max_items=8,
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+        )
+        item_states = torch.randn(2, 6, 6)
+        label_ids = torch.tensor(
+            [
+                [0, 0, 1, 1, 2, 2],
+                [2, 1, 0, 2, 1, 0],
+            ],
+            dtype=torch.long,
+        )
+        encoded = encoder(item_states, label_ids)
+        self.assertEqual(list(encoded.shape), [2, 6, 6])
+
+    def test_transformer_writer_support_set_mode_outputs_slots(self) -> None:
+        writer = MemoryWriter(
+            embed_dim=6,
+            memory_slots=4,
+            arch="transformer",
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+        )
+        support_states = torch.randn(2, 6, 6)
+        memory = writer.write(support_states, input_schema="support_set")
+        self.assertEqual(list(memory.shape), [2, 4, 6])
+
+    def test_mlp_writer_rejects_support_set_mode(self) -> None:
+        writer = MemoryWriter(embed_dim=6, memory_slots=4, arch="mlp")
+        support_states = torch.randn(2, 6, 6)
+        with self.assertRaisesRegex(ValueError, "requires arch='transformer'"):
+            writer.write(support_states, input_schema="support_set")
+
+    def test_transformer_writer_load_from_legacy_checkpoint_without_support_cross_attn(self) -> None:
+        writer = MemoryWriter(
+            embed_dim=6,
+            memory_slots=4,
+            arch="transformer",
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+        )
+        legacy_state = {
+            key: value
+            for key, value in writer.state_dict().items()
+            if not key.startswith("support_cross_attn.")
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "legacy_writer.pt"
+            torch.save(legacy_state, checkpoint_path)
+            writer.load_from(checkpoint_path, strict=False)
+
+    def test_alignment_aux_loss_teacher_margin_is_dormant_when_teacher_not_better(self) -> None:
+        active = torch.tensor([0.3, 0.2, 0.1], dtype=torch.float32)
+        base = torch.tensor([0.4, 0.2, 0.1], dtype=torch.float32)
+        teacher = torch.tensor([0.35, 0.2, 0.1], dtype=torch.float32)
+        aux_loss, active_flag = _alignment_aux_loss(
+            mode="teacher_margin",
+            active_scores=active,
+            base_scores=base,
+            teacher_scores=teacher,
+            gold_index=0,
+        )
+        self.assertIsNone(aux_loss)
+        self.assertFalse(active_flag)
+
+    def test_alignment_aux_loss_teacher_margin_activates_when_teacher_improves_margin(self) -> None:
+        active = torch.tensor([0.3, 0.2, 0.1], dtype=torch.float32)
+        base = torch.tensor([0.2, 0.25, 0.1], dtype=torch.float32)
+        teacher = torch.tensor([0.6, 0.1, 0.0], dtype=torch.float32)
+        aux_loss, active_flag = _alignment_aux_loss(
+            mode="teacher_margin",
+            active_scores=active,
+            base_scores=base,
+            teacher_scores=teacher,
+            gold_index=0,
+        )
+        self.assertIsNotNone(aux_loss)
+        self.assertTrue(active_flag)
+        self.assertGreater(float(aux_loss.item()), 0.0)
 
 
 class SharedInjectionAnalysisTest(unittest.TestCase):
@@ -744,6 +835,50 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(summary["comparison_conclusion"], "run_a_passes_run_b_fails")
             self.assertTrue(summary["run_a_primary_gate_passed"])
             self.assertFalse(summary["run_b_primary_gate_passed"])
+
+    def test_compare_m4_alignment_runs_requires_canonical_to_beat_both_ablations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            canonical = root / "canonical.json"
+            freeze_writer = root / "freeze_writer.json"
+            pooled_block = root / "pooled_block.json"
+            canonical.write_text(
+                json.dumps(
+                    {
+                        "selection_passed": True,
+                        "selected_step": 16,
+                        "screen248_test_gate_passed": True,
+                        "support_bank_brittle": False,
+                        "fixed64_report_generated": True,
+                        "fixed64_gate_passed": False,
+                    }
+                )
+            )
+            freeze_writer.write_text(
+                json.dumps(
+                    {
+                        "selection_passed": True,
+                        "selected_step": 16,
+                        "screen248_test_gate_passed": False,
+                    }
+                )
+            )
+            pooled_block.write_text(
+                json.dumps(
+                    {
+                        "selection_passed": False,
+                        "selected_step": None,
+                        "screen248_test_gate_passed": False,
+                    }
+                )
+            )
+            summary = compare_m4_alignment_runs(
+                canonical_summary_json=str(canonical),
+                freeze_writer_summary_json=str(freeze_writer),
+                pooled_block_summary_json=str(pooled_block),
+            )
+            self.assertTrue(summary["alignment_claim_supported"])
+            self.assertEqual(summary["comparison_conclusion"], "canonical_passes_both_ablations_fail")
 
 
 if __name__ == "__main__":
