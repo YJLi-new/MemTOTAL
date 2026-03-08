@@ -1,0 +1,11 @@
+includes:
+  - m5_fever_qwen25_phase2_val_alignment_pooled_block_common.yaml
+
+experiment:
+  name: m5_fever_qwen25_dynamics_recovery_pooled
+  stage: M5-shared-injection-alignment
+  method_variant: fever-dynamics-recovery-m51-pooled
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl

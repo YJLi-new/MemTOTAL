@@ -2164,3 +2164,65 @@ def compare_m4_alignment_runs(
         "alignment_claim_supported": alignment_claim_supported,
         "comparison_conclusion": conclusion,
     }
+
+
+def compare_m5_alignment_runs(
+    *,
+    canonical_summary_json: str,
+    freeze_writer_summary_json: str,
+    pooled_block_summary_json: str,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    freeze_writer = json.loads(Path(freeze_writer_summary_json).read_text())
+    pooled_block = json.loads(Path(pooled_block_summary_json).read_text())
+
+    canonical_selection = bool(canonical.get("selection_passed", False))
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_brittle = bool(canonical.get("support_bank_brittle", False))
+    freeze_primary = bool(freeze_writer.get("screen248_test_gate_passed", False))
+    pooled_primary = bool(pooled_block.get("screen248_test_gate_passed", False))
+    success = bool(
+        canonical_primary
+        and not canonical_brittle
+        and not freeze_primary
+        and not pooled_primary
+    )
+    ambiguous = bool(
+        canonical_primary
+        and not canonical_brittle
+        and (freeze_primary or pooled_primary)
+    )
+    if success:
+        conclusion = "success"
+        failure_reason = ""
+    elif ambiguous:
+        conclusion = "ambiguous_pass"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not canonical_selection:
+            failure_reason = "canonical_failed_selection"
+        elif not canonical_primary:
+            failure_reason = "canonical_selected_but_primary_gate_failed"
+        elif canonical_brittle:
+            failure_reason = "canonical_support_bank_brittle"
+        else:
+            failure_reason = "canonical_did_not_beat_ablations"
+
+    return {
+        "canonical_selection_passed": canonical_selection,
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": canonical_brittle,
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "freeze_writer_selection_passed": bool(freeze_writer.get("selection_passed", False)),
+        "freeze_writer_selected_step": freeze_writer.get("selected_step"),
+        "freeze_writer_primary_gate_passed": freeze_primary,
+        "pooled_block_selection_passed": bool(pooled_block.get("selection_passed", False)),
+        "pooled_block_selected_step": pooled_block.get("selected_step"),
+        "pooled_block_primary_gate_passed": pooled_primary,
+        "alignment_claim_supported": success,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }

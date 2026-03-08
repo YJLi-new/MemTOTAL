@@ -16,6 +16,7 @@
 - `scripts/run_m4_fever_deep_prompt_recovery_qwen25.sh`: `M4.5` 的 triad6 sparse deep-prompt recovery 入口，会固定 `triad6`，使用 `0/7/14/21/27` 五层 shared low-rank deep prompt，在 `screen-val` 做 earliest-pass selection；只有 selection 通过后才依次打开 `screen248-test` 与 `fixed64` 双 gate
 - `scripts/run_m4_fever_anti_shortcut_recovery_qwen25.sh`: `M4.6` 的 anti-shortcut recovery 入口，会先构建 `32` 个 `2/2/2` train triad episodes 和 `screen-val / screen248-test / heldout A/B` support banks，再并排跑 `Run A=episode_bank` 与 `Run B=static triad6`，最后生成 top-level anti-shortcut comparison
 - `scripts/run_m4_fever_alignment_qwen25.sh`: `M4.7` 的 structured support-set alignment 入口，会并排跑 `canonical / freeze-writer / pooled-block` 三臂，并生成 top-level alignment summary
+- `scripts/run_m5_fever_alignment_qwen25.sh`: `M5.1` 的 same-schema warm-start alignment 入口，会写出 `warm_start_manifest.json`，再并排跑 `canonical / freeze-writer / pooled-block` 三臂 continuation，并生成 top-level `success / ambiguous_pass / failure` summary
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -39,6 +40,7 @@
 - `scripts/update_m4_run_summary.py`: 汇总单条 `M4.6` run 的 `selection / screen248-test / heldout sanity / fixed64 legacy` 状态，并回写 `run-summary.json`
 - `scripts/update_m4_anti_shortcut_summary.py`: 汇总 `Run A vs Run B` 的 anti-shortcut comparison，并生成 `anti-shortcut-comparison.{json,md}`
 - `scripts/update_m4_alignment_summary.py`: 汇总 `canonical / freeze-writer / pooled-block` 三臂 alignment 结果，并生成 `alignment-summary.{json,md}`
+- `scripts/update_m5_alignment_summary.py`: 汇总 `M5.1` 三臂 continuation 结果，并生成 `alignment-summary.{json,md}`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -340,6 +342,32 @@
     - trainable writer 比 freeze-writer 更对
     - 但 blocker 已进一步上移到 `writer–reasoner alignment`
     - 下一步不应被写成“简单延长训练步数”，而应先收紧 writer 初始化语义、trainable stack 自由度和 task-first 对齐目标
+- `M5.1` 当前又把主线推进到 same-schema warm-start alignment：
+  - `runtime.pilot_init_checkpoint_path` 新增为“先加载同 schema checkpoint，再继续训练”的 warm-start 入口
+  - 与 `runtime.pilot_checkpoint_path` 互斥：
+    - `pilot_init_checkpoint_path` 用于 continuation training
+    - `pilot_checkpoint_path` 继续只用于 eval-only / gate replay
+  - `M5.1` 同时把 loss 细化成显式可配：
+    - `runtime.pilot_choice_ce_weight`
+    - `runtime.pilot_competitor_hinge_weight_max`
+    - `runtime.pilot_competitor_hinge_start_step`
+    - `runtime.pilot_competitor_hinge_ramp_steps`
+  - canonical 真实运行固定为：
+    - same-schema warm-start from `M4.7 canonical step64`
+    - task-first `CE + delayed strongest-competitor hinge`
+    - no projector-only warmup
+    - `screen248-test` 继续作为 primary capability gate
+    - `fixed64` 继续只做 legacy report
+  - 顶层 comparison 位于 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/alignment-summary.{json,md}`
+  - warm-start manifest 位于 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/warm_start_manifest.json`
+  - 最新真实结论是：
+    - 三臂都 `selection_passed=false`
+    - canonical 的最佳候选其实是 warm-start 本身的 `step0`
+    - canonical continuation 虽能在 `step8` 明显压低 regression，但仍没恢复 `real > shuffle`
+  - 因而：
+    - same-schema warm-start 已不再是主要未知量
+    - 当前 blocker 已进一步收紧成 `writer objective`
+    - 下一步应进入 `M5.2 writer objective rewrite under shared injection`
 
 ## M3 Failure Checks
 

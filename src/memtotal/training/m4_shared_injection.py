@@ -383,6 +383,27 @@ def _resolve_alignment_aux_weight(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_alignment_aux_weight", 0.0))
 
 
+def _resolve_init_checkpoint_path(config: dict[str, Any]) -> str:
+    path = str(config["runtime"].get("pilot_init_checkpoint_path", "")).strip()
+    return path
+
+
+def _resolve_choice_ce_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_choice_ce_weight", 1.0))
+
+
+def _resolve_competitor_hinge_weight_max(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_competitor_hinge_weight_max", 1.0))
+
+
+def _resolve_competitor_hinge_start_step(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_competitor_hinge_start_step", 0))
+
+
+def _resolve_competitor_hinge_ramp_steps(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_competitor_hinge_ramp_steps", 0))
+
+
 def _resolve_train_support_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_train_support_mode", "static_support_rows"))
     if mode not in {"static_support_rows", "episode_bank"}:
@@ -704,12 +725,56 @@ def _save_shared_injection_checkpoint(
             "prompt_variant": prompt_variant,
             "support_serialization_variant": support_serialization_variant,
             "pilot_support_encoder_mode": str(runtime.support_encoder_mode),
+            "backbone_hidden_size": int(runtime.backbone.hidden_size),
+            "writer_memory_slots": int(runtime.writer.memory_slots),
+            "pilot_deep_prefix_rank": int(getattr(runtime.prefix_projector, "bottleneck_rank", runtime.backbone.hidden_size)),
+            "pilot_support_encoder_max_items": (
+                None if runtime.support_encoder is None else int(runtime.support_encoder.max_items)
+            ),
             "step": int(step),
             "pilot_injection_mode": str(runtime.injection_mode),
             "pilot_deep_prefix_layers": list(runtime.deep_prefix_layers),
         },
         output_path,
     )
+
+
+def _validate_module_state_shapes(
+    *,
+    module_name: str,
+    expected_state: dict[str, torch.Tensor],
+    checkpoint_state: dict[str, torch.Tensor],
+    checkpoint_path: Path,
+) -> None:
+    for key, expected_tensor in expected_state.items():
+        if key not in checkpoint_state:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} is missing {module_name} parameter '{key}'."
+            )
+        actual_tensor = checkpoint_state[key]
+        if tuple(actual_tensor.shape) != tuple(expected_tensor.shape):
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} has incompatible {module_name} parameter "
+                f"'{key}': expected shape {tuple(expected_tensor.shape)}, got {tuple(actual_tensor.shape)}."
+            )
+
+
+def _active_competitor_hinge_weight(
+    *,
+    current_step: int,
+    max_weight: float,
+    start_step: int,
+    ramp_steps: int,
+) -> float:
+    capped_weight = max(0.0, float(max_weight))
+    if capped_weight == 0.0:
+        return 0.0
+    if current_step <= int(start_step):
+        return 0.0
+    if ramp_steps <= 0:
+        return capped_weight
+    progress = min(1.0, float(current_step - int(start_step)) / float(ramp_steps))
+    return float(capped_weight * progress)
 
 
 def _fever_candidate_texts(prompt_variant: str) -> tuple[list[str], list[str]]:
@@ -1038,8 +1103,96 @@ class SharedInjectionPilotRuntime(nn.Module):
         writer_path = _resolve_artifact_path(resume, "writer.ckpt")
         self.writer.load_from(writer_path, map_location="cpu", strict=False)
 
+    def _validate_injection_checkpoint_schema(
+        self,
+        *,
+        checkpoint: dict[str, Any],
+        checkpoint_path: Path,
+    ) -> None:
+        checkpoint_support_encoder_mode = str(
+            checkpoint.get(
+                "pilot_support_encoder_mode",
+                "structured_support_set" if checkpoint.get("support_encoder_state") is not None else "pooled_block",
+            )
+        )
+        if checkpoint_support_encoder_mode != self.support_encoder_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_support_encoder_mode="
+                f"{checkpoint_support_encoder_mode}, expected {self.support_encoder_mode}."
+            )
+        checkpoint_injection_mode = str(
+            checkpoint.get(
+                "pilot_injection_mode",
+                "sparse_deep_prefix" if "down_proj.weight" in checkpoint.get("prefix_projector_state", {}) else "shallow_prefix",
+            )
+        )
+        if checkpoint_injection_mode != self.injection_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_injection_mode="
+                f"{checkpoint_injection_mode}, expected {self.injection_mode}."
+            )
+        checkpoint_layers = tuple(int(layer) for layer in checkpoint.get("pilot_deep_prefix_layers", []))
+        if self.injection_mode == "sparse_deep_prefix" and checkpoint_layers != self.deep_prefix_layers:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_deep_prefix_layers="
+                f"{list(checkpoint_layers)}, expected {list(self.deep_prefix_layers)}."
+            )
+        checkpoint_hidden_size = int(checkpoint.get("backbone_hidden_size", self.backbone.hidden_size))
+        if checkpoint_hidden_size != int(self.backbone.hidden_size):
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses hidden_size={checkpoint_hidden_size}, "
+                f"expected {self.backbone.hidden_size}."
+            )
+        checkpoint_slots = int(checkpoint.get("writer_memory_slots", self.writer.memory_slots))
+        if checkpoint_slots != int(self.writer.memory_slots):
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses writer_memory_slots={checkpoint_slots}, "
+                f"expected {self.writer.memory_slots}."
+            )
+        writer_state = checkpoint.get("writer_state")
+        if not isinstance(writer_state, dict):
+            raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing writer_state.")
+        _validate_module_state_shapes(
+            module_name="writer",
+            expected_state=self.writer.state_dict(),
+            checkpoint_state=writer_state,
+            checkpoint_path=checkpoint_path,
+        )
+        support_encoder_state = checkpoint.get("support_encoder_state")
+        if self.support_encoder is None and support_encoder_state is not None:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} includes support_encoder_state, but the current "
+                f"runtime uses pilot_support_encoder_mode={self.support_encoder_mode}."
+            )
+        if self.support_encoder is not None:
+            if not isinstance(support_encoder_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} is missing support_encoder_state for "
+                    f"pilot_support_encoder_mode={self.support_encoder_mode}."
+                )
+            _validate_module_state_shapes(
+                module_name="support_encoder",
+                expected_state=self.support_encoder.state_dict(),
+                checkpoint_state=support_encoder_state,
+                checkpoint_path=checkpoint_path,
+            )
+        prefix_projector_state = checkpoint.get("prefix_projector_state")
+        if not isinstance(prefix_projector_state, dict):
+            raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing prefix_projector_state.")
+        _validate_module_state_shapes(
+            module_name="prefix_projector",
+            expected_state=self.prefix_projector.state_dict(),
+            checkpoint_state=prefix_projector_state,
+            checkpoint_path=checkpoint_path,
+        )
+
     def load_injection_checkpoint(self, checkpoint_path: str | Path) -> dict[str, Any]:
-        checkpoint = torch.load(Path(checkpoint_path), map_location="cpu")
+        checkpoint_path = Path(checkpoint_path).resolve()
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        self._validate_injection_checkpoint_schema(
+            checkpoint=checkpoint,
+            checkpoint_path=checkpoint_path,
+        )
         self.writer.load_state_dict(checkpoint["writer_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
@@ -1168,7 +1321,8 @@ class SharedInjectionPilotRuntime(nn.Module):
 
 def _strongest_competitor_index(scores: torch.Tensor, gold_index: int) -> int:
     competitor_indices = [index for index in range(scores.shape[0]) if index != gold_index]
-    return max(competitor_indices, key=lambda index: float(scores[index].item()))
+    detached_scores = scores.detach()
+    return max(competitor_indices, key=lambda index: float(detached_scores[index].item()))
 
 
 def _compute_margin(scores: torch.Tensor, gold_index: int) -> tuple[float, int]:
@@ -1176,7 +1330,14 @@ def _compute_margin(scores: torch.Tensor, gold_index: int) -> tuple[float, int]:
     return float(scores[gold_index].item() - scores[competitor_index].item()), competitor_index
 
 
-def _choice_task_loss(scores: torch.Tensor, gold_index: int, *, margin_value: float) -> torch.Tensor:
+def _choice_task_loss(
+    scores: torch.Tensor,
+    gold_index: int,
+    *,
+    margin_value: float,
+    ce_weight: float = 1.0,
+    competitor_hinge_weight: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     ce_loss = F.cross_entropy(
         scores.unsqueeze(0),
         torch.tensor([gold_index], dtype=torch.long, device=scores.device),
@@ -1191,7 +1352,8 @@ def _choice_task_loss(scores: torch.Tensor, gold_index: int, *, margin_value: fl
         target,
         margin=margin_value,
     )
-    return ce_loss + margin_loss
+    total_loss = (float(ce_weight) * ce_loss) + (float(competitor_hinge_weight) * margin_loss)
+    return total_loss, ce_loss, margin_loss
 
 
 def _score_margin_tensor(scores: torch.Tensor, gold_index: int) -> torch.Tensor:
@@ -1334,9 +1496,14 @@ def run_shared_injection_pilot(
     trainable_variant = _resolve_trainable_variant(config)
     alignment_aux_mode = _resolve_alignment_aux_mode(config)
     alignment_aux_weight = _resolve_alignment_aux_weight(config)
+    init_checkpoint_path = _resolve_init_checkpoint_path(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
     train_support_mode = _resolve_train_support_mode(config)
+    choice_ce_weight = _resolve_choice_ce_weight(config)
+    competitor_hinge_weight_max = _resolve_competitor_hinge_weight_max(config)
+    competitor_hinge_start_step = _resolve_competitor_hinge_start_step(config)
+    competitor_hinge_ramp_steps = _resolve_competitor_hinge_ramp_steps(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
     train_support_dataset_path = str(config["task"].get("train_support_dataset_path", support_dataset_path))
@@ -1351,6 +1518,10 @@ def run_shared_injection_pilot(
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
     choice_margin = float(config["runtime"].get("stage_c_choice_margin", 0.1))
     injection_checkpoint_path = config["runtime"].get("pilot_checkpoint_path")
+    if init_checkpoint_path and injection_checkpoint_path:
+        raise ValueError(
+            "runtime.pilot_init_checkpoint_path and runtime.pilot_checkpoint_path are mutually exclusive."
+        )
     if arm in {"base_only", "teacher_text"} or writer_memory_control == "zero":
         train_steps = 0
         projector_warmup_steps = 0
@@ -1438,6 +1609,8 @@ def run_shared_injection_pilot(
     )
     if arm == "injected":
         runtime.load_writer(resume)
+        if init_checkpoint_path:
+            runtime.load_injection_checkpoint(init_checkpoint_path)
         if injection_checkpoint_path:
             runtime.load_injection_checkpoint(injection_checkpoint_path)
 
@@ -1637,7 +1810,19 @@ def run_shared_injection_pilot(
                 prefix_embeddings=prefix_artifacts.prefix_embeddings,
                 layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
             )
-            loss = _choice_task_loss(scores, train_example.gold_index, margin_value=choice_margin)
+            active_competitor_hinge_weight = _active_competitor_hinge_weight(
+                current_step=step + 1,
+                max_weight=competitor_hinge_weight_max,
+                start_step=competitor_hinge_start_step,
+                ramp_steps=competitor_hinge_ramp_steps,
+            )
+            loss, choice_ce_loss, competitor_hinge_loss = _choice_task_loss(
+                scores,
+                train_example.gold_index,
+                margin_value=choice_margin,
+                ce_weight=choice_ce_weight,
+                competitor_hinge_weight=active_competitor_hinge_weight,
+            )
             aux_loss = None
             aux_active = False
             if alignment_aux_mode != "off" and alignment_aux_weight > 0.0:
@@ -1689,6 +1874,9 @@ def run_shared_injection_pilot(
                 {
                     "step": step + 1,
                     "loss": float(loss.item()),
+                    "choice_ce_loss": float(choice_ce_loss.item()),
+                    "competitor_hinge_loss": float(competitor_hinge_loss.item()),
+                    "active_competitor_hinge_weight": float(active_competitor_hinge_weight),
                     "train_example_id": str(train_example.example["id"]),
                     "writer_frozen": writer_frozen,
                     "train_support_mode": train_support_mode,
@@ -1787,6 +1975,7 @@ def run_shared_injection_pilot(
         "pilot_trainable_variant": trainable_variant,
         "pilot_alignment_aux_mode": alignment_aux_mode,
         "pilot_alignment_aux_weight": alignment_aux_weight,
+        "pilot_init_checkpoint_path": "" if not init_checkpoint_path else str(Path(init_checkpoint_path).resolve()),
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
         "pilot_train_support_mode": train_support_mode,
@@ -1826,6 +2015,10 @@ def run_shared_injection_pilot(
         "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_projector_warmup_steps": projector_warmup_steps,
         "pilot_train_support_mask_count": train_support_mask_count,
+        "pilot_choice_ce_weight": choice_ce_weight,
+        "pilot_competitor_hinge_weight_max": competitor_hinge_weight_max,
+        "pilot_competitor_hinge_start_step": competitor_hinge_start_step,
+        "pilot_competitor_hinge_ramp_steps": competitor_hinge_ramp_steps,
         "pilot_gradient_clip_norm": gradient_clip_norm,
         "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
         "pilot_prefix_total_max_norm": float(config["runtime"].get("pilot_prefix_total_max_norm", 0.0)),
@@ -1833,6 +2026,13 @@ def run_shared_injection_pilot(
         "snapshot_metrics": snapshot_metrics,
         "stage_c_choice_margin": choice_margin,
         "train_final_loss": train_events[-1]["loss"] if train_events else None,
+        "train_final_choice_ce_loss": train_events[-1]["choice_ce_loss"] if train_events else None,
+        "train_final_competitor_hinge_loss": (
+            train_events[-1]["competitor_hinge_loss"] if train_events else None
+        ),
+        "train_final_active_competitor_hinge_weight": (
+            train_events[-1]["active_competitor_hinge_weight"] if train_events else None
+        ),
         "train_final_alignment_aux_loss": train_events[-1]["alignment_aux_loss"] if train_events else None,
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         "pilot_checkpoint_path": "" if not injection_checkpoint_path else str(Path(injection_checkpoint_path).resolve()),

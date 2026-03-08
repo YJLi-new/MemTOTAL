@@ -2,10 +2,10 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不是“完全没信号”，但截至 `M4.7` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 structured-alignment 实验说明：把 injected path 改成 `structured support set -> writer -> deep prompt` 之后，canonical 的确比 `freeze-writer / pooled-block` 更强，但仍没有强到穿过 selection gate。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
+`shared injection` 已经不是“完全没信号”，但截至 `M5.1` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 same-schema warm-start alignment 实验说明：即便从 `M4.7` 的最强 structured checkpoint 续跑，并把 objective 固定成 task-first `CE + delayed hinge`，canonical 仍然没能把 `real > shuffle` 稳定固化成 capability signal。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
 
-> main-chain consumption 已成立，deep prompt 也已成立；structured support set 与 trainable writer 也已显示出方向性增量。  
-> 但当前系统仍会极早塌成 label-biased shortcut，而这条增量还不足以稳定固化成能通过预注册 selection 的能力信号。
+> main-chain consumption 已成立，deep prompt 也已成立；structured support set、trainable writer、same-schema warm-start 也都已显示出方向性增量。  
+> 但当前系统仍不能把这条增量稳定固化成 `I_real > I_shuffle` 的可泛化能力信号，所以下一步应进入 `M5.2 writer objective rewrite`，而不是立刻做 receptor adaptation。
 
 ## 已经坐实的前提
 
@@ -21,7 +21,7 @@
 
 `candidate-conditioned residual family` 在更对题的 repair/content audit 下仍然表现为 `real = shuffle = zero`，不再是当前主线。
 
-## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 的连续结论
+## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 / M5.1 的连续结论
 
 review 路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
@@ -34,6 +34,8 @@ review 路径：
 - `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/`
 - `runs/review/m4-fever-shared-injection-alignment-qwen25/`
 - `results/generated/review/m4-fever-shared-injection-alignment-qwen25/`
+- `runs/review/m5-fever-writer-reasoner-alignment-qwen25/`
+- `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -46,6 +48,7 @@ review 路径：
 - `anti-shortcut-comparison.md`
 - `alignment-summary.json`
 - `alignment-summary.md`
+- `warm_start_manifest.json`
 
 ### M4.3 shallow dynamics recovery
 
@@ -174,6 +177,56 @@ canonical 设计：
   - `support representation -> writer -> frozen reasoner` 的对齐仍然不够
   - 问题已经不再只是 support protocol，也不再只是 projector 结构
 
+### M5.1 same-schema warm-start alignment
+
+canonical 设计：
+- 继续保留 `structured support-set encoder -> writer -> sparse_deep_prefix -> frozen Qwen`
+- canonical 与 freeze-writer 都从 `M4.7 canonical step64` 的 same-schema checkpoint 续跑
+- pooled-block 从 `M4.7 pooled-block step64` 续跑
+- objective 固定为 `task-first CE + delayed strongest-competitor hinge`
+- `teacher_margin` 继续只保留 dormant hook
+
+真实结果：
+- 三臂都没有通过 `screen248-val` earliest-pass selection
+- 因此三臂都没有打开 `screen248-test`，也没有生成 `fixed64`
+- top-level summary 位于：
+  - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/alignment-summary.json`
+  - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/alignment-summary.md`
+- warm-start manifest 位于：
+  - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/warm_start_manifest.json`
+- canonical 的最佳候选其实是 warm-start 本身的 `step0`：
+  - `macro_f1=0.2259`
+  - `flip_gain_vs_shuffle=0`
+  - `flip_gain_vs_zero=5`
+  - `regressions_vs_base=16`
+- canonical 在续跑后的关键变化是：
+  - `step8`: `macro_f1=0.1775`、`flip_gain_vs_shuffle=0`、`flip_gain_vs_zero=2`、`regressions_vs_base=1`
+  - `step64`: `macro_f1=0.2130`、`flip_gain_vs_shuffle=-3`、`flip_gain_vs_zero=2`、`regressions_vs_base=3`
+- `freeze-writer` 最佳只到：
+  - `step8`
+  - `macro_f1=0.1519`
+  - `flip_gain_vs_shuffle=1`
+  - `flip_gain_vs_zero=2`
+  - `regressions_vs_base=0`
+- `pooled-block` 最佳是：
+  - `step8`
+  - `macro_f1=0.2448`
+  - `flip_gain_vs_shuffle=0`
+  - `flip_gain_vs_zero=1`
+  - `regressions_vs_base=13`
+
+含义：
+- same-schema warm-start 本身并不够
+- task-first `CE + delayed hinge` 的确能在早期把 canonical 的 regression 压下来，但并没有恢复 `real > shuffle`
+- 因而这轮进一步排除了：
+  - “只是因为 writer 初始化语义太差”
+  - “只是因为 canonical 还没有 continuation training”
+- 当前最合理的下一步已从 `M5.1` 收紧成：
+  - `M5.2 writer objective rewrite`
+  - 继续 shared injection
+  - 继续 frozen Qwen
+  - 不立刻做 receptor adaptation
+
 ## 当前最稳妥的解释
 
 当前已经可以排除：
@@ -185,7 +238,7 @@ canonical 设计：
 当前更合理的解释是：
 
 > shared injection 这条路已经证明了 main-chain access 和局部内容效应都存在。  
-> 但无论 shallow、deep、episode bank，还是 structured support-set alignment，当前训练动力学都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
+> 但无论 shallow、deep、episode bank、structured support-set alignment，还是 same-schema warm-start continuation，当前训练动力学与目标函数都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
 
 ## 现在不该做什么
 
@@ -207,7 +260,7 @@ canonical 设计：
   - real-vs-shuffle 的层内分离
   - label-bias collapse
 - 下一轮优先进入：
-  - `M5.1 writer–reasoner alignment under shared injection`
-  - 先做 task-first 的 objective rewrite
-  - `freeze-writer` 必须绑定有意义的初始化，而不是冻结随机 writer
-  - 如仍需要 teacher signal，只保留 dormant hook；不把 teacher alignment 放进 canonical 主矩阵
+  - `M5.2 writer objective rewrite under shared injection`
+  - 继续保持 `frozen Qwen + shared injection + structured support-set canonical`
+  - 先改 writer-side objective，而不是立刻动 receiver
+  - 如仍需要 teacher signal，只做 lightweight teacher-aided alignment；不把 full KL 放进 canonical

@@ -10,6 +10,7 @@ import torch
 
 from memtotal.analysis.m4_shared_injection import (
     compare_m4_alignment_runs,
+    compare_m5_alignment_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
     run_m4_prepare_fever_validation_splits,
@@ -25,10 +26,12 @@ from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     SharedLowRankDeepPrefixProjector,
     StructuredSupportSetEncoder,
+    _active_competitor_hinge_weight,
     _alignment_aux_loss,
     _build_support_text_block,
     _choice_task_loss,
     _sample_support_examples_for_training,
+    run_shared_injection_pilot,
 )
 
 
@@ -129,10 +132,71 @@ class SharedInjectionHelpersTest(unittest.TestCase):
 
     def test_choice_task_loss_backpropagates(self) -> None:
         scores = torch.tensor([0.2, 0.1, -0.3], dtype=torch.float32, requires_grad=True)
-        loss = _choice_task_loss(scores, 0, margin_value=0.1)
+        loss, ce_loss, hinge_loss = _choice_task_loss(
+            scores,
+            0,
+            margin_value=0.1,
+            ce_weight=1.0,
+            competitor_hinge_weight=0.2,
+        )
         loss.backward()
         self.assertGreater(float(loss.item()), 0.0)
+        self.assertGreater(float(ce_loss.item()), 0.0)
+        self.assertGreaterEqual(float(hinge_loss.item()), 0.0)
         self.assertIsNotNone(scores.grad)
+
+    def test_active_competitor_hinge_weight_delays_and_ramps(self) -> None:
+        self.assertEqual(
+            _active_competitor_hinge_weight(
+                current_step=8,
+                max_weight=0.2,
+                start_step=8,
+                ramp_steps=24,
+            ),
+            0.0,
+        )
+        self.assertAlmostEqual(
+            _active_competitor_hinge_weight(
+                current_step=20,
+                max_weight=0.2,
+                start_step=8,
+                ramp_steps=24,
+            ),
+            0.1,
+            places=6,
+        )
+        self.assertAlmostEqual(
+            _active_competitor_hinge_weight(
+                current_step=40,
+                max_weight=0.2,
+                start_step=8,
+                ramp_steps=24,
+            ),
+            0.2,
+            places=6,
+        )
+
+    def test_init_and_eval_checkpoint_paths_are_mutually_exclusive(self) -> None:
+        config = {
+            "runtime": {
+                "shared_injection_arm": "injected",
+                "writer_memory_control": "real",
+                "pilot_init_checkpoint_path": "/tmp/init.pt",
+                "pilot_checkpoint_path": "/tmp/eval.pt",
+            },
+            "task": {
+                "support_dataset_path": "unused-support",
+                "dataset_path": "unused-eval",
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            run_shared_injection_pilot(
+                config=config,
+                seed=7,
+                output_dir=Path(tempfile.mkdtemp()),
+                resume=None,
+                dry_run=True,
+            )
 
     def test_latent_prefix_projector_preserves_slot_count(self) -> None:
         projector = LatentPrefixProjector(hidden_size=6, prefix_tokens=3)
@@ -879,6 +943,101 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             )
             self.assertTrue(summary["alignment_claim_supported"])
             self.assertEqual(summary["comparison_conclusion"], "canonical_passes_both_ablations_fail")
+
+    def test_compare_m5_alignment_runs_reports_success_ambiguous_and_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            success = compare_m5_alignment_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_success.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 16,
+                            "screen248_test_gate_passed": True,
+                            "support_bank_brittle": False,
+                            "fixed64_report_generated": True,
+                            "fixed64_gate_passed": False,
+                        },
+                    )
+                ),
+                freeze_writer_summary_json=str(
+                    write_payload(
+                        "freeze_success.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+                pooled_block_summary_json=str(
+                    write_payload(
+                        "pooled_success.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+            )
+            self.assertEqual(success["comparison_conclusion"], "success")
+            self.assertTrue(success["alignment_claim_supported"])
+
+            ambiguous = compare_m5_alignment_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_ambiguous.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 16,
+                            "screen248_test_gate_passed": True,
+                            "support_bank_brittle": False,
+                        },
+                    )
+                ),
+                freeze_writer_summary_json=str(
+                    write_payload(
+                        "freeze_ambiguous.json",
+                        {"selection_passed": True, "selected_step": 8, "screen248_test_gate_passed": True},
+                    )
+                ),
+                pooled_block_summary_json=str(
+                    write_payload(
+                        "pooled_ambiguous.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+            )
+            self.assertEqual(ambiguous["comparison_conclusion"], "ambiguous_pass")
+            self.assertFalse(ambiguous["alignment_claim_supported"])
+
+            failure = compare_m5_alignment_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_failure.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "support_bank_brittle": False,
+                        },
+                    )
+                ),
+                freeze_writer_summary_json=str(
+                    write_payload(
+                        "freeze_failure.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+                pooled_block_summary_json=str(
+                    write_payload(
+                        "pooled_failure.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+            )
+            self.assertEqual(failure["comparison_conclusion"], "failure")
+            self.assertEqual(failure["failure_reason"], "canonical_failed_selection")
 
 
 if __name__ == "__main__":
