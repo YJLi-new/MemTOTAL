@@ -81,7 +81,7 @@
 - 2026-03-08 08:45 UTC: 已完成 `M4.5` sparse deep prompt 实做：`BackboneWrapper` 新增 `layer_prefix_hidden_by_layer` 注入路径，`m4_shared_injection` 新增 shared low-rank deep projector、layer-wise K/V norm diagnostics、通用 gate-from-selection 脚本与 dual-gate summary。
 - 2026-03-08 08:45 UTC: 已真实跑完 canonical `triad6 + sparse_deep_prefix(0/7/14/21/27) + rank32 + warmup32 + total96`，产物位于 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/` 与 `runs/review/m4-fever-deep-prompt-recovery-qwen25/`。
 - 2026-03-08 08:45 UTC: 最新结果为 `selection_passed=false`，因此没有打开 `screen248-test / fixed64` 双 gate。当前关键现象是：deep prompt 的 layer-wise consumption 已成立，但 `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap，`I_real` 在 `step64` 仅恢复出弱内容信号并同时伴随 `regressions_vs_base=18`。
-- 2026-03-06 17:22 UTC: 已读取 `docs/AGENTS.md`、`docs/TODO_LIST.md`，并按 M0 指引补读 `docs/MAIN_IDEA.md` 的方法总览/实现契约/Stage A-B-C，以及 `docs/EXPERIMENTS_INFO.md` 的统一评测与结果汇总规范。
+- 2026-03-06 17:22 UTC: 已读取 `AGENTS.md`、`docs/TODO_LIST.md`，并按 M0 指引补读 `docs/MAIN_IDEA.md` 的方法总览/实现契约/Stage A-B-C，以及 `docs/EXPERIMENTS_INFO.md` 的统一评测与结果汇总规范。
 - 2026-03-06 17:22 UTC: 确认当前仓库缺少项目级代码骨架；`MemGen-master/` 仅作为后续 M1 基线参考，不作为本次 bootstrap 的主执行层。
 - 2026-03-06 17:47 UTC: 已建立 `src/`、`configs/`、`scripts/`、`tests/`、`data/toy/`、`results/`、`runs/` 骨架，并补齐 `docs/ARCHITECTURE.md`、`docs/golden-principles.md`、`docs/tech-debt-tracker.md`。
 - 2026-03-06 17:47 UTC: 已实现 `python -m train` / `python -m eval` / `python -m analysis` 入口、最小四模块 API、stub `BackboneWrapper`、统一 run snapshot、汇总器和 smoke tests。

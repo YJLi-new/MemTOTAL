@@ -24,7 +24,7 @@ from memtotal.utils.repro import SUPPORTED_BACKBONES
 class RepoContractTest(unittest.TestCase):
     def test_governing_docs_exist(self) -> None:
         required = [
-            ROOT / "docs/AGENTS.md",
+            ROOT / "AGENTS.md",
             ROOT / "docs/TODO_LIST.md",
             ROOT / "docs/MAIN_IDEA.md",
             ROOT / "docs/EXPERIMENTS_INFO.md",
