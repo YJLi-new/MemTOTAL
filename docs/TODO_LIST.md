@@ -24,14 +24,15 @@
 > 任何任务若无法服务于这六类产物，应降低优先级。
 
 ### Current Active Blocker
-- `M5.3` 的 dense teacher pair 已真实跑完，但 `control-safe-hinge / canonical-dense-teacher(choice-space KL)` 两臂仍都没有通过 `screen248-val` selection。
-- 当前结果位于 `results/generated/review/m5-fever-dense-teacher-qwen25/`。
-- 当前最优先问题已经不再是“teacher signal 有没有真正激活”，因为 canonical 这次已经有 `alignment_aux_active_steps=18/32`。
-- 当前新的第一主因已经上移到架构层：
-  - 为什么 dense teacher choice-space KL 真正介入后，single-level `writer -> projector -> frozen Qwen` 仍然稳不住 `real > shuffle`
-  - 为什么 `control-safe-hinge step8` 能拿到 `flip_gain_vs_shuffle=4`、`flip_gain_vs_zero=7`，而 canonical 反而回落到 `flip_gain_vs_shuffle=0`
-  - 为什么 canonical 的 collapse onset 反而早于 control（`step16` vs `step24`）
-  - 下一轮应按 `PLAN.md` 转入 `Workstream B / TL-PoC`，把 repo 现有 `Reader/Fuser` 真正接进 active FEVER harness
+- `Workstream B / TL-PoC` 已真实跑完，但 `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 三条两层路径都没有通过 `screen248-val` selection。
+- 当前结果位于 `results/generated/review/tl-poc-fever-qwen25/`。
+- 当前最优先问题已经不再是“Reader/Fuser 还没进 active harness”，因为两层路径现在已经完整走通了训练、dynamics、selection、gate 和 review 发布。
+- 当前新的第一主因更像 `PLAN.md` 里的 `Failure mode B-1 / memory-side capacity-geometry problem`：
+  - 为什么 `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 的末步 `memory_long_effective_rank` 都仍接近 `1.0`
+  - 为什么 `memory_short_effective_rank` 也只停在约 `1.1-1.2`
+  - 为什么 reader attention entropy 维持在 `2.0794 ≈ ln(8)`，表现得像对 `8` 个 long slots 的近均匀读法
+  - 为什么 `H=4` 没有比 `H=1` 表现出更强的 query specialization
+  - 为什么 `SL-8` 还能在 `screen248-val` 选出 `step2`，而当前 two-level bridge 连 selection 都活不起来
 
 ---
 

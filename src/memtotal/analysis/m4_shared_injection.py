@@ -605,7 +605,7 @@ def run_m4_phase0_gate_sweep(
     selected_t_rows: list[dict[str, Any]] = []
     for prompt_variant in FEVER_PROMPT_VARIANTS:
         eval_caches = _build_example_caches(eval_examples, prompt_variant=prompt_variant)
-        a_case_rows = _evaluate_examples(
+        a_eval = _evaluate_examples(
             runtime=base_runtime,
             eval_examples=eval_caches,
             arm_alias=f"A::{prompt_variant}",
@@ -620,6 +620,7 @@ def run_m4_phase0_gate_sweep(
             prefix_stats=_prefix_stats(),
             profiler=None,
         )
+        a_case_rows = a_eval[0] if isinstance(a_eval, tuple) else a_eval
         a_metrics = _classification_metrics_from_rows(a_case_rows)
         arm_summary_rows.append(
             {
@@ -637,7 +638,7 @@ def run_m4_phase0_gate_sweep(
                 example_lookup=example_lookup,
                 support_serialization_variant=support_variant,
             )
-            t_case_rows = _evaluate_examples(
+            t_eval = _evaluate_examples(
                 runtime=teacher_runtime,
                 eval_examples=eval_caches,
                 arm_alias=f"T::{prompt_variant}::{support_variant}",
@@ -652,6 +653,7 @@ def run_m4_phase0_gate_sweep(
                 prefix_stats=_prefix_stats(),
                 profiler=None,
             )
+            t_case_rows = t_eval[0] if isinstance(t_eval, tuple) else t_eval
             t_metrics = _classification_metrics_from_rows(t_case_rows)
             arm_summary_rows.append(
                 {
@@ -1488,13 +1490,20 @@ def _attention_rows_for_snapshot(
         example_lookup=example_lookup,
         support_serialization_variant=support_serialization_variant,
     )
-    prefix_artifacts = runtime.build_prefix_artifacts(
-        support_text_block,
-        support_rows=support_rows,
-    )
-    prefix_stats = prefix_artifacts.prefix_stats
     rows: list[dict[str, Any]] = []
     for cache in audit_examples:
+        if runtime.memory_path_variant == "two_level":
+            prefix_artifacts = runtime.build_prefix_artifacts(
+                support_text_block,
+                support_rows=support_rows,
+                prompt_text=cache.prompt_text,
+            )
+        else:
+            prefix_artifacts = runtime.build_prefix_artifacts(
+                support_text_block,
+                support_rows=support_rows,
+            )
+        prefix_stats = prefix_artifacts.prefix_stats
         scores, diagnostics = runtime.score_example(
             cache,
             support_text_block=support_text_block,
@@ -1533,6 +1542,78 @@ def _attention_rows_for_snapshot(
     return rows
 
 
+def _reader_query_rows_for_snapshot(
+    *,
+    config: dict[str, Any],
+    support_examples: list[dict[str, Any]],
+    audit_examples: list[SharedInjectionExampleCache],
+    example_lookup: dict[str, dict[str, Any]],
+    support_serialization_variant: str,
+    writer_memory_control: str,
+    checkpoint_path: str | None,
+    step: int,
+    suite_name: str,
+    arm_alias: str,
+) -> list[dict[str, Any]]:
+    runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=0,
+        arm="injected",
+        writer_memory_control=writer_memory_control,
+    )
+    if runtime.memory_path_variant != "two_level":
+        return []
+    if checkpoint_path:
+        runtime.load_injection_checkpoint(checkpoint_path)
+    support_text_block = _build_support_text_block(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    support_rows = _resolve_support_rows_for_memory_control(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    rows: list[dict[str, Any]] = []
+    for cache in audit_examples:
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            support_text_block,
+            support_rows=support_rows,
+            prompt_text=cache.prompt_text,
+        )
+        reader_attention = prefix_artifacts.reader_attention
+        if reader_attention is None or reader_attention.numel() == 0:
+            continue
+        attention = reader_attention.detach().to(dtype=torch.float32, device="cpu")[0]
+        slot_count = attention.shape[1]
+        coverage_threshold = max(0.05, 1.0 / max(1, slot_count))
+        for query_index in range(attention.shape[0]):
+            query_attention = attention[query_index]
+            query_probs = query_attention.clamp_min(1e-8)
+            entropy = float((-(query_probs * query_probs.log()).sum()).item())
+            max_slot = int(torch.argmax(query_attention).item())
+            rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": arm_alias,
+                    "example_id": str(cache.example["id"]),
+                    "query_index": int(query_index),
+                    "memory_long_slots": int(slot_count),
+                    "reader_attention_entropy": entropy,
+                    "reader_slot_coverage_fraction": float(
+                        (query_attention > coverage_threshold).to(dtype=torch.float32).mean().item()
+                    ),
+                    "reader_argmax_slot": max_slot,
+                    "reader_argmax_mass": float(query_attention[max_slot].item()),
+                }
+            )
+    return rows
+
+
 def _collect_prefix_norm_rows_for_metrics(
     *,
     suite_name: str,
@@ -1548,6 +1629,11 @@ def _collect_prefix_norm_rows_for_metrics(
             "arm_alias": arm_alias,
             "row_type": "snapshot_aggregate",
             "layer_index": "",
+            "pilot_memory_path_variant": str(metrics.get("pilot_memory_path_variant", "single_level")),
+            "pilot_reader_context_mode": str(metrics.get("pilot_reader_context_mode", "prompt_summary")),
+            "pilot_projector_token_source": str(metrics.get("pilot_projector_token_source", "writer_slots")),
+            "pilot_reader_num_queries": float(metrics.get("pilot_reader_num_queries", 0.0)),
+            "pilot_fuser_short_slots": float(metrics.get("pilot_fuser_short_slots", 0.0)),
             "pilot_support_encoder_mode": str(metrics.get("pilot_support_encoder_mode", "pooled_block")),
             "prefix_tokens": float(metrics.get("prefix_tokens", 0.0)),
             "prefix_l2": float(metrics.get("prefix_l2", 0.0)),
@@ -1558,6 +1644,28 @@ def _collect_prefix_norm_rows_for_metrics(
             "writer_slot_norm_mean": float(metrics.get("writer_slot_norm_mean", 0.0)),
             "writer_slot_norm_std": float(metrics.get("writer_slot_norm_std", 0.0)),
             "writer_slot_norm_max": float(metrics.get("writer_slot_norm_max", 0.0)),
+            "memory_long_l2": float(metrics.get("memory_long_l2", 0.0)),
+            "memory_long_slots": float(metrics.get("memory_long_slots", 0.0)),
+            "memory_long_slot_norm_mean": float(metrics.get("memory_long_slot_norm_mean", 0.0)),
+            "memory_long_slot_norm_std": float(metrics.get("memory_long_slot_norm_std", 0.0)),
+            "memory_long_slot_norm_max": float(metrics.get("memory_long_slot_norm_max", 0.0)),
+            "memory_short_l2": float(metrics.get("memory_short_l2", 0.0)),
+            "memory_short_slots": float(metrics.get("memory_short_slots", 0.0)),
+            "memory_short_slot_norm_mean": float(metrics.get("memory_short_slot_norm_mean", 0.0)),
+            "memory_short_slot_norm_std": float(metrics.get("memory_short_slot_norm_std", 0.0)),
+            "memory_short_slot_norm_max": float(metrics.get("memory_short_slot_norm_max", 0.0)),
+            "memory_short_pairwise_cosine_mean": float(
+                metrics.get("memory_short_pairwise_cosine_mean", 0.0)
+            ),
+            "reader_num_queries": float(metrics.get("reader_num_queries", 0.0)),
+            "reader_slot_count": float(metrics.get("reader_slot_count", 0.0)),
+            "reader_attention_entropy_mean": float(metrics.get("reader_attention_entropy_mean", 0.0)),
+            "reader_attention_entropy_min": float(metrics.get("reader_attention_entropy_min", 0.0)),
+            "reader_attention_entropy_max": float(metrics.get("reader_attention_entropy_max", 0.0)),
+            "reader_attention_pairwise_cosine_mean": float(
+                metrics.get("reader_attention_pairwise_cosine_mean", 0.0)
+            ),
+            "reader_slot_coverage_fraction": float(metrics.get("reader_slot_coverage_fraction", 0.0)),
             "support_item_count": float(metrics.get("support_item_count", 0.0)),
             "support_item_hidden_l2": float(metrics.get("support_item_hidden_l2", 0.0)),
             "support_item_hidden_norm_mean": float(metrics.get("support_item_hidden_norm_mean", 0.0)),
@@ -1620,11 +1728,38 @@ def _collect_train_event_norm_rows(
                 "writer_slot_norm_mean": float(event.get("writer_slot_norm_mean", 0.0)),
                 "writer_slot_norm_std": float(event.get("writer_slot_norm_std", 0.0)),
                 "writer_slot_norm_max": float(event.get("writer_slot_norm_max", 0.0)),
+                "memory_long_l2": float(event.get("memory_long_l2", 0.0)),
+                "memory_long_slots": float(event.get("memory_long_slots", 0.0)),
+                "memory_long_slot_norm_mean": float(event.get("memory_long_slot_norm_mean", 0.0)),
+                "memory_long_slot_norm_std": float(event.get("memory_long_slot_norm_std", 0.0)),
+                "memory_long_slot_norm_max": float(event.get("memory_long_slot_norm_max", 0.0)),
+                "memory_short_l2": float(event.get("memory_short_l2", 0.0)),
+                "memory_short_slots": float(event.get("memory_short_slots", 0.0)),
+                "memory_short_slot_norm_mean": float(event.get("memory_short_slot_norm_mean", 0.0)),
+                "memory_short_slot_norm_std": float(event.get("memory_short_slot_norm_std", 0.0)),
+                "memory_short_slot_norm_max": float(event.get("memory_short_slot_norm_max", 0.0)),
+                "memory_short_pairwise_cosine_mean": float(
+                    event.get("memory_short_pairwise_cosine_mean", 0.0)
+                ),
+                "reader_num_queries": float(event.get("reader_num_queries", 0.0)),
+                "reader_slot_count": float(event.get("reader_slot_count", 0.0)),
+                "reader_attention_entropy_mean": float(event.get("reader_attention_entropy_mean", 0.0)),
+                "reader_attention_entropy_min": float(event.get("reader_attention_entropy_min", 0.0)),
+                "reader_attention_entropy_max": float(event.get("reader_attention_entropy_max", 0.0)),
+                "reader_attention_pairwise_cosine_mean": float(
+                    event.get("reader_attention_pairwise_cosine_mean", 0.0)
+                ),
+                "reader_slot_coverage_fraction": float(event.get("reader_slot_coverage_fraction", 0.0)),
                 "support_item_count": float(event.get("support_item_count", 0.0)),
                 "support_item_hidden_l2": float(event.get("support_item_hidden_l2", 0.0)),
                 "support_item_hidden_norm_mean": float(event.get("support_item_hidden_norm_mean", 0.0)),
                 "support_item_hidden_norm_std": float(event.get("support_item_hidden_norm_std", 0.0)),
                 "support_item_hidden_norm_max": float(event.get("support_item_hidden_norm_max", 0.0)),
+                "pilot_memory_path_variant": str(event.get("pilot_memory_path_variant", "single_level")),
+                "pilot_reader_context_mode": str(event.get("pilot_reader_context_mode", "prompt_summary")),
+                "pilot_projector_token_source": str(event.get("pilot_projector_token_source", "writer_slots")),
+                "pilot_reader_num_queries": float(event.get("pilot_reader_num_queries", 0.0)),
+                "pilot_fuser_short_slots": float(event.get("pilot_fuser_short_slots", 0.0)),
                 "pilot_support_encoder_mode": str(event.get("pilot_support_encoder_mode", "pooled_block")),
                 "pilot_trainable_variant": str(event.get("pilot_trainable_variant", "")),
                 "alignment_aux_mode": str(event.get("alignment_aux_mode", "off")),
@@ -1632,7 +1767,11 @@ def _collect_train_event_norm_rows(
                 "alignment_aux_loss": float(event.get("alignment_aux_loss", 0.0)),
                 "support_encoder_grad_norm": float(event.get("support_encoder_grad_norm", 0.0)),
                 "prefix_projector_grad_norm": float(event.get("prefix_projector_grad_norm", 0.0)),
+                "reader_grad_norm": float(event.get("reader_grad_norm", 0.0)),
+                "fuser_grad_norm": float(event.get("fuser_grad_norm", 0.0)),
                 "writer_grad_norm": float(event.get("writer_grad_norm", 0.0)),
+                "memory_long_effective_rank": float(event.get("memory_long_effective_rank", 0.0)),
+                "memory_short_effective_rank": float(event.get("memory_short_effective_rank", 0.0)),
                 "writer_to_projector_grad_ratio": float(event.get("writer_to_projector_grad_ratio", 0.0)),
                 "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
                 "loss": float(event.get("loss", 0.0)),
@@ -1658,6 +1797,7 @@ def run_m4_shared_injection_dynamics_recovery(
     pairwise_rows: list[dict[str, Any]] = []
     content_gap_rows: list[dict[str, Any]] = []
     prefix_norm_rows: list[dict[str, Any]] = []
+    reader_query_rows: list[dict[str, Any]] = []
     candidate_selections: list[dict[str, Any]] = []
     suite_support_variant: dict[str, str] = {}
     report_lines = ["# M4 Shared Injection Dynamics Recovery", ""]
@@ -1877,12 +2017,27 @@ def run_m4_shared_injection_dynamics_recovery(
                             arm_alias=arm_alias,
                         )
                     )
+                    reader_query_rows.extend(
+                        _reader_query_rows_for_snapshot(
+                            config=config,
+                            support_examples=support_examples,
+                            audit_examples=audit_examples,
+                            example_lookup=attention_lookup,
+                            support_serialization_variant=suite_support_variant[suite_name],
+                            writer_memory_control=memory_control,
+                            checkpoint_path=checkpoint_path,
+                            step=int(step),
+                            suite_name=suite_name,
+                            arm_alias=arm_alias,
+                        )
+                    )
 
     summary_csv = output_dir / "dynamics_recovery_summary.csv"
     pairwise_csv = output_dir / "dynamics_recovery_pairwise.csv"
     content_gap_csv = output_dir / "content_gap_curve.csv"
     prefix_norm_csv = output_dir / "prefix_norm_drift.csv"
     attention_csv = output_dir / "prefix_attention_consumption.csv"
+    reader_query_csv = output_dir / "reader_query_diagnostics.csv"
     summary_plot = output_dir / "summary.svg"
     selection_json = output_dir / "selection.json"
     dual_gate_summary_json = output_dir / "dual_gate_summary.json"
@@ -1891,6 +2046,7 @@ def run_m4_shared_injection_dynamics_recovery(
     _write_csv(content_gap_csv, content_gap_rows)
     _write_csv(prefix_norm_csv, prefix_norm_rows)
     _write_csv(attention_csv, attention_rows)
+    _write_csv(reader_query_csv, reader_query_rows)
     write_sanity_plot(
         summary_plot,
         [
@@ -1957,6 +2113,7 @@ def run_m4_shared_injection_dynamics_recovery(
             "content_gap_csv": str(content_gap_csv.resolve()),
             "prefix_norm_csv": str(prefix_norm_csv.resolve()),
             "attention_csv": str(attention_csv.resolve()),
+            "reader_query_csv": str(reader_query_csv.resolve()),
             "summary_plot": str(summary_plot.resolve()),
             "selection_json": str(selection_json.resolve()),
             "dual_gate_summary_json": str(dual_gate_summary_json.resolve()),
@@ -2373,6 +2530,178 @@ def compare_m5_dense_teacher_runs(
         "hinge_off_audit_present": hinge_off_audit is not None,
         "hinge_off_audit_selection_passed": hinge_off_selection,
         "hinge_off_audit_primary_gate_passed": hinge_off_primary,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def _later_onset(candidate_step: Any, reference_step: Any) -> bool:
+    if candidate_step is None and reference_step is not None:
+        return True
+    if candidate_step is None or reference_step is None:
+        return False
+    return int(candidate_step) > int(reference_step)
+
+
+def _reader_query_summary(reader_query_csv: str | None) -> dict[str, float]:
+    if not reader_query_csv:
+        return {
+            "reader_query_rows": 0.0,
+            "reader_query_argmax_unique_mean": 0.0,
+            "reader_query_entropy_mean": 0.0,
+            "reader_query_coverage_mean": 0.0,
+        }
+    path = Path(reader_query_csv)
+    if not path.exists():
+        return {
+            "reader_query_rows": 0.0,
+            "reader_query_argmax_unique_mean": 0.0,
+            "reader_query_entropy_mean": 0.0,
+            "reader_query_coverage_mean": 0.0,
+        }
+    with path.open() as handle:
+        rows = list(csv.DictReader(handle))
+    rows = [row for row in rows if str(row.get("arm_alias", "")) == "I_real"]
+    if not rows:
+        return {
+            "reader_query_rows": 0.0,
+            "reader_query_argmax_unique_mean": 0.0,
+            "reader_query_entropy_mean": 0.0,
+            "reader_query_coverage_mean": 0.0,
+        }
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for row in rows:
+        grouped.setdefault((str(row.get("step", "")), str(row.get("example_id", ""))), []).append(row)
+    unique_fractions: list[float] = []
+    entropies: list[float] = []
+    coverages: list[float] = []
+    for group_rows in grouped.values():
+        argmax_slots = [int(float(row.get("reader_argmax_slot", 0) or 0.0)) for row in group_rows]
+        query_count = max(1, len(argmax_slots))
+        unique_fractions.append(len(set(argmax_slots)) / query_count)
+        entropies.extend(float(row.get("reader_attention_entropy", 0.0) or 0.0) for row in group_rows)
+        coverages.extend(float(row.get("reader_slot_coverage_fraction", 0.0) or 0.0) for row in group_rows)
+    return {
+        "reader_query_rows": float(len(rows)),
+        "reader_query_argmax_unique_mean": float(sum(unique_fractions) / max(1, len(unique_fractions))),
+        "reader_query_entropy_mean": float(sum(entropies) / max(1, len(entropies))),
+        "reader_query_coverage_mean": float(sum(coverages) / max(1, len(coverages))),
+    }
+
+
+def compare_tl_poc_runs(
+    *,
+    sl8_summary_json: str,
+    tl_h4_k8_summary_json: str,
+    tl_h4_k4_summary_json: str,
+    tl_h1_k4_summary_json: str,
+    tl_h4_k8_reader_query_csv: str | None = None,
+    tl_h4_k4_reader_query_csv: str | None = None,
+    tl_h1_k4_reader_query_csv: str | None = None,
+) -> dict[str, Any]:
+    sl8 = json.loads(Path(sl8_summary_json).read_text())
+    tl_h4_k8 = json.loads(Path(tl_h4_k8_summary_json).read_text())
+    tl_h4_k4 = json.loads(Path(tl_h4_k4_summary_json).read_text())
+    tl_h1_k4 = json.loads(Path(tl_h1_k4_summary_json).read_text())
+    h4_k8_reader = _reader_query_summary(tl_h4_k8_reader_query_csv)
+    h4_k4_reader = _reader_query_summary(tl_h4_k4_reader_query_csv)
+    h1_k4_reader = _reader_query_summary(tl_h1_k4_reader_query_csv)
+
+    bridge_supported = bool(
+        bool(tl_h4_k8.get("screen248_test_gate_passed", False))
+        or (
+            not bool(sl8.get("screen248_test_gate_passed", False))
+            and (
+                _later_onset(
+                    tl_h4_k8.get("dominant_label_collapse_onset_step"),
+                    sl8.get("dominant_label_collapse_onset_step"),
+                )
+                or _later_onset(
+                    tl_h4_k8.get("cap_saturation_onset_step"),
+                    sl8.get("cap_saturation_onset_step"),
+                )
+                or (
+                    bool(tl_h4_k8.get("selection_passed", False))
+                    and not bool(sl8.get("selection_passed", False))
+                )
+            )
+        )
+    )
+    bottleneck_supported = bool(
+        bool(tl_h4_k4.get("screen248_test_gate_passed", False))
+        or _later_onset(
+            tl_h4_k4.get("dominant_label_collapse_onset_step"),
+            tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            tl_h4_k4.get("cap_saturation_onset_step"),
+            tl_h4_k8.get("cap_saturation_onset_step"),
+        )
+    )
+    specialization_supported = bool(
+        (
+            bool(tl_h4_k4.get("screen248_test_gate_passed", False))
+            and not bool(tl_h1_k4.get("screen248_test_gate_passed", False))
+        )
+        or _later_onset(
+            tl_h4_k4.get("dominant_label_collapse_onset_step"),
+            tl_h1_k4.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            tl_h4_k4.get("cap_saturation_onset_step"),
+            tl_h1_k4.get("cap_saturation_onset_step"),
+        )
+    )
+    specialization_supported = bool(
+        specialization_supported
+        and h4_k4_reader["reader_query_argmax_unique_mean"] >= h1_k4_reader["reader_query_argmax_unique_mean"]
+    )
+
+    if bridge_supported and bottleneck_supported and specialization_supported:
+        conclusion = "strong_success"
+        failure_reason = ""
+    elif bridge_supported or bottleneck_supported or specialization_supported:
+        conclusion = "medium_success"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not bridge_supported:
+            failure_reason = "bridge_not_alive"
+        elif not bottleneck_supported:
+            failure_reason = "compression_not_helpful"
+        else:
+            failure_reason = "multi_query_specialization_not_supported"
+
+    return {
+        "sl8_selection_passed": bool(sl8.get("selection_passed", False)),
+        "sl8_selected_step": sl8.get("selected_step"),
+        "sl8_primary_gate_passed": bool(sl8.get("screen248_test_gate_passed", False)),
+        "sl8_cap_saturation_onset_step": sl8.get("cap_saturation_onset_step"),
+        "sl8_dominant_label_collapse_onset_step": sl8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_selection_passed": bool(tl_h4_k8.get("selection_passed", False)),
+        "tl_h4_k8_selected_step": tl_h4_k8.get("selected_step"),
+        "tl_h4_k8_primary_gate_passed": bool(tl_h4_k8.get("screen248_test_gate_passed", False)),
+        "tl_h4_k8_cap_saturation_onset_step": tl_h4_k8.get("cap_saturation_onset_step"),
+        "tl_h4_k8_dominant_label_collapse_onset_step": tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k4_selection_passed": bool(tl_h4_k4.get("selection_passed", False)),
+        "tl_h4_k4_selected_step": tl_h4_k4.get("selected_step"),
+        "tl_h4_k4_primary_gate_passed": bool(tl_h4_k4.get("screen248_test_gate_passed", False)),
+        "tl_h4_k4_cap_saturation_onset_step": tl_h4_k4.get("cap_saturation_onset_step"),
+        "tl_h4_k4_dominant_label_collapse_onset_step": tl_h4_k4.get("dominant_label_collapse_onset_step"),
+        "tl_h1_k4_selection_passed": bool(tl_h1_k4.get("selection_passed", False)),
+        "tl_h1_k4_selected_step": tl_h1_k4.get("selected_step"),
+        "tl_h1_k4_primary_gate_passed": bool(tl_h1_k4.get("screen248_test_gate_passed", False)),
+        "tl_h1_k4_cap_saturation_onset_step": tl_h1_k4.get("cap_saturation_onset_step"),
+        "tl_h1_k4_dominant_label_collapse_onset_step": tl_h1_k4.get("dominant_label_collapse_onset_step"),
+        "bridge_supported": bridge_supported,
+        "bottleneck_supported": bottleneck_supported,
+        "specialization_supported": specialization_supported,
+        "tl_h4_k8_reader_query_argmax_unique_mean": h4_k8_reader["reader_query_argmax_unique_mean"],
+        "tl_h4_k4_reader_query_argmax_unique_mean": h4_k4_reader["reader_query_argmax_unique_mean"],
+        "tl_h1_k4_reader_query_argmax_unique_mean": h1_k4_reader["reader_query_argmax_unique_mean"],
+        "tl_h4_k8_reader_query_entropy_mean": h4_k8_reader["reader_query_entropy_mean"],
+        "tl_h4_k4_reader_query_entropy_mean": h4_k4_reader["reader_query_entropy_mean"],
+        "tl_h1_k4_reader_query_entropy_mean": h1_k4_reader["reader_query_entropy_mean"],
         "comparison_conclusion": conclusion,
         "failure_reason": failure_reason,
     }

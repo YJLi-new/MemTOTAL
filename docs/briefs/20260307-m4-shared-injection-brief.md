@@ -2,10 +2,10 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不是“完全没信号”，但截至 `M5.3` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 dense-teacher 实验说明：same-schema warm-start、task-first continuation、latent anchor，以及真正会激活的 choice-space teacher KL 都已经被单独测过。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
+`shared injection` 已经不是“完全没信号”，但截至 `TL-PoC` 仍没有在预注册 FEVER gate 下稳定形成可泛化能力信号。最新结果说明：single-level objective side 的 same-schema warm-start、latent anchor、engaged dense teacher 都已经被单独测过；随后 two-level `Writer -> Reader -> Fuser -> Injector` 也已经真实接进 active FEVER harness。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
 
 > main-chain consumption 已成立，deep prompt 也已成立；structured support set、trainable writer、same-schema warm-start、latent anchor 也都已显示出方向性增量。  
-> 但 current single-level `writer -> projector -> frozen Qwen` 路径，即使在 engaged dense teacher KL 下，仍不能把这条增量稳定固化成 `I_real > I_shuffle` 的可泛化能力信号。所以下一步应从 Workstream A 转入 `Workstream B / TL-PoC`，而不是继续做 `M5.4/M5.5` 式 objective 小修补或立刻做 receptor adaptation。
+> 但 current single-level path 已接近 objective-side 上限，而刚激活的 two-level path 又还没有把 `M_long -> Reader -> M_short` bridge 做活：当前 TL-PoC 的 `M_long/M_short` effective rank 仍接近 `1`，reader 对 long slots 的读法近似均匀，`H=4` 也没有比 `H=1` 更健康的 specialization。所以下一步不应继续做 `M5.4/M5.5` 式 objective 小修补，也还不到立刻做 receptor adaptation 的阶段，而应先修 two-level memory path 自身的 capacity / geometry。
 
 ## 已经坐实的前提
 
@@ -21,7 +21,7 @@
 
 `candidate-conditioned residual family` 在更对题的 repair/content audit 下仍然表现为 `real = shuffle = zero`，不再是当前主线。
 
-## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 / M5.1 / M5.2 的连续结论
+## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 / M5.1 / M5.2 / M5.3 / TL-PoC 的连续结论
 
 review 路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
@@ -40,6 +40,8 @@ review 路径：
 - `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`
 - `runs/review/m5-fever-dense-teacher-qwen25/`
 - `results/generated/review/m5-fever-dense-teacher-qwen25/`
+- `runs/review/tl-poc-fever-qwen25/`
+- `results/generated/review/tl-poc-fever-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -285,6 +287,36 @@ canonical 设计：
   - stop iterating single-level FEVER objective design
   - move to `Workstream B / TL-PoC`
 
+### Workstream B / TL-PoC
+
+- `SL-8` 继续作为 current least-collapsed single-level substrate；它能在 `screen248-val` 选出 `step2`
+- 但 `SL-8` 仍没有通过 `screen248-test`
+- 三条 two-level 变体都没有通过 selection：
+  - `TL-H4-K8`
+  - `TL-H4-K4`
+  - `TL-H1-K4`
+- top-level 结果位于：
+  - `results/generated/review/tl-poc-fever-qwen25/tl-poc-summary.json`
+  - `results/generated/review/tl-poc-fever-qwen25/tl-poc-summary.md`
+- 顶层结论当前记录：
+  - `comparison_conclusion=failure`
+  - `failure_reason=bridge_not_alive`
+  - `bridge_supported=false`
+  - `bottleneck_supported=false`
+  - `specialization_supported=false`
+- 这轮最关键的新事实不是“Reader/Fuser 接进去也失败了”，而是 failure mode 已经能更具体地落到 `memory-side capacity / geometry`：
+  - `TL-H4-K8` 末步 `memory_long_effective_rank≈1.00`、`memory_short_effective_rank≈1.20`
+  - `TL-H4-K4` 末步 `memory_long_effective_rank≈1.00`、`memory_short_effective_rank≈1.11`
+  - `TL-H1-K4` 末步 `memory_long_effective_rank≈1.00`、`memory_short_effective_rank≈1.11`
+  - reader attention entropy 在三条 two-level run 上都约为 `2.0794 ≈ ln(8)`
+  - `TL-H4-K8` 与 `TL-H4-K4` 的 `reader_attention_pairwise_cosine_mean=1.0`
+  - `H=4` 没有比 `H=1` 展现出更健康的 query specialization
+
+含义：
+- 当前已不再是“还没把 two-level path 接进 active FEVER harness”
+- 也还不到“receiver 完全拒收，所以必须立刻做 tiny LoRA / IA3 receptor adaptation”的阶段
+- 更合理的解释是：`M_long -> Reader -> M_short` 这一层自己的读写几何还没立起来，readout 接近均匀、rank 接近 `1`、compression 过早塌缩
+
 ## 当前最稳妥的解释
 
 当前已经可以排除：
@@ -314,11 +346,12 @@ canonical 设计：
 - 继续留在 `shared injection` 主线
 - 把 `screen248-test` 固定为 primary capability gate，`fixed64` 只保留为 legacy report
 - 把 `control-safe-hinge` 固定为当前 least-collapsed single-level substrate objective
-- 下一轮优先进入 `Workstream B / TL-PoC`：
-  - `pilot_memory_path_variant: single_level | two_level`
-  - 先跑 `TL-H4-K8` bridge，对比 `SL-8`
-  - 再跑 `TL-H4-K4` bottleneck
-  - 最后跑 `TL-H1-K4` vs `TL-H4-K4` specialization
+- 继续保留已接通的 `pilot_memory_path_variant: two_level`
+- 下一轮优先修 `Failure mode B-1 / memory-side capacity-geometry problem`：
+  - 提高 `M_long` 的有效 rank
+  - 让 `Reader` 摆脱对 `8` 个 long slots 的近均匀读法
+  - 让 `H=4` 真正出现 specialization，而不是与 `H=1` 本质等价
+  - 避免 `M_short` 在压缩前就塌成近 rank-1
 - 继续增强 observability，重点盯：
   - `memory_long_effective_rank`
   - `memory_short_effective_rank`

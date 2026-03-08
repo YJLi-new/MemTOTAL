@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/m4_fever_qwen25_split_prep.yaml",
+    "--seed",
+    "15291",
+    "--output_dir",
+    "/root/autodl-tmp/results/generated/tl-poc-fever-qwen25/split-prep"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "m4_fever_qwen25_split_prep",
+  "git_hash": "ec14f10acfcf32231094aa4ea244a6578efd44ab",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-split-prep",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 15291,
+  "smoke_subset": "real_screen248",
+  "stage": "M4-shared-injection",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen248",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-08T16:00:55.463219+00:00",
+  "torch_version": "2.8.0+cu128"
+}

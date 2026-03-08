@@ -19,6 +19,7 @@
 - `scripts/run_m5_fever_alignment_qwen25.sh`: `M5.1` 的 same-schema warm-start alignment 入口，会写出 `warm_start_manifest.json`，再并排跑 `canonical / freeze-writer / pooled-block` 三臂 continuation，并生成 top-level `success / ambiguous_pass / failure` summary
 - `scripts/run_m5_fever_objective_rewrite_qwen25.sh`: `M5.2` 的 writer objective rewrite 入口，会写出 `warm_start_manifest.json`，再并排跑 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂 continuation，并生成 top-level objective summary
 - `scripts/run_m5_fever_dense_teacher_qwen25.sh`: `M5.3` 的 dense teacher 入口，会写出 `warm_start_manifest.json`，再并排跑 `control-safe-hinge / canonical-dense-teacher` required pair，并生成 top-level dense-teacher summary
+- `scripts/run_tl_poc_fever_qwen25.sh`: `Workstream B / TL-PoC` 的两层 shared-injection 入口，会 materialize `SL-8 / TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 全套 configs，依次跑训练、dynamics、selection、post-selection gates，并生成 top-level TL-PoC summary
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -45,6 +46,7 @@
 - `scripts/update_m5_alignment_summary.py`: 汇总 `M5.1` 三臂 continuation 结果，并生成 `alignment-summary.{json,md}`
 - `scripts/update_m5_objective_summary.py`: 汇总 `M5.2` 三臂 objective rewrite 结果，并生成 `objective-summary.{json,md}`
 - `scripts/update_m5_dense_teacher_summary.py`: 汇总 `M5.3` control/canonical 对照结果，并生成 `dense-teacher-summary.{json,md}`
+- `scripts/update_tl_poc_summary.py`: 汇总 `SL-8 / TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 的 `selection / gate / reader diagnostics`，并生成 `tl-poc-summary.{json,md}`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -422,6 +424,44 @@
     - 当前 single-level objective side 已经有一轮 decisive dense-teacher test
     - next step 不应再是 `M5.4/M5.5`
     - 应转入 `Workstream B / TL-PoC`，把现有 `MemoryReader / MemoryFuser` 真正接进 active FEVER harness
+- `Workstream B / TL-PoC` 当前又把主线推进到真实两层路径：
+  - runtime 新增：
+    - `pilot_memory_path_variant in {single_level, two_level}`
+    - `pilot_reader_context_mode`
+    - `pilot_reader_num_queries`
+    - `pilot_fuser_short_slots`
+    - `pilot_projector_token_source`
+  - checkpoint schema 现已支持：
+    - `reader_state`
+    - `fuser_state`
+    - two-level runtime metadata
+    - single-level -> two-level warm-start
+  - dynamics observability 现已补齐：
+    - `memory_long_effective_rank`
+    - `memory_short_effective_rank`
+    - `reader_attention_entropy_*`
+    - `reader_attention_pairwise_cosine_mean`
+    - `reader_slot_coverage_fraction`
+    - `reader_query_diagnostics.csv`
+  - latest real run 说明：
+    - `SL-8` 能在 `screen248-val` 选出 `step2`，但 `screen248-test` 仍未通过
+    - `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 三条 two-level run 都没有通过 selection
+    - top-level comparison 位于 `results/generated/review/tl-poc-fever-qwen25/tl-poc-summary.{json,md}`
+    - 顶层结论当前记录：
+      - `comparison_conclusion=failure`
+      - `failure_reason=bridge_not_alive`
+      - `bridge_supported=false`
+      - `bottleneck_supported=false`
+      - `specialization_supported=false`
+    - two-level diagnostics 更像 `Failure mode B-1 / memory-side capacity-geometry problem`：
+      - `memory_long_effective_rank≈1.0`
+      - `memory_short_effective_rank≈1.1-1.2`
+      - `reader_attention_entropy≈ln(8)`
+      - `H=4` 没有比 `H=1` 更健康的 specialization
+  - 因而：
+    - 当前不再是“Reader/Fuser 还没接进 active FEVER harness”
+    - 也还不到“receiver 一定要解冻”的阶段
+    - 更合理的 next step 是先修 two-level memory path 的 capacity / geometry，再谈 transfer refresh 或 receiver fallback
 
 ## M3 Failure Checks
 

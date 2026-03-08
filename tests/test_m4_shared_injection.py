@@ -13,6 +13,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_alignment_runs,
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
+    compare_tl_poc_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
     run_m4_prepare_fever_validation_splits,
@@ -27,6 +28,7 @@ from memtotal.models.memory import MemoryWriter
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     SharedLowRankDeepPrefixProjector,
+    SharedInjectionPilotRuntime,
     StructuredSupportSetEncoder,
     _active_competitor_hinge_weight,
     _alignment_aux_loss,
@@ -36,6 +38,7 @@ from memtotal.training.m4_shared_injection import (
     _choice_task_loss,
     _effective_rank,
     _latent_anchor_loss,
+    _prefix_stats,
     _scheduled_linear_decay_weight,
     _sample_support_examples_for_training,
     _teacher_advantage_weight,
@@ -440,6 +443,175 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertTrue(active_flag)
         self.assertGreater(float(aux_loss.item()), 0.0)
         self.assertGreater(diagnostics["teacher_advantage_weight_mean"], 0.0)
+
+    def test_prefix_stats_capture_two_level_memory_and_reader_metrics(self) -> None:
+        memory_long = torch.randn(1, 8, 6)
+        memory_short = torch.randn(1, 4, 6)
+        reader_attention = torch.softmax(torch.randn(1, 4, 8), dim=-1)
+        stats = _prefix_stats(
+            layer_prefix_hidden_by_layer={0: torch.randn(1, 4, 6)},
+            memory_long=memory_long,
+            memory_short=memory_short,
+            reader_attention=reader_attention,
+            memory_path_variant="two_level",
+            projector_token_source="short_slots",
+        )
+        self.assertEqual(stats["pilot_memory_path_variant"], "two_level")
+        self.assertEqual(stats["pilot_projector_token_source"], "short_slots")
+        self.assertEqual(stats["memory_long_slots"], 8.0)
+        self.assertEqual(stats["memory_short_slots"], 4.0)
+        self.assertEqual(stats["reader_num_queries"], 4.0)
+        self.assertGreaterEqual(stats["reader_attention_entropy_mean"], 0.0)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_runtime_uses_prompt_summary_cache_and_short_slots(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self._calls: list[tuple[str, ...]] = []
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                self._calls.append(tuple(texts))
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {
+                "name": "fake",
+                "load_mode": "stub",
+                "dtype": "float32",
+                "model_id": "fake/model",
+            },
+            "method": {
+                "writer": {"memory_slots": 8, "arch": "mlp", "hidden_dim": 12},
+                "reader": {"num_queries": 4, "num_heads": 2, "query_residual_scale": 1.0},
+                "fuser": {"short_slots": 4, "arch": "resampler", "num_heads": 2},
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=3,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            "Support bank",
+            prompt_text="Claim: cached prompt",
+        )
+        _ = runtime.build_prefix_artifacts(
+            "Support bank",
+            prompt_text="Claim: cached prompt",
+        )
+        self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 8, 6])
+        self.assertEqual(list(prefix_artifacts.memory_short.shape), [1, 4, 6])
+        prompt_calls = [call for call in fake_backbone._calls if call == ("Claim: cached prompt",)]
+        self.assertEqual(len(prompt_calls), 1)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_runtime_accepts_single_level_warm_start_but_rejects_strict_load(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        single_level_config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {"writer": {"memory_slots": 8, "arch": "mlp", "hidden_dim": 12}},
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+        two_level_config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {"memory_slots": 8, "arch": "mlp", "hidden_dim": 12},
+                "reader": {"num_queries": 4, "num_heads": 2, "query_residual_scale": 1.0},
+                "fuser": {"short_slots": 4, "arch": "resampler", "num_heads": 2},
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+        single_level_runtime = SharedInjectionPilotRuntime(
+            config=single_level_config,
+            seed=5,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        two_level_runtime = SharedInjectionPilotRuntime(
+            config=two_level_config,
+            seed=7,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "single_level_checkpoint.pt"
+            torch.save(
+                {
+                    "writer_state": single_level_runtime.writer.state_dict(),
+                    "support_encoder_state": None,
+                    "reader_state": None,
+                    "fuser_state": None,
+                    "prefix_projector_state": single_level_runtime.prefix_projector.state_dict(),
+                    "pilot_memory_path_variant": "single_level",
+                    "pilot_support_encoder_mode": "pooled_block",
+                    "pilot_injection_mode": "sparse_deep_prefix",
+                    "pilot_deep_prefix_layers": [0, 1],
+                    "backbone_hidden_size": 6,
+                    "writer_memory_slots": 8,
+                    "pilot_projector_prefix_tokens": 8,
+                },
+                checkpoint_path,
+            )
+            two_level_runtime.warm_start_from_injection_checkpoint(checkpoint_path)
+            with self.assertRaisesRegex(ValueError, "pilot_memory_path_variant"):
+                two_level_runtime.load_injection_checkpoint(checkpoint_path)
 
 
 class SharedInjectionAnalysisTest(unittest.TestCase):
@@ -1356,6 +1528,107 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
                 ),
             )
             self.assertEqual(hinge_off["comparison_conclusion"], "hinge_off_better")
+
+    def test_compare_tl_poc_runs_reports_strong_success_when_bridge_bottleneck_and_specialization_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_reader_csv(name: str, rows: list[dict[str, object]]) -> Path:
+                path = root / name
+                fieldnames = sorted({key for row in rows for key in row})
+                with path.open("w") as handle:
+                    handle.write(",".join(fieldnames) + "\n")
+                    for row in rows:
+                        handle.write(",".join(str(row.get(field, "")) for field in fieldnames) + "\n")
+                return path
+
+            summary = compare_tl_poc_runs(
+                sl8_summary_json=str(
+                    write_payload(
+                        "sl8.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 8,
+                            "cap_saturation_onset_step": 8,
+                        },
+                    )
+                ),
+                tl_h4_k8_summary_json=str(
+                    write_payload(
+                        "h4k8.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 8,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 16,
+                            "cap_saturation_onset_step": 16,
+                        },
+                    )
+                ),
+                tl_h4_k4_summary_json=str(
+                    write_payload(
+                        "h4k4.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 8,
+                            "screen248_test_gate_passed": True,
+                            "dominant_label_collapse_onset_step": 24,
+                            "cap_saturation_onset_step": 24,
+                        },
+                    )
+                ),
+                tl_h1_k4_summary_json=str(
+                    write_payload(
+                        "h1k4.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 12,
+                            "cap_saturation_onset_step": 12,
+                        },
+                    )
+                ),
+                tl_h4_k8_reader_query_csv=str(
+                    write_reader_csv(
+                        "h4k8_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 1.0, "reader_slot_coverage_fraction": 0.5},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 1, "reader_attention_entropy": 1.1, "reader_slot_coverage_fraction": 0.5},
+                        ],
+                    )
+                ),
+                tl_h4_k4_reader_query_csv=str(
+                    write_reader_csv(
+                        "h4k4_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 0.9, "reader_slot_coverage_fraction": 0.5},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 1, "reader_attention_entropy": 0.8, "reader_slot_coverage_fraction": 0.5},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 2, "reader_attention_entropy": 0.7, "reader_slot_coverage_fraction": 0.5},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 3, "reader_attention_entropy": 0.6, "reader_slot_coverage_fraction": 0.5},
+                        ],
+                    )
+                ),
+                tl_h1_k4_reader_query_csv=str(
+                    write_reader_csv(
+                        "h1k4_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 1.2, "reader_slot_coverage_fraction": 0.5},
+                        ],
+                    )
+                ),
+            )
+            self.assertEqual(summary["comparison_conclusion"], "strong_success")
+            self.assertTrue(summary["bridge_supported"])
+            self.assertTrue(summary["bottleneck_supported"])
+            self.assertTrue(summary["specialization_supported"])
 
 
 if __name__ == "__main__":
