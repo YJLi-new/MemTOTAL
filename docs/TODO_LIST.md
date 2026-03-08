@@ -29,13 +29,15 @@
 - 当前最优先问题已经不再是“Reader/Fuser 还没进 active harness”，因为两层路径现在已经完整走通了训练、dynamics、selection、gate 和 review 发布。
 - `TL bridge rescue` 也已真实跑完，结果位于 `results/generated/review/tl-bridge-rescue-fever-qwen25/`。
 - 这轮显式加入了 `support_query_residual_scale=1.0` 与 `memory_long / memory_short / reader_attention diversity regularization`，但顶层 `bridge-rescue-summary.json` 仍记录 `comparison_conclusion=failure`、`failure_reason=no_bridge_geometry_gain`。
+- `TL slot-basis rescue` 也已真实跑完，结果位于 `results/generated/review/tl-slot-basis-rescue-fever-qwen25/`。
+- 这轮显式加入了 `output_slot_basis_scale=1.0`、writer slot-basis warm-start orthogonalization 与 `writer_slot_basis_orthogonality_loss`，并第一次把 `tl_slot_basis_final_memory_long_effective_rank` 拉到 `1.6126`、把 `tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean` 压到 `≈0`；但 run-summary 仍是 `selection_passed=false`、`screen248_test_gate_passed=false`。
 - 当前新的第一主因更像 `PLAN.md` 里的 `Failure mode B-1 / memory-side capacity-geometry problem`：
-  - 为什么 `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 的末步 `memory_long_effective_rank` 都仍接近 `1.0`
-  - 为什么 `memory_short_effective_rank` 也只停在约 `1.1-1.2`
-  - 为什么 reader attention entropy 维持在 `2.0794 ≈ ln(8)`，表现得像对 `8` 个 long slots 的近均匀读法
-  - 为什么 `H=4` 没有比 `H=1` 表现出更强的 query specialization
-  - 为什么 `SL-8` 还能在 `screen248-val` 选出 `step2`，而当前 two-level bridge 连 selection 都活不起来
-  - 为什么连 residual-preserving writer + explicit diversity regularization 也仍然无法把 `M_long` 从近 rank-1 manifold 拉出来
+  - 为什么更健康的 `M_long` write-side basis 仍会被 `Reader/Fuser` 读成近均匀 attention
+  - 为什么 `memory_short_effective_rank` 仍只停在约 `1.2`
+  - 为什么 reader attention entropy 仍维持在 `2.076-2.079 ≈ ln(8)`，表现得像对 `8` 个 long slots 的近均匀读法
+  - 为什么 `H=4` 仍没有比 `H=1` 表现出更强的 query specialization
+  - 为什么 `SL-8` 还能在 `screen248-val` 选出 `step2`，而当前 two-level bridge 仍连 selection 都活不起来
+  - 为什么 `M_long` 几何已改善后，semantic bridge 仍停在 `step0/2` 附近就塌缩
 
 ---
 

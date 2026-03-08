@@ -13,6 +13,11 @@
   - 为什么 `support_set -> writer` 保留 conditioned-slot residual 后，`M_long` 仍几乎全程 `≈ rank-1`
   - 为什么显式 `memory_long / memory_short / reader_attention` diversity regularization 仍被训练动力学压平到最坏边界
   - 当前更该直接约束的是 `M_long` 的 slot basis / factorization，还是 reader query initialization / temperature
+- `TL slot-basis rescue` 现在又把同一个 `B-1` 解释进一步拆开：最新 `results/generated/review/tl-slot-basis-rescue-fever-qwen25/slot-basis-summary.json` 当前显示 `comparison_conclusion=success`，但对应 run-summary 仍是 `selection_passed=false`、`screen248_test_gate_passed=false`。这说明：
+  - `M_long` 的 write-side basis / factorization 并不是完全做不起来；显式 slot-basis 约束已经能把末步 `memory_long_effective_rank` 拉到 `1.6126`
+  - writer slot basis 的 pairwise cosine 也已经被压到 `≈0`
+  - 但 reader attention 仍保持 `pairwise_cosine_mean=1.0`、`entropy≈ln(8)`，`M_short` 也仍只停在 `≈1.2`
+  - 因而当前 top tech debt 已从“如何把 `M_long` 拉出 rank-1”继续收紧成“为什么 `Reader/Fuser` 仍把更健康的 `M_long` 读成近均匀、低专化的 `M_short`”
 - `M4.7` structured support-set alignment 已经把“pooled support block 是否就是主瓶颈”和“writer 是否必须可训练”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.json` 显示 `comparison_conclusion=canonical_failed_selection`。当前新的第一优先级 tech debt 不再是“support block 要不要结构化”本身，而是：
   - 为什么 canonical structured path 虽然优于 `freeze-writer / pooled-block`，却仍无法通过 selection
   - 为什么三臂都会从 `step0` 起落在 `dominant_label_fraction=1.0`
@@ -23,9 +28,9 @@
   - 为什么 `I_real` 只能恢复出弱的 `vs_zero` 信号，却始终拉不开 `vs_shuffle`
   - 当前是否已经需要把 writer latent 直接对齐到 frozen Qwen 的决策方向
 - 因而，当前 top tech debt 已进一步收缩成：
-  - `Reader -> Fuser -> M_short` 两层路径为什么在 active FEVER harness 中仍然近似 rank-1 / uniform-attention
-  - 当前 memory-side geometry 的主要问题更靠近 `M_long` 写入、`Reader` 读取，还是 `Fuser` 压缩
-  - 需要什么最小改动才能先把 `TL-H4-K8` bridge 做活，再谈 bottleneck / specialization / transfer
+  - `Reader -> Fuser -> M_short` 两层路径为什么在 active FEVER harness 中仍然近似 uniform-attention / low-rank compression
+  - 当前 memory-side geometry 的主要问题是否已从 `M_long` 写入转移到 `Reader/Fuser` 的 query-side readout
+  - 需要什么最小改动才能在不动 receiver 的前提下先把 `TL-H4-K8` bridge 做活，再谈 bottleneck / specialization / transfer
   - 在 two-level bridge 还没活之前，不应重新打开 single-level objective 迭代，也不应过早把责任推给 receiver
 - 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
 - `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。

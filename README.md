@@ -23,6 +23,8 @@
 - `M5.1` 的 same-schema warm-start + task-first `CE + delayed hinge` 已真实跑完；随后 `M5.2` 的 `task-only / anchor-only / anchor+teacher_margin` objective rewrite 也已真实跑完：`latent anchor` 能保住 warm-start 流形，但 current `teacher_margin` hook 在 canonical 中全程 dormant
 - `M5.3` 的 `control-safe-hinge / canonical-dense-teacher(choice-space KL)` 已真实跑完：dense teacher signal 这次不再 dormant，canonical 的 `alignment_aux_active_steps=18/32`，但仍没有通过 `screen248-val`，而且 `step8` 明显弱于 safe-hinge control
 - `Workstream B / TL-PoC` 已真实跑完：`SL-8` 能在 `screen248-val` 选出 `step2`，但 `screen248-test` 仍未通过；`TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 三条两层路径全部没有通过 selection，顶层 `tl-poc-summary.json` 当前记录 `comparison_conclusion=failure`、`failure_reason=bridge_not_alive`
+- `TL bridge rescue` 已真实跑完：显式 `support_query_residual_scale + memory_long/memory_short/reader_attention diversity regularization` 仍没把 bridge 做活，顶层 `bridge-rescue-summary.json` 当前记录 `comparison_conclusion=failure`、`failure_reason=no_bridge_geometry_gain`
+- `TL slot-basis rescue` 已真实跑完：`support_query_residual_scale + output_slot_basis_scale + writer slot-basis orthogonalization/loss` 第一次把 `M_long` 的末步 effective rank 从 `≈1.0` 拉到 `≈1.61`，并把 writer slot basis pairwise cosine 压到 `≈0`；但 `TL-H4-K8` 仍未通过 selection，`reader_attention_pairwise_cosine_mean` 仍为 `1.0`、`reader_attention_entropy_mean≈2.076-2.079≈ln(8)`，说明 semantic bridge 仍未活
 
 所以当前 blocker 不再是：
 - `Qwen` 会不会读 prefix
@@ -38,7 +40,10 @@
   - `M_long` / `M_short` 的 effective rank 在末步仍约 `1.0-1.2`
   - reader attention entropy 约为 `2.0794 ≈ ln(8)`，基本是对 8 个 long slots 的均匀读法
   - `H=4` 没有比 `H=1` 形成更好的 query specialization
-- 因而当前不该立刻动 receiver；更合理的下一步是先修两层路径自己的 memory-side readout geometry
+- `TL slot-basis rescue` 又把这个 `B-1` 继续拆开：
+  - `M_long` 的 write-side basis/factorization 不是完全做不起来；显式 basis constraint 已经能把它拉出近 rank-1
+  - 但 `Reader/Fuser` 仍然把这个更健康的 `M_long` 读成近均匀 attention，并把 `M_short` 保持在 `≈1.2` 的低秩状态
+- 因而当前仍不该立刻动 receiver；更合理的下一步是继续留在 `Failure mode B-1`，但 focus 已从“long-slot basis 本身”收缩到 `Reader/Fuser` 的 query-side readout geometry
 
 ## 当前最可信的结论
 
@@ -271,10 +276,31 @@
     - `tl_h4_k8_rescue_reader_query_argmax_unique_mean=0.5885`，低于原始 `TL-H4-K8` 的 `0.6458`
     - `pilot-I-real` 训练事件里，`memory_long_effective_rank` 从 step1 到 step32 基本始终钉在 `≈1.0`
     - `reader_attention_pairwise_cosine_mean` 与新增的 `reader_attention_diversity_loss` 也都持续贴着最坏边界 `1.0`
+- 针对同一个 `B-1` 解释，这轮又补做了 `TL slot-basis rescue`：
+  - 顶层结果位于：
+    - [slot-basis-summary.json](/root/mydir/MemTOTAL/results/generated/review/tl-slot-basis-rescue-fever-qwen25/slot-basis-summary.json)
+    - [slot-basis-summary.md](/root/mydir/MemTOTAL/results/generated/review/tl-slot-basis-rescue-fever-qwen25/slot-basis-summary.md)
+  - 实现上新增了更直接的 write-side basis 约束：
+    - `MemoryWriter(output_slot_basis_scale=1.0)`，把 learned slot basis 显式残差保留到 writer 输出
+    - `orthogonalize_slot_embeddings_()` warm-start orthogonalization
+    - `writer_slot_basis_orthogonality_loss`
+  - 这轮第一次拿到了明确的 geometry gain：
+    - `tl_slot_basis_final_memory_long_effective_rank=1.6126`
+    - `tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean≈0`
+    - top-level comparison 记录 `comparison_conclusion=success`
+  - 但 bridge 仍然没有活：
+    - `selection_passed=false`
+    - `screen248_test_gate_passed=false`
+    - `dominant_label_collapse_onset_step=2`
+    - `reader_attention_pairwise_cosine_mean=1.0`
+    - `reader_attention_entropy_mean≈2.076-2.079≈ln(8)`
+  - 这把 blocker 再收紧了一层：
+    - 当前不再是“怎么把 `M_long` 拉出 rank-1”
+    - 而是“为什么更健康的 `M_long` 仍然被 `Reader/Fuser` 读成近均匀、低专化的 `M_short`”
 
 因此，最新最稳妥的判断应更新为：
 
-> shared injection 主线没有破产，但 current single-level objective family 已基本跑到头；同时，两层路径虽然已经正式进入 active FEVER harness，甚至补做了 first bridge-rescue，也还没有把 bridge 自己做活。下一步最该修的不是 teacher loss，也不是 receiver，而是更具体的 `M_long` 写入 / readout geometry。
+> shared injection 主线没有破产，但 current single-level objective family 已基本跑到头；同时，两层路径虽然已经正式进入 active FEVER harness，bridge rescue 也失败了，但 slot-basis rescue 已经证明 `M_long` 的 write-side basis 是可救的。下一步最该修的不是 teacher loss，也不是 receiver，而是更具体的 `Reader/Fuser` query-side readout geometry。
 
 ## 现在不该做什么
 
@@ -293,11 +319,11 @@
 - 保持 `screen248-test` 为 primary capability gate，`fixed64` 只保留为 legacy report
 - 继续把 `control-safe-hinge` 视为当前 least-collapsed single-level substrate objective
 - 在 two-level path 内优先修 `Failure mode B-1`，而不是 receiver：
-  - 优先解决 `M_long` 从 step1 起就接近 rank-1 的写入几何
+  - `M_long` 的 slot basis 约束已证明有用，下一轮不应再把“long-slot write-side 完全无解”当主假设
   - 避免 `Reader` 对 `8` 个 long slots 的近均匀注意力
   - 让 `H=4` 真正出现 query specialization，而不是和 `H=1` 本质等价
-  - 避免 `M_short` 在压缩前就塌成近 rank-1
-  - 不再把“再加一点 diversity regularization”当成默认主药；下一轮应更直接地约束 long-slot basis / slot factorization
+  - 避免 `M_short` 在压缩后继续停在 `≈1.2` 的低秩状态
+  - 不再把“更多 long-slot diversity regularization”当默认主药；下一轮应更直接约束 `Reader/Fuser` 的 query-side readout geometry
 - 只有当 two-level FEVER bridge 真正活起来后，才打开：
   - `Stage B/C` transfer refresh
   - `Story Cloze` stress test
@@ -317,6 +343,7 @@
 - [m5-fever-dense-teacher-qwen25](/root/mydir/MemTOTAL/results/generated/review/m5-fever-dense-teacher-qwen25)
 - [tl-poc-fever-qwen25](/root/mydir/MemTOTAL/results/generated/review/tl-poc-fever-qwen25)
 - [tl-bridge-rescue-fever-qwen25](/root/mydir/MemTOTAL/results/generated/review/tl-bridge-rescue-fever-qwen25)
+- [tl-slot-basis-rescue-fever-qwen25](/root/mydir/MemTOTAL/results/generated/review/tl-slot-basis-rescue-fever-qwen25)
 - [20260307-m4-shared-injection-brief.md](/root/mydir/MemTOTAL/docs/briefs/20260307-m4-shared-injection-brief.md)
 
 ### 已判死的旧分支

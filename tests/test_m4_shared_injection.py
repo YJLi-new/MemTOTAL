@@ -14,6 +14,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
     compare_tl_bridge_rescue_runs,
+    compare_tl_slot_basis_runs,
     compare_tl_poc_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
@@ -45,6 +46,7 @@ from memtotal.training.m4_shared_injection import (
     _sample_support_examples_for_training,
     _slot_diversity_loss,
     _teacher_advantage_weight,
+    _writer_slot_basis_orthogonality_loss,
     run_shared_injection_pilot,
 )
 
@@ -276,6 +278,33 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertGreater(float(_reader_attention_diversity_loss(identical).item()), 0.9)
         self.assertLess(float(_reader_attention_diversity_loss(specialized).item()), 0.1)
 
+    def test_writer_slot_basis_orthogonality_loss_prefers_orthogonal_slots(self) -> None:
+        writer = MemoryWriter(embed_dim=4, memory_slots=2, arch="transformer", num_heads=2)
+        with torch.no_grad():
+            writer.slot_embeddings.copy_(
+                torch.tensor(
+                    [
+                        [1.0, 0.0, 0.0, 0.0],
+                        [1.0, 0.0, 0.0, 0.0],
+                    ]
+                )
+            )
+        collapsed_loss = _writer_slot_basis_orthogonality_loss(writer)
+        with torch.no_grad():
+            writer.slot_embeddings.copy_(
+                torch.tensor(
+                    [
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                    ]
+                )
+            )
+        orthogonal_loss = _writer_slot_basis_orthogonality_loss(writer)
+        self.assertIsNotNone(collapsed_loss)
+        self.assertIsNotNone(orthogonal_loss)
+        self.assertGreater(float(collapsed_loss.item()), 0.5)
+        self.assertLess(float(orthogonal_loss.item()), 0.1)
+
     def test_latent_anchor_loss_combines_support_and_writer_cosines(self) -> None:
         current_support = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
         current_writer = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
@@ -405,6 +434,43 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         memory = writer.write(support_states, input_schema="support_set")
         self.assertEqual(list(memory.shape), [2, 4, 6])
         self.assertGreater(float(memory.var(dim=1).sum().item()), 0.0)
+
+    def test_transformer_writer_output_slot_basis_preserves_basis_signal(self) -> None:
+        class ZeroCrossAttention(torch.nn.Module):
+            def forward(self, query, key, value, need_weights=False):
+                return torch.zeros_like(query), None
+
+        writer = MemoryWriter(
+            embed_dim=6,
+            memory_slots=4,
+            arch="transformer",
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+            output_slot_basis_scale=1.0,
+        )
+        writer.support_cross_attn = ZeroCrossAttention()
+        writer.encoder = torch.nn.Identity()
+        writer.output_norm = torch.nn.Identity()
+        with torch.no_grad():
+            writer.state_proj.weight.zero_()
+            writer.state_proj.bias.zero_()
+        support_states = torch.zeros(2, 6, 6)
+        memory = writer.write(support_states, input_schema="support_set")
+        self.assertEqual(list(memory.shape), [2, 4, 6])
+        self.assertGreater(float(memory.var(dim=1).sum().item()), 0.0)
+
+    def test_writer_orthogonalize_slot_embeddings_preserves_mean_norm(self) -> None:
+        writer = MemoryWriter(embed_dim=8, memory_slots=4, arch="transformer", num_heads=2)
+        before_norm = float(writer.slot_embeddings.norm(dim=-1).mean().item())
+        writer.orthogonalize_slot_embeddings_()
+        after_norm = float(writer.slot_embeddings.norm(dim=-1).mean().item())
+        cosine = torch.nn.functional.normalize(writer.slot_embeddings, dim=-1) @ torch.nn.functional.normalize(
+            writer.slot_embeddings, dim=-1
+        ).T
+        mask = ~torch.eye(cosine.shape[0], dtype=torch.bool)
+        self.assertAlmostEqual(before_norm, after_norm, delta=0.1)
+        self.assertLess(float(cosine[mask].abs().mean().item()), 0.2)
 
     def test_mlp_writer_rejects_support_set_mode(self) -> None:
         writer = MemoryWriter(embed_dim=6, memory_slots=4, arch="mlp")
@@ -1744,6 +1810,143 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(summary["comparison_conclusion"], "informative")
             self.assertTrue(summary["rescue_selection_improved"])
             self.assertTrue(summary["rescue_reader_specialization_improved"])
+
+    def test_compare_tl_slot_basis_runs_reports_informative_when_geometry_improves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_reader_csv(name: str, rows: list[dict[str, object]]) -> Path:
+                path = root / name
+                fieldnames = sorted({key for row in rows for key in row})
+                with path.open("w") as handle:
+                    handle.write(",".join(fieldnames) + "\n")
+                    for row in rows:
+                        handle.write(",".join(str(row.get(field, "")) for field in fieldnames) + "\n")
+                return path
+
+            def write_train_events(name: str, event: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": [event]}))
+                return path
+
+            summary = compare_tl_slot_basis_runs(
+                sl8_summary_json=str(
+                    write_payload(
+                        "sl8.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 2,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 8,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_h4_k8_summary_json=str(
+                    write_payload(
+                        "h4k8.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 2,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_bridge_rescue_summary_json=str(
+                    write_payload(
+                        "bridge.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 2,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_slot_basis_summary_json=str(
+                    write_payload(
+                        "basis.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 4,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_h4_k8_reader_query_csv=str(
+                    write_reader_csv(
+                        "h4k8_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.1},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.1},
+                        ],
+                    )
+                ),
+                tl_bridge_rescue_reader_query_csv=str(
+                    write_reader_csv(
+                        "bridge_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.0},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 1, "reader_attention_entropy": 2.0},
+                        ],
+                    )
+                ),
+                tl_slot_basis_reader_query_csv=str(
+                    write_reader_csv(
+                        "basis_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 1.6},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 1, "reader_attention_entropy": 1.5},
+                        ],
+                    )
+                ),
+                tl_h4_k8_train_events_json=str(
+                    write_train_events(
+                        "h4k8_events.json",
+                        {
+                            "memory_long_effective_rank": 1.0,
+                            "memory_short_effective_rank": 1.1,
+                            "reader_attention_pairwise_cosine_mean": 1.0,
+                            "writer_slot_basis_pairwise_cosine_mean": 0.8,
+                        },
+                    )
+                ),
+                tl_bridge_rescue_train_events_json=str(
+                    write_train_events(
+                        "bridge_events.json",
+                        {
+                            "memory_long_effective_rank": 1.0,
+                            "memory_short_effective_rank": 1.2,
+                            "reader_attention_pairwise_cosine_mean": 1.0,
+                            "writer_slot_basis_pairwise_cosine_mean": 0.7,
+                        },
+                    )
+                ),
+                tl_slot_basis_train_events_json=str(
+                    write_train_events(
+                        "basis_events.json",
+                        {
+                            "memory_long_effective_rank": 1.3,
+                            "memory_short_effective_rank": 1.4,
+                            "reader_attention_pairwise_cosine_mean": 0.6,
+                            "writer_slot_basis_pairwise_cosine_mean": 0.1,
+                        },
+                    )
+                ),
+            )
+            self.assertEqual(summary["comparison_conclusion"], "success")
+            self.assertTrue(summary["basis_geometry_improved"])
+            self.assertTrue(summary["basis_reader_specialization_improved"])
 
 
 if __name__ == "__main__":

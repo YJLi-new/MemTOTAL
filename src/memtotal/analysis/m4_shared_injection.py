@@ -1775,6 +1775,15 @@ def _collect_train_event_norm_rows(
                 "reader_attention_diversity_weight": float(
                     event.get("reader_attention_diversity_weight", 0.0)
                 ),
+                "writer_slot_basis_orthogonality_loss": float(
+                    event.get("writer_slot_basis_orthogonality_loss", 0.0)
+                ),
+                "writer_slot_basis_orthogonality_weight": float(
+                    event.get("writer_slot_basis_orthogonality_weight", 0.0)
+                ),
+                "writer_slot_basis_pairwise_cosine_mean": float(
+                    event.get("writer_slot_basis_pairwise_cosine_mean", 0.0)
+                ),
                 "support_encoder_grad_norm": float(event.get("support_encoder_grad_norm", 0.0)),
                 "prefix_projector_grad_norm": float(event.get("prefix_projector_grad_norm", 0.0)),
                 "reader_grad_norm": float(event.get("reader_grad_norm", 0.0)),
@@ -2599,6 +2608,47 @@ def _reader_query_summary(reader_query_csv: str | None) -> dict[str, float]:
     }
 
 
+def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
+    if not train_events_json:
+        return {
+            "final_memory_long_effective_rank": 0.0,
+            "final_memory_short_effective_rank": 0.0,
+            "final_reader_attention_pairwise_cosine_mean": 0.0,
+            "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+        }
+    path = Path(train_events_json)
+    if not path.exists():
+        return {
+            "final_memory_long_effective_rank": 0.0,
+            "final_memory_short_effective_rank": 0.0,
+            "final_reader_attention_pairwise_cosine_mean": 0.0,
+            "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+        }
+    payload = json.loads(path.read_text())
+    if isinstance(payload, dict):
+        events = payload.get("events", [])
+    else:
+        events = payload
+    if not events:
+        return {
+            "final_memory_long_effective_rank": 0.0,
+            "final_memory_short_effective_rank": 0.0,
+            "final_reader_attention_pairwise_cosine_mean": 0.0,
+            "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+        }
+    event = events[-1]
+    return {
+        "final_memory_long_effective_rank": float(event.get("memory_long_effective_rank", 0.0)),
+        "final_memory_short_effective_rank": float(event.get("memory_short_effective_rank", 0.0)),
+        "final_reader_attention_pairwise_cosine_mean": float(
+            event.get("reader_attention_pairwise_cosine_mean", 0.0)
+        ),
+        "final_writer_slot_basis_pairwise_cosine_mean": float(
+            event.get("writer_slot_basis_pairwise_cosine_mean", 0.0)
+        ),
+    }
+
+
 def compare_tl_poc_runs(
     *,
     sl8_summary_json: str,
@@ -2812,6 +2862,183 @@ def compare_tl_bridge_rescue_runs(
         "rescue_collapse_delayed": rescue_collapse_delayed,
         "rescue_reader_specialization_improved": rescue_reader_specialization_improved,
         "rescue_bridge_supported_vs_sl8": rescue_bridge_supported_vs_sl8,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def compare_tl_slot_basis_runs(
+    *,
+    sl8_summary_json: str,
+    tl_h4_k8_summary_json: str,
+    tl_bridge_rescue_summary_json: str,
+    tl_slot_basis_summary_json: str,
+    tl_h4_k8_reader_query_csv: str | None = None,
+    tl_bridge_rescue_reader_query_csv: str | None = None,
+    tl_slot_basis_reader_query_csv: str | None = None,
+    tl_h4_k8_train_events_json: str | None = None,
+    tl_bridge_rescue_train_events_json: str | None = None,
+    tl_slot_basis_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    sl8 = json.loads(Path(sl8_summary_json).read_text())
+    tl_h4_k8 = json.loads(Path(tl_h4_k8_summary_json).read_text())
+    bridge_rescue = json.loads(Path(tl_bridge_rescue_summary_json).read_text())
+    slot_basis = json.loads(Path(tl_slot_basis_summary_json).read_text())
+    baseline_reader = _reader_query_summary(tl_h4_k8_reader_query_csv)
+    bridge_reader = _reader_query_summary(tl_bridge_rescue_reader_query_csv)
+    slot_basis_reader = _reader_query_summary(tl_slot_basis_reader_query_csv)
+    baseline_geometry = _train_geometry_summary(tl_h4_k8_train_events_json)
+    bridge_geometry = _train_geometry_summary(tl_bridge_rescue_train_events_json)
+    slot_basis_geometry = _train_geometry_summary(tl_slot_basis_train_events_json)
+
+    prior_best_unique = max(
+        baseline_reader["reader_query_argmax_unique_mean"],
+        bridge_reader["reader_query_argmax_unique_mean"],
+    )
+    prior_best_long_rank = max(
+        baseline_geometry["final_memory_long_effective_rank"],
+        bridge_geometry["final_memory_long_effective_rank"],
+    )
+    prior_best_short_rank = max(
+        baseline_geometry["final_memory_short_effective_rank"],
+        bridge_geometry["final_memory_short_effective_rank"],
+    )
+    prior_best_pairwise = min(
+        baseline_geometry["final_reader_attention_pairwise_cosine_mean"],
+        bridge_geometry["final_reader_attention_pairwise_cosine_mean"],
+    )
+
+    basis_selection_improved = bool(
+        bool(slot_basis.get("selection_passed", False))
+        and not bool(tl_h4_k8.get("selection_passed", False))
+        and not bool(bridge_rescue.get("selection_passed", False))
+    )
+    basis_primary_gate_improved = bool(
+        bool(slot_basis.get("screen248_test_gate_passed", False))
+        and not bool(tl_h4_k8.get("screen248_test_gate_passed", False))
+        and not bool(bridge_rescue.get("screen248_test_gate_passed", False))
+    )
+    basis_collapse_delayed = bool(
+        _later_onset(
+            slot_basis.get("dominant_label_collapse_onset_step"),
+            max(
+                int(tl_h4_k8.get("dominant_label_collapse_onset_step") or 0),
+                int(bridge_rescue.get("dominant_label_collapse_onset_step") or 0),
+            ),
+        )
+        or _later_onset(
+            slot_basis.get("cap_saturation_onset_step"),
+            max(
+                int(tl_h4_k8.get("cap_saturation_onset_step") or 0),
+                int(bridge_rescue.get("cap_saturation_onset_step") or 0),
+            ),
+        )
+    )
+    basis_reader_specialization_improved = bool(
+        slot_basis_reader["reader_query_argmax_unique_mean"] > prior_best_unique + 1e-6
+        or slot_basis_reader["reader_query_entropy_mean"]
+        + 1e-6
+        < min(
+            baseline_reader["reader_query_entropy_mean"],
+            bridge_reader["reader_query_entropy_mean"],
+        )
+    )
+    basis_geometry_improved = bool(
+        slot_basis_geometry["final_memory_long_effective_rank"] > prior_best_long_rank + 0.05
+        or slot_basis_geometry["final_memory_short_effective_rank"] > prior_best_short_rank + 0.05
+        or (
+            prior_best_pairwise > 0.0
+            and slot_basis_geometry["final_reader_attention_pairwise_cosine_mean"]
+            + 1e-6
+            < prior_best_pairwise
+        )
+    )
+    basis_bridge_supported_vs_sl8 = bool(
+        bool(slot_basis.get("screen248_test_gate_passed", False))
+        or _later_onset(
+            slot_basis.get("dominant_label_collapse_onset_step"),
+            sl8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            slot_basis.get("cap_saturation_onset_step"),
+            sl8.get("cap_saturation_onset_step"),
+        )
+        or basis_geometry_improved
+    )
+    basis_improves_over_prior = bool(
+        basis_selection_improved
+        or basis_primary_gate_improved
+        or basis_collapse_delayed
+        or basis_reader_specialization_improved
+        or basis_geometry_improved
+    )
+    if basis_primary_gate_improved or (
+        basis_bridge_supported_vs_sl8 and basis_improves_over_prior
+    ):
+        conclusion = "success"
+        failure_reason = ""
+    elif basis_improves_over_prior:
+        conclusion = "informative"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        failure_reason = "basis_not_alive"
+
+    return {
+        "sl8_selection_passed": bool(sl8.get("selection_passed", False)),
+        "sl8_selected_step": sl8.get("selected_step"),
+        "sl8_primary_gate_passed": bool(sl8.get("screen248_test_gate_passed", False)),
+        "sl8_cap_saturation_onset_step": sl8.get("cap_saturation_onset_step"),
+        "sl8_dominant_label_collapse_onset_step": sl8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_selection_passed": bool(tl_h4_k8.get("selection_passed", False)),
+        "tl_h4_k8_primary_gate_passed": bool(tl_h4_k8.get("screen248_test_gate_passed", False)),
+        "tl_bridge_rescue_selection_passed": bool(bridge_rescue.get("selection_passed", False)),
+        "tl_bridge_rescue_primary_gate_passed": bool(
+            bridge_rescue.get("screen248_test_gate_passed", False)
+        ),
+        "tl_slot_basis_selection_passed": bool(slot_basis.get("selection_passed", False)),
+        "tl_slot_basis_selected_step": slot_basis.get("selected_step"),
+        "tl_slot_basis_primary_gate_passed": bool(slot_basis.get("screen248_test_gate_passed", False)),
+        "tl_slot_basis_dominant_label_collapse_onset_step": slot_basis.get(
+            "dominant_label_collapse_onset_step"
+        ),
+        "tl_h4_k8_reader_query_argmax_unique_mean": baseline_reader["reader_query_argmax_unique_mean"],
+        "tl_bridge_rescue_reader_query_argmax_unique_mean": bridge_reader[
+            "reader_query_argmax_unique_mean"
+        ],
+        "tl_slot_basis_reader_query_argmax_unique_mean": slot_basis_reader[
+            "reader_query_argmax_unique_mean"
+        ],
+        "tl_h4_k8_reader_query_entropy_mean": baseline_reader["reader_query_entropy_mean"],
+        "tl_bridge_rescue_reader_query_entropy_mean": bridge_reader["reader_query_entropy_mean"],
+        "tl_slot_basis_reader_query_entropy_mean": slot_basis_reader["reader_query_entropy_mean"],
+        "tl_h4_k8_final_memory_long_effective_rank": baseline_geometry[
+            "final_memory_long_effective_rank"
+        ],
+        "tl_bridge_rescue_final_memory_long_effective_rank": bridge_geometry[
+            "final_memory_long_effective_rank"
+        ],
+        "tl_slot_basis_final_memory_long_effective_rank": slot_basis_geometry[
+            "final_memory_long_effective_rank"
+        ],
+        "tl_h4_k8_final_reader_attention_pairwise_cosine_mean": baseline_geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "tl_bridge_rescue_final_reader_attention_pairwise_cosine_mean": bridge_geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "tl_slot_basis_final_reader_attention_pairwise_cosine_mean": slot_basis_geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean": slot_basis_geometry[
+            "final_writer_slot_basis_pairwise_cosine_mean"
+        ],
+        "basis_selection_improved": basis_selection_improved,
+        "basis_primary_gate_improved": basis_primary_gate_improved,
+        "basis_collapse_delayed": basis_collapse_delayed,
+        "basis_reader_specialization_improved": basis_reader_specialization_improved,
+        "basis_geometry_improved": basis_geometry_improved,
+        "basis_bridge_supported_vs_sl8": basis_bridge_supported_vs_sl8,
         "comparison_conclusion": conclusion,
         "failure_reason": failure_reason,
     }

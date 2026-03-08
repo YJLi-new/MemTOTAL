@@ -1,0 +1,20 @@
+{
+  "analysis_mode": "m4_shared_injection_dynamics_recovery",
+  "attention_csv": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/prefix_attention_consumption.csv",
+  "content_gap_csv": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/content_gap_curve.csv",
+  "dual_gate_summary_json": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/dual_gate_summary.json",
+  "fixed64_report_generated": false,
+  "heldout_sane_bank_count": 0,
+  "pairwise_csv": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/dynamics_recovery_pairwise.csv",
+  "prefix_norm_csv": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/prefix_norm_drift.csv",
+  "reader_query_csv": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/reader_query_diagnostics.csv",
+  "report_path": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/val_selection_report.md",
+  "selected_step": null,
+  "selected_suite": null,
+  "selected_support_serialization": null,
+  "selection_json": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/selection.json",
+  "selection_passed": false,
+  "summary_csv": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/dynamics_recovery_summary.csv",
+  "summary_plot": "/root/autodl-tmp/results/generated/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/dynamics-recovery/summary.svg",
+  "support_bank_brittle": false
+}

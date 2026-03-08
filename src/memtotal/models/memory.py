@@ -53,12 +53,14 @@ class MemoryWriter(ManagedMemoryModule):
         transformer_layers: int = 1,
         dropout: float = 0.0,
         support_query_residual_scale: float = 0.0,
+        output_slot_basis_scale: float = 0.0,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.memory_slots = memory_slots
         self.arch = arch
         self.support_query_residual_scale = float(support_query_residual_scale)
+        self.output_slot_basis_scale = float(output_slot_basis_scale)
         hidden_dim = hidden_dim or (2 * embed_dim)
         if arch == "mlp":
             self.proj = nn.Sequential(
@@ -88,6 +90,16 @@ class MemoryWriter(ManagedMemoryModule):
             self.output_norm = nn.LayerNorm(embed_dim)
         else:
             raise ValueError(f"Unsupported writer architecture: {arch}")
+
+    def orthogonalize_slot_embeddings_(self) -> None:
+        if self.arch != "transformer":
+            return
+        with torch.no_grad():
+            original_mean_norm = self.slot_embeddings.norm(dim=-1).mean().clamp_min(1e-6)
+            orthogonal = torch.empty_like(self.slot_embeddings)
+            nn.init.orthogonal_(orthogonal)
+            orthogonal = orthogonal * original_mean_norm
+            self.slot_embeddings.copy_(orthogonal)
 
     def _pool_state(self, state: torch.Tensor) -> torch.Tensor:
         if state.ndim == 2:
@@ -123,7 +135,10 @@ class MemoryWriter(ManagedMemoryModule):
         slots = self.slot_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
         if input_schema == "pooled_state":
             conditioned_slots = slots + self.state_proj(pooled_state).unsqueeze(1)
-            return self.output_norm(self.encoder(conditioned_slots))
+            encoded_slots = self.output_norm(self.encoder(conditioned_slots))
+            if self.output_slot_basis_scale != 0.0:
+                encoded_slots = encoded_slots + (self.output_slot_basis_scale * slots)
+            return encoded_slots
 
         pooled_support_state = state.mean(dim=1)
         conditioned_slots = slots + self.state_proj(pooled_support_state).unsqueeze(1)
@@ -134,7 +149,10 @@ class MemoryWriter(ManagedMemoryModule):
             need_weights=False,
         )
         support_slots = attended_slots + (self.support_query_residual_scale * conditioned_slots)
-        return self.output_norm(self.encoder(support_slots))
+        encoded_slots = self.output_norm(self.encoder(support_slots))
+        if self.output_slot_basis_scale != 0.0:
+            encoded_slots = encoded_slots + (self.output_slot_basis_scale * slots)
+        return encoded_slots
 
 
 class MemoryReader(ManagedMemoryModule):

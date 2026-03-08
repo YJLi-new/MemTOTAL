@@ -2,10 +2,10 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不是“完全没信号”，但截至 `TL-PoC` 仍没有在预注册 FEVER gate 下稳定形成可泛化能力信号。最新结果说明：single-level objective side 的 same-schema warm-start、latent anchor、engaged dense teacher 都已经被单独测过；随后 two-level `Writer -> Reader -> Fuser -> Injector` 也已经真实接进 active FEVER harness。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
+`shared injection` 已经不是“完全没信号”，但截至 `TL slot-basis rescue` 仍没有在预注册 FEVER gate 下稳定形成可泛化能力信号。最新结果说明：single-level objective side 的 same-schema warm-start、latent anchor、engaged dense teacher 都已经被单独测过；随后 two-level `Writer -> Reader -> Fuser -> Injector` 也已经真实接进 active FEVER harness，并完成了 `TL-PoC -> TL bridge rescue -> TL slot-basis rescue` 三轮 B-1 追踪。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
 
 > main-chain consumption 已成立，deep prompt 也已成立；structured support set、trainable writer、same-schema warm-start、latent anchor 也都已显示出方向性增量。  
-> 但 current single-level path 已接近 objective-side 上限，而刚激活的 two-level path 又还没有把 `M_long -> Reader -> M_short` bridge 做活：当前 TL-PoC 的 `M_long/M_short` effective rank 仍接近 `1`，reader 对 long slots 的读法近似均匀，`H=4` 也没有比 `H=1` 更健康的 specialization。所以下一步不应继续做 `M5.4/M5.5` 式 objective 小修补，也还不到立刻做 receptor adaptation 的阶段，而应先修 two-level memory path 自身的 capacity / geometry。
+> 但 current single-level path 已接近 objective-side 上限，而刚激活的 two-level path 直到 `TL slot-basis rescue` 也还没有把 `M_long -> Reader -> M_short` semantic bridge 做活：`M_long` 的 write-side basis 现在已经能被显式约束拉出近 rank-1，可 `Reader/Fuser` 仍把它读成近均匀、低专化的 `M_short`。所以下一步不应继续做 `M5.4/M5.5` 式 objective 小修补，也还不到立刻做 receptor adaptation 的阶段，而应继续留在 `Failure mode B-1`，但 focus 收缩到 query-side readout geometry。
 
 ## 已经坐实的前提
 
@@ -42,6 +42,10 @@ review 路径：
 - `results/generated/review/m5-fever-dense-teacher-qwen25/`
 - `runs/review/tl-poc-fever-qwen25/`
 - `results/generated/review/tl-poc-fever-qwen25/`
+- `runs/review/tl-bridge-rescue-fever-qwen25/`
+- `results/generated/review/tl-bridge-rescue-fever-qwen25/`
+- `runs/review/tl-slot-basis-rescue-fever-qwen25/`
+- `results/generated/review/tl-slot-basis-rescue-fever-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -330,6 +334,29 @@ canonical 设计：
   - 这说明当前解释还可以再收紧一层：
     - two-level bridge 的 long-slot 写入几何本身就在极早期塌到了近 rank-1 manifold
     - reader/fuser 看到的不是“有结构的 `M_long`”，而只是一个近均匀可交换的退化槽集
+- 针对这个更收紧的 `B-1` 假设，这轮又补做了 `TL slot-basis rescue`：
+  - 结果位于 `results/generated/review/tl-slot-basis-rescue-fever-qwen25/`
+  - 新实现显式加入了：
+    - `MemoryWriter(output_slot_basis_scale=1.0)`，把 learned slot basis 直接残差回 writer 输出
+    - writer slot-basis warm-start orthogonalization
+    - `writer_slot_basis_orthogonality_loss`
+  - 顶层 comparison 记录：
+    - `comparison_conclusion=success`
+    - `basis_geometry_improved=true`
+    - `basis_reader_specialization_improved=true`
+  - 而关键几何指标第一次真的改善了：
+    - `tl_slot_basis_final_memory_long_effective_rank=1.6126`
+    - `tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean≈0`
+  - 但对应 run-summary 仍是：
+    - `selection_passed=false`
+    - `screen248_test_gate_passed=false`
+    - `dominant_label_collapse_onset_step=2`
+  - reader/fuser 侧仍几乎不动：
+    - `tl_slot_basis_final_reader_attention_pairwise_cosine_mean=1.0`
+    - `tl_slot_basis_reader_query_entropy_mean≈2.0777`
+  - 这说明当前解释还能再收紧一层：
+    - `M_long` 的 write-side basis 并不是完全做不起来
+    - 但 `Reader/Fuser` 仍然把更健康的 `M_long` 读成近均匀、低专化的 `M_short`
 
 ## 当前最稳妥的解释
 
@@ -342,7 +369,7 @@ canonical 设计：
 当前更合理的解释是：
 
 > shared injection 这条路已经证明了 main-chain access 和局部内容效应都存在。  
-> 但无论 shallow、deep、episode bank、structured support-set alignment、same-schema warm-start continuation，还是 engaged dense teacher KL，当前单层 shared-injection 路径都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
+> 但无论 shallow、deep、episode bank、structured support-set alignment、same-schema warm-start continuation，还是 engaged dense teacher KL，当前单层 shared-injection 路径都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号；而 two-level 路径虽然终于把 `M_long` 的 write-side basis 拉活了，semantic bridge 仍卡在 `Reader/Fuser` 的 query-side readout geometry。
 
 ## 现在不该做什么
 
@@ -362,11 +389,11 @@ canonical 设计：
 - 把 `control-safe-hinge` 固定为当前 least-collapsed single-level substrate objective
 - 继续保留已接通的 `pilot_memory_path_variant: two_level`
 - 下一轮优先修 `Failure mode B-1 / memory-side capacity-geometry problem`：
-  - 提高 `M_long` 的有效 rank
+  - 保留 `TL slot-basis rescue` 已验证有效的 write-side basis 约束
   - 让 `Reader` 摆脱对 `8` 个 long slots 的近均匀读法
   - 让 `H=4` 真正出现 specialization，而不是与 `H=1` 本质等价
-  - 避免 `M_short` 在压缩前就塌成近 rank-1
-  - 不把“更多 diversity regularization”继续当默认主药；下一轮应更直接约束 long-slot basis / factorization
+  - 避免 `M_short` 在压缩后继续停在 `≈1.2` 的低秩状态
+  - 不把“更多 long-slot diversity regularization”继续当默认主药；下一轮应更直接约束 `Reader/Fuser` 的 query-side readout geometry
 - 继续增强 observability，重点盯：
   - `memory_long_effective_rank`
   - `memory_short_effective_rank`

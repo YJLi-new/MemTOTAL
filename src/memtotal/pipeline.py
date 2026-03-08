@@ -65,6 +65,8 @@ class MemoryRuntime(nn.Module):
             num_heads=writer_cfg.get("num_heads", 4),
             transformer_layers=writer_cfg.get("transformer_layers", 1),
             dropout=writer_cfg.get("dropout", 0.0),
+            support_query_residual_scale=float(writer_cfg.get("support_query_residual_scale", 0.0)),
+            output_slot_basis_scale=float(writer_cfg.get("output_slot_basis_scale", 0.0)),
         )
         self.reader = MemoryReader(
             embed_dim=embed_dim,

@@ -1,0 +1,122 @@
+{
+  "events": [],
+  "snapshots": [
+    {
+      "accuracy": 0.29508196721311475,
+      "checkpoint_path": "",
+      "dominant_label_fraction": 1.0,
+      "macro_f1": 0.1518987341772152,
+      "mean_margin": -2.793804512649286,
+      "prefix_artifact_stats": {
+        "active_prefix_layers": [
+          0.0,
+          7.0,
+          14.0,
+          21.0,
+          27.0
+        ],
+        "layer_hidden_l2_by_layer": {
+          "0": 0.3658159077167511,
+          "14": 0.43352773785591125,
+          "21": 0.4784393608570099,
+          "27": 0.5393219590187073,
+          "7": 0.47687867283821106
+        },
+        "layer_key_l2_by_layer": {
+          "0": 3114.328125,
+          "14": 160.98196411132812,
+          "21": 91.95962524414062,
+          "27": 126.75918579101562,
+          "7": 157.56387329101562
+        },
+        "layer_slot_norm_max_by_layer": {
+          "0": 0.1293383687734604,
+          "14": 0.15327315032482147,
+          "21": 0.16916759312152863,
+          "27": 0.19069373607635498,
+          "7": 0.16861988604068756
+        },
+        "layer_slot_norm_mean_by_layer": {
+          "0": 0.1293383687734604,
+          "14": 0.15327315032482147,
+          "21": 0.16916760802268982,
+          "27": 0.19069373607635498,
+          "7": 0.16861988604068756
+        },
+        "layer_slot_norm_std_by_layer": {
+          "0": 0.0,
+          "14": 0.0,
+          "21": 1.4901161193847656e-08,
+          "27": 0.0,
+          "7": 0.0
+        },
+        "layer_value_l2_by_layer": {
+          "0": 28.998764038085938,
+          "14": 125.93059539794922,
+          "21": 117.7429428100586,
+          "27": 214.1256866455078,
+          "7": 73.55593872070312
+        },
+        "memory_long_l2": 0.0,
+        "memory_long_slot_norm_max": 0.0,
+        "memory_long_slot_norm_mean": 0.0,
+        "memory_long_slot_norm_std": 0.0,
+        "memory_long_slots": 8.0,
+        "memory_short_l2": 0.0,
+        "memory_short_pairwise_cosine_mean": 0.0,
+        "memory_short_slot_norm_max": 0.0,
+        "memory_short_slot_norm_mean": 0.0,
+        "memory_short_slot_norm_std": 0.0,
+        "memory_short_slots": 8.0,
+        "pilot_injection_mode": "sparse_deep_prefix",
+        "pilot_memory_path_variant": "two_level",
+        "pilot_projector_token_source": "short_slots",
+        "pilot_support_encoder_mode": "pooled_block",
+        "prefix_l2": 1.0339651107788086,
+        "prefix_slot_norm_max": 0.19069373607635498,
+        "prefix_slot_norm_mean": 0.16221855580806732,
+        "prefix_slot_norm_std": 0.020303837954998016,
+        "prefix_tokens": 8.0,
+        "reader_attention_entropy_max": 1.473654492656351e-06,
+        "reader_attention_entropy_mean": 1.473654492656351e-06,
+        "reader_attention_entropy_min": 1.473654492656351e-06,
+        "reader_attention_pairwise_cosine_mean": 0.0,
+        "reader_num_queries": 4.0,
+        "reader_query_entropy_by_query": [
+          1.473654492656351e-06,
+          1.473654492656351e-06,
+          1.473654492656351e-06,
+          1.473654492656351e-06
+        ],
+        "reader_slot_count": 8.0,
+        "reader_slot_coverage_fraction": 0.0,
+        "support_item_count": 0.0,
+        "support_item_hidden_l2": 0.0,
+        "support_item_hidden_norm_max": 0.0,
+        "support_item_hidden_norm_mean": 0.0,
+        "support_item_hidden_norm_std": 0.0,
+        "writer_memory_l2": 0.0,
+        "writer_slot_norm_max": 0.0,
+        "writer_slot_norm_mean": 0.0,
+        "writer_slot_norm_std": 0.0
+      },
+      "prefix_l2": 1.0339651107788086,
+      "prefix_slot_norm_max": 0.19069373607635498,
+      "prefix_slot_norm_mean": 0.16221855580806732,
+      "prefix_slot_norm_std": 0.020303837954998016,
+      "prefix_tokens": 8,
+      "snapshot_dir": "/root/autodl-tmp/runs/verify/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/phase2-selected/pilot-I-zero/snapshot_evals/step_0000",
+      "step": 0,
+      "support_item_count": 0.0,
+      "support_item_hidden_l2": 0.0,
+      "support_item_hidden_norm_max": 0.0,
+      "support_item_hidden_norm_mean": 0.0,
+      "support_item_hidden_norm_std": 0.0,
+      "task_case_dump_path": "/root/autodl-tmp/runs/verify/tl-slot-basis-rescue-fever-qwen25/tl-h4-k8-slot-basis-rescue/phase2-selected/pilot-I-zero/snapshot_evals/step_0000/task_case_dump.jsonl",
+      "writer_memory_l2": 0.0,
+      "writer_slot_norm_max": 0.0,
+      "writer_slot_norm_mean": 0.0,
+      "writer_slot_norm_std": 0.0
+    }
+  ]
+}

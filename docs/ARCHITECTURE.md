@@ -20,6 +20,8 @@
 - `scripts/run_m5_fever_objective_rewrite_qwen25.sh`: `M5.2` 的 writer objective rewrite 入口，会写出 `warm_start_manifest.json`，再并排跑 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂 continuation，并生成 top-level objective summary
 - `scripts/run_m5_fever_dense_teacher_qwen25.sh`: `M5.3` 的 dense teacher 入口，会写出 `warm_start_manifest.json`，再并排跑 `control-safe-hinge / canonical-dense-teacher` required pair，并生成 top-level dense-teacher summary
 - `scripts/run_tl_poc_fever_qwen25.sh`: `Workstream B / TL-PoC` 的两层 shared-injection 入口，会 materialize `SL-8 / TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 全套 configs，依次跑训练、dynamics、selection、post-selection gates，并生成 top-level TL-PoC summary
+- `scripts/run_tl_bridge_rescue_fever_qwen25.sh`: `TL bridge rescue` 的两层 FEVER follow-up，会在 `TL-H4-K8` 上加入 conditioned-slot residual 与 diversity regularization，验证 bridge 是否能先从最坏边界脱离
+- `scripts/run_tl_slot_basis_rescue_fever_qwen25.sh`: `TL slot-basis rescue` 的两层 FEVER follow-up，会在 `TL-H4-K8` 上加入 writer output slot-basis residual、slot-basis warm-start orthogonalization 与 orthogonality loss，验证 `M_long` 的 write-side basis/factorization 是否可救
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -474,6 +476,24 @@
     - 当前 bottleneck 已更具体地收缩到 long-slot write/read geometry
     - “再加一点 regularization”本身不是充分条件
     - receiver fallback 仍然不该先于更直接的 memory-side factorization / basis constraints
+  - `TL slot-basis rescue` 又把同一条 `B-1` 假设再往前推进了一步：
+    - `MemoryWriter` 新增 `output_slot_basis_scale`
+    - writer warm-start 现在可显式 `orthogonalize_slot_embeddings_()`
+    - 训练期新增 `writer_slot_basis_orthogonality_loss`
+  - 最新 `results/generated/review/tl-slot-basis-rescue-fever-qwen25/slot-basis-summary.json` 当前记录：
+    - `comparison_conclusion=success`
+    - `basis_geometry_improved=true`
+    - `tl_slot_basis_final_memory_long_effective_rank=1.6126`
+    - `tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean≈0`
+  - 但对应 `run-summary.json` 仍显示：
+    - `selection_passed=false`
+    - `screen248_test_gate_passed=false`
+    - `dominant_label_collapse_onset_step=2`
+    - `tl_slot_basis_final_reader_attention_pairwise_cosine_mean=1.0`
+  - 因而：
+    - 当前不再像“怎么把 `M_long` 从 rank-1 拉出来”
+    - 更像“为什么更健康的 `M_long` 仍然被 `Reader/Fuser` 读成近均匀、低专化的 `M_short`”
+    - 下一轮仍留在 `Failure mode B-1`，但 focus 已从 long-slot basis 转移到 query-side readout geometry
 
 ## M3 Failure Checks
 
