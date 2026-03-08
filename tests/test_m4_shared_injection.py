@@ -10,7 +10,10 @@ import torch
 
 from memtotal.analysis.m4_shared_injection import (
     run_m4_phase0_gate_sweep,
+    run_m4_prepare_fever_support_banks,
     run_m4_prepare_fever_validation_splits,
+    summarize_m4_support_bank_run,
+    compare_m4_anti_shortcut_runs,
     run_m4_shared_injection_compare,
     run_m4_shared_injection_dynamics_recovery,
     run_m4_shared_injection_dynamics_audit,
@@ -248,6 +251,58 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             ]
             self.assertEqual(len(audit_rows), 12)
 
+    @mock.patch("memtotal.analysis.m4_shared_injection._load_task_dataset_with_path")
+    def test_prepare_fever_support_banks_builds_unique_triads(self, mock_load_dataset) -> None:
+        rows = []
+        for label in ("SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"):
+            for index in range(12):
+                rows.append(
+                    {
+                        "id": f"{label}-{index:02d}",
+                        "label": label,
+                        "claim": f"claim-{label}-{index}",
+                        "evidence": f"evidence-{label}-{index}",
+                        "shuffled_memory_example_id": f"{label}-{(index + 1) % 12:02d}",
+                    }
+                )
+        mock_load_dataset.return_value = rows
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {
+                "runtime": {
+                    "support_bank_output_root": f"{tmpdir}/fever",
+                    "support_bank_episode_count": 4,
+                },
+                "task": {
+                    "dataset_path": "unused-dataset",
+                    "train_dataset_path": "unused-train",
+                },
+            }
+            output_dir = Path(tmpdir) / "analysis"
+            run_m4_prepare_fever_support_banks(config=config, output_dir=output_dir, dry_run=False)
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            manifest = json.loads(Path(metrics["manifest_path"]).read_text())
+            self.assertEqual(manifest["train_episode_count"], 4)
+            bank_paths = [
+                manifest["screen_val_canonical_bank_path"],
+                manifest["screen248_test_canonical_bank_path"],
+                manifest["screen248_test_heldout_a_bank_path"],
+                manifest["screen248_test_heldout_b_bank_path"],
+            ]
+            signatures = []
+            for path in bank_paths:
+                rows = [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+                self.assertEqual(len(rows), 6)
+                signatures.append(tuple(sorted(str(row["id"]) for row in rows)))
+            self.assertEqual(len(signatures), len(set(signatures)))
+            episode_bank = json.loads(Path(manifest["train_episode_bank_path"]).read_text())
+            self.assertEqual(len(episode_bank["episodes"]), 4)
+            for episode in episode_bank["episodes"]:
+                self.assertEqual(len(episode["support_rows"]), 6)
+                label_counts = {}
+                for row in episode["support_rows"]:
+                    label_counts[str(row["label"])] = label_counts.get(str(row["label"]), 0) + 1
+                self.assertEqual(label_counts, {"SUPPORTS": 2, "REFUTES": 2, "NOT_ENOUGH_INFO": 2})
+
     def test_support_masking_uniformly_samples_target_count(self) -> None:
         support_rows = [
             {"id": "s1", "label": "SUPPORTS", "shuffled_memory_example_id": "s2"},
@@ -267,6 +322,26 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
         self.assertEqual(len(sampled), 4)
         self.assertEqual(len({row["id"] for row in sampled}), 4)
         self.assertTrue(all(row["id"] in {"s1", "s2", "r1", "r2", "n1", "n2"} for row in sampled))
+
+    def test_support_masking_honors_explicit_target_count(self) -> None:
+        support_rows = [
+            {"id": "s1", "label": "SUPPORTS", "shuffled_memory_example_id": "s2"},
+            {"id": "s2", "label": "SUPPORTS", "shuffled_memory_example_id": "s3"},
+            {"id": "r1", "label": "REFUTES", "shuffled_memory_example_id": "r2"},
+            {"id": "r2", "label": "REFUTES", "shuffled_memory_example_id": "n1"},
+            {"id": "n1", "label": "NOT_ENOUGH_INFO", "shuffled_memory_example_id": "n2"},
+            {"id": "n2", "label": "NOT_ENOUGH_INFO", "shuffled_memory_example_id": "s1"},
+        ]
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(17)
+        sampled = _sample_support_examples_for_training(
+            support_examples=support_rows,
+            support_serialization_variant="triad_curated6",
+            generator=generator,
+            target_count=5,
+        )
+        self.assertEqual(len(sampled), 5)
+        self.assertEqual(len({row["id"] for row in sampled}), 5)
 
     @mock.patch("memtotal.analysis.m4_shared_injection._build_support_text_block")
     @mock.patch("memtotal.analysis.m4_shared_injection._evaluate_examples")
@@ -553,6 +628,122 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(selection["selected_suite"], "triad6")
             self.assertEqual(selection["selected_step"], 16)
             self.assertEqual(selection["i_real_checkpoint_path"], "/tmp/i_real_16.pt")
+
+    def test_summarize_m4_support_bank_run_marks_brittle_when_both_heldouts_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            selection_path = root / "selection.json"
+            selection_path.write_text(
+                json.dumps(
+                    {
+                        "selection_passed": True,
+                        "selected_suite": "run-a",
+                        "selected_step": 16,
+                        "selected_support_serialization": "triad_curated6",
+                        "selected_prompt_variant": "answer_slot_labels",
+                    }
+                )
+            )
+            run_metrics_path = root / "run_metrics.json"
+            run_metrics_path.write_text(json.dumps({"pilot_prefix_total_max_norm": 192.0}))
+            summary_csv = root / "summary.csv"
+            summary_csv.write_text(
+                "alias,dominant_label_fraction,step\n"
+                "I_real,0.50,0\n"
+                "I_real,1.00,16\n"
+            )
+            prefix_csv = root / "prefix.csv"
+            prefix_csv.write_text(
+                "arm_alias,prefix_l2,row_type,step\n"
+                "I_real,10.0,snapshot_aggregate,0\n"
+                "I_real,190.0,snapshot_aggregate,16\n"
+            )
+            canonical_metrics = root / "canonical.json"
+            canonical_metrics.write_text(json.dumps({"gate_passed": True}))
+            heldout_a = root / "heldout_a.json"
+            heldout_a.write_text(
+                json.dumps(
+                    {
+                        "gate_passed": False,
+                        "regressions_vs_base": 8,
+                        "flip_gain_vs_shuffle": -1,
+                        "flip_gain_vs_zero": -1,
+                        "i_real_task_score": 0.2,
+                        "a_task_score": 0.4,
+                    }
+                )
+            )
+            heldout_b = root / "heldout_b.json"
+            heldout_b.write_text(
+                json.dumps(
+                    {
+                        "gate_passed": False,
+                        "regressions_vs_base": 7,
+                        "flip_gain_vs_shuffle": -2,
+                        "flip_gain_vs_zero": 0,
+                        "i_real_task_score": 0.3,
+                        "a_task_score": 0.5,
+                    }
+                )
+            )
+            summary = summarize_m4_support_bank_run(
+                selection_json=str(selection_path),
+                run_metrics_json=str(run_metrics_path),
+                dynamics_summary_csv=str(summary_csv),
+                prefix_norm_csv=str(prefix_csv),
+                screen248_test_metrics_json=str(canonical_metrics),
+                heldout_metrics_by_name={
+                    "heldout_a": str(heldout_a),
+                    "heldout_b": str(heldout_b),
+                },
+            )
+            self.assertTrue(summary["screen248_test_gate_passed"])
+            self.assertTrue(summary["support_bank_brittle"])
+            self.assertEqual(summary["heldout_sane_bank_count"], 0)
+            self.assertEqual(summary["cap_saturation_onset_step"], 16)
+            self.assertEqual(summary["dominant_label_collapse_onset_step"], 16)
+            self.assertFalse(summary["milestone_gate_passed"])
+
+    def test_compare_m4_anti_shortcut_runs_prefers_run_a_when_only_run_a_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_a = root / "run_a.json"
+            run_b = root / "run_b.json"
+            run_a.write_text(
+                json.dumps(
+                    {
+                        "selection_passed": True,
+                        "screen248_test_gate_passed": True,
+                        "support_bank_brittle": False,
+                        "fixed64_gate_passed": False,
+                        "selected_step": 16,
+                        "cap_saturation_onset_step": None,
+                        "dominant_label_collapse_onset_step": None,
+                        "milestone_gate_passed": True,
+                    }
+                )
+            )
+            run_b.write_text(
+                json.dumps(
+                    {
+                        "selection_passed": True,
+                        "screen248_test_gate_passed": False,
+                        "support_bank_brittle": False,
+                        "fixed64_gate_passed": False,
+                        "selected_step": 32,
+                        "cap_saturation_onset_step": 16,
+                        "dominant_label_collapse_onset_step": 16,
+                        "milestone_gate_passed": False,
+                    }
+                )
+            )
+            summary = compare_m4_anti_shortcut_runs(
+                run_a_summary_json=str(run_a),
+                run_b_summary_json=str(run_b),
+            )
+            self.assertEqual(summary["comparison_conclusion"], "run_a_passes_run_b_fails")
+            self.assertTrue(summary["run_a_primary_gate_passed"])
+            self.assertFalse(summary["run_b_primary_gate_passed"])
 
 
 if __name__ == "__main__":

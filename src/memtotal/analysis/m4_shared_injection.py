@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import csv
+import itertools
 import json
 import math
 from pathlib import Path
@@ -23,7 +24,9 @@ from memtotal.training.m4_shared_injection import (
     _build_support_text_block,
     _classification_metrics_from_rows,
     _evaluate_examples,
+    _merge_example_lookup,
     _prefix_stats,
+    _resolve_support_lookup_dataset_paths,
 )
 from memtotal.training.m4_shared_injection import _load_task_dataset_with_path
 from memtotal.utils.io import write_json, write_jsonl
@@ -231,6 +234,159 @@ def run_m4_prepare_fever_validation_splits(
     }
     write_json(manifest_path, metrics)
     write_json(output_dir / "metrics.json", metrics)
+
+
+def _ordered_label_pairs(
+    rows: list[dict[str, Any]],
+    *,
+    namespace: str,
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    if len(rows) < 2:
+        raise ValueError(f"Need at least two rows to build support pairs for namespace={namespace}.")
+    ranked_rows = sorted(rows, key=lambda row: _stable_hash_rank(f"{namespace}::row::{row['id']}"))
+    pairs = list(itertools.combinations(ranked_rows, 2))
+    pairs.sort(
+        key=lambda pair: _stable_hash_rank(
+            f"{namespace}::pair::{pair[0]['id']}::{pair[1]['id']}"
+        )
+    )
+    return pairs
+
+
+def _episode_from_pair_lookup(
+    pair_lookup: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    *,
+    pair_index: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for label in FEVER_LABEL_ORDER:
+        pairs = pair_lookup[label]
+        if pair_index >= len(pairs):
+            raise ValueError(
+                f"Pair index {pair_index} is out of range for label {label}; only {len(pairs)} pairs available."
+            )
+        for row in pairs[pair_index]:
+            row_copy = dict(row)
+            row_id = str(row_copy["id"])
+            if row_id in seen_ids:
+                raise ValueError(f"Duplicate support id {row_id} encountered in pair_index={pair_index}.")
+            seen_ids.add(row_id)
+            rows.append(row_copy)
+    return rows
+
+
+def _support_bank_signature(rows: list[dict[str, Any]]) -> str:
+    return "|".join(sorted(str(row["id"]) for row in rows))
+
+
+def run_m4_prepare_fever_support_banks(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    train_dataset_path = str(config["task"].get("train_dataset_path", config["task"]["dataset_path"]))
+    train_rows = _load_task_dataset_with_path(config, train_dataset_path)
+    train_rows = [dict(row) for row in train_rows]
+    by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for row in train_rows:
+        label = str(row.get("label", "")).strip()
+        if label in by_label:
+            by_label[label].append(row)
+    pair_lookup = {
+        label: _ordered_label_pairs(rows, namespace=f"m46::{label}")
+        for label, rows in by_label.items()
+    }
+    episode_count = int(config["runtime"].get("support_bank_episode_count", 32))
+    reserved_banks = (
+        ("screen_val_canonical", 0),
+        ("screen248_test_canonical", 1),
+        ("screen248_test_heldout_a", 2),
+        ("screen248_test_heldout_b", 3),
+    )
+    required_pair_count = len(reserved_banks) + episode_count
+    for label, pairs in pair_lookup.items():
+        if len(pairs) < required_pair_count:
+            raise ValueError(
+                f"Not enough unique pairs for label {label}; need {required_pair_count}, got {len(pairs)}."
+            )
+    data_root = Path(config["runtime"].get("support_bank_output_root", "data/benchmarks/pilots/fever"))
+    data_root.mkdir(parents=True, exist_ok=True)
+    train_episode_bank_path = data_root / "m46-train-triad-episode-bank32.json"
+    val_canonical_path = data_root / "m46-screen-val-canonical-support6.jsonl"
+    test_canonical_path = data_root / "m46-screen248-test-canonical-support6.jsonl"
+    heldout_a_path = data_root / "m46-screen248-test-heldout-a-support6.jsonl"
+    heldout_b_path = data_root / "m46-screen248-test-heldout-b-support6.jsonl"
+    manifest_path = data_root / "m46-support-bank-manifest.json"
+    path_by_bank = {
+        "screen_val_canonical": val_canonical_path,
+        "screen248_test_canonical": test_canonical_path,
+        "screen248_test_heldout_a": heldout_a_path,
+        "screen248_test_heldout_b": heldout_b_path,
+    }
+    seen_signatures: set[str] = set()
+    bank_rows: dict[str, list[dict[str, Any]]] = {}
+    for bank_name, pair_index in reserved_banks:
+        rows = _episode_from_pair_lookup(pair_lookup, pair_index=pair_index)
+        signature = _support_bank_signature(rows)
+        if signature in seen_signatures:
+            raise ValueError(f"Duplicate support bank signature detected for {bank_name}.")
+        seen_signatures.add(signature)
+        bank_rows[bank_name] = rows
+        write_jsonl(path_by_bank[bank_name], rows)
+    train_episodes: list[dict[str, Any]] = []
+    for episode_offset in range(episode_count):
+        pair_index = len(reserved_banks) + episode_offset
+        rows = _episode_from_pair_lookup(pair_lookup, pair_index=pair_index)
+        signature = _support_bank_signature(rows)
+        if signature in seen_signatures:
+            raise ValueError(f"Duplicate train support episode signature detected at pair_index={pair_index}.")
+        seen_signatures.add(signature)
+        train_episodes.append(
+            {
+                "episode_id": f"train_ep_{episode_offset:03d}",
+                "source_split": "screen_train",
+                "label_counts": {label: 2 for label in FEVER_LABEL_ORDER},
+                "support_rows": rows,
+            }
+        )
+    write_json(
+        train_episode_bank_path,
+        {
+            "analysis_mode": "m4_prepare_fever_support_banks",
+            "source_dataset_path": str(Path(train_dataset_path).resolve()),
+            "episode_count": episode_count,
+            "episodes": train_episodes,
+        },
+    )
+    manifest = {
+        "analysis_mode": "m4_prepare_fever_support_banks",
+        "source_dataset_path": str(Path(train_dataset_path).resolve()),
+        "train_label_distribution": _label_distribution(train_rows),
+        "train_episode_bank_path": str(train_episode_bank_path.resolve()),
+        "train_episode_count": len(train_episodes),
+        "screen_val_canonical_bank_path": str(val_canonical_path.resolve()),
+        "screen248_test_canonical_bank_path": str(test_canonical_path.resolve()),
+        "screen248_test_heldout_a_bank_path": str(heldout_a_path.resolve()),
+        "screen248_test_heldout_b_bank_path": str(heldout_b_path.resolve()),
+        "screen_val_canonical_ids": [str(row["id"]) for row in bank_rows["screen_val_canonical"]],
+        "screen248_test_canonical_ids": [str(row["id"]) for row in bank_rows["screen248_test_canonical"]],
+        "screen248_test_heldout_a_ids": [str(row["id"]) for row in bank_rows["screen248_test_heldout_a"]],
+        "screen248_test_heldout_b_ids": [str(row["id"]) for row in bank_rows["screen248_test_heldout_b"]],
+        "train_episode_ids": [str(episode["episode_id"]) for episode in train_episodes],
+        "train_episode_label_counts": {label: 2 for label in FEVER_LABEL_ORDER},
+    }
+    write_json(manifest_path, manifest)
+    write_json(
+        output_dir / "metrics.json",
+        {
+            **manifest,
+            "manifest_path": str(manifest_path.resolve()),
+        },
+    )
 
 
 def _example_text(example: dict[str, Any]) -> str:
@@ -911,6 +1067,10 @@ def run_m4_shared_injection_compare(
 ) -> None:
     del dry_run
     output_dir.mkdir(parents=True, exist_ok=True)
+    runtime_cfg = dict(config.get("runtime", {}))
+    flip_gain_min = int(runtime_cfg.get("pilot_compare_flip_gain_min", 2))
+    macro_f1_gap_min = float(runtime_cfg.get("pilot_compare_macro_f1_gap_min", 0.05))
+    regressions_max = int(runtime_cfg.get("pilot_compare_regressions_max", 1))
     runs = _collect_shared_injection_runs(Path(input_root).resolve())
     required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
     missing = sorted(required - set(runs))
@@ -981,19 +1141,27 @@ def run_m4_shared_injection_compare(
     _write_csv(pairwise_csv, pairwise_rows)
     summary_lookup = {row["mode"]: row for row in arm_summaries}
     regressions_vs_base = int(pairwise_lookup[("A", "I_real")]["left_correct_to_right_wrong"])
+    flip_gain_vs_shuffle = int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"])
+    flip_gain_vs_zero = int(pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"])
+    macro_f1_gap_vs_shuffle = float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_shuffle"]["macro_f1"])
+    macro_f1_gap_vs_zero = float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_zero"]["macro_f1"])
     gate_passed = bool(
-        int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]) >= 2
-        and (float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_shuffle"]["macro_f1"])) >= 0.05
-        and int(pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]) >= 2
-        and (float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_zero"]["macro_f1"])) >= 0.05
+        flip_gain_vs_shuffle >= flip_gain_min
+        and macro_f1_gap_vs_shuffle >= macro_f1_gap_min
+        and flip_gain_vs_zero >= flip_gain_min
+        and macro_f1_gap_vs_zero >= macro_f1_gap_min
         and float(summary_lookup["I_real"]["primary_score"]) >= float(summary_lookup["A"]["primary_score"])
-        and regressions_vs_base <= 1
+        and regressions_vs_base <= regressions_max
     )
     report_lines = [
         "# M4 Shared Injection Compare",
         "",
         f"- gate_passed: {gate_passed}",
         f"- regressions_vs_base: {regressions_vs_base}",
+        f"- flip_gain_vs_shuffle: {flip_gain_vs_shuffle}",
+        f"- flip_gain_vs_zero: {flip_gain_vs_zero}",
+        f"- macro_f1_gap_vs_shuffle: {macro_f1_gap_vs_shuffle:.4f}",
+        f"- macro_f1_gap_vs_zero: {macro_f1_gap_vs_zero:.4f}",
         "",
         "## Arm Summary",
     ]
@@ -1020,6 +1188,21 @@ def run_m4_shared_injection_compare(
             "analysis_mode": "m4_shared_injection_compare",
             "gate_passed": gate_passed,
             "regressions_vs_base": regressions_vs_base,
+            "flip_gain_vs_shuffle": flip_gain_vs_shuffle,
+            "flip_gain_vs_zero": flip_gain_vs_zero,
+            "macro_f1_gap_vs_shuffle": macro_f1_gap_vs_shuffle,
+            "macro_f1_gap_vs_zero": macro_f1_gap_vs_zero,
+            "i_real_task_score": float(summary_lookup["I_real"]["primary_score"]),
+            "a_task_score": float(summary_lookup["A"]["primary_score"]),
+            "i_shuffle_task_score": float(summary_lookup["I_shuffle"]["primary_score"]),
+            "i_zero_task_score": float(summary_lookup["I_zero"]["primary_score"]),
+            "i_real_macro_f1": float(summary_lookup["I_real"]["macro_f1"]),
+            "a_macro_f1": float(summary_lookup["A"]["macro_f1"]),
+            "i_shuffle_macro_f1": float(summary_lookup["I_shuffle"]["macro_f1"]),
+            "i_zero_macro_f1": float(summary_lookup["I_zero"]["macro_f1"]),
+            "compare_flip_gain_min": flip_gain_min,
+            "compare_macro_f1_gap_min": macro_f1_gap_min,
+            "compare_regressions_max": regressions_max,
             "summary_csv": str(summary_csv.resolve()),
             "summary_plot": str(summary_plot.resolve()),
             "pairwise_compare_csv": str(pairwise_csv.resolve()),
@@ -1276,6 +1459,7 @@ def _attention_rows_for_snapshot(
     config: dict[str, Any],
     support_examples: list[dict[str, Any]],
     audit_examples: list[SharedInjectionExampleCache],
+    example_lookup: dict[str, dict[str, Any]],
     support_serialization_variant: str,
     writer_memory_control: str,
     checkpoint_path: str | None,
@@ -1291,10 +1475,6 @@ def _attention_rows_for_snapshot(
     )
     if checkpoint_path:
         runtime.load_injection_checkpoint(checkpoint_path)
-    example_lookup = {
-        str(row["id"]): row
-        for row in [*support_examples, *[cache.example for cache in audit_examples]]
-    }
     support_text_block = _build_support_text_block(
         support_examples,
         memory_control=writer_memory_control,
@@ -1607,6 +1787,9 @@ def run_m4_shared_injection_dynamics_recovery(
         "selected_support_serialization": None if selected is None else str(selected["support_serialization_variant"]),
         "selected_prompt_variant": None,
         "screen248_test_gate_passed": False,
+        "support_bank_brittle": False,
+        "heldout_sane_bank_count": 0,
+        "fixed64_report_generated": False,
         "fixed64_gate_passed": False,
         "milestone_gate_passed": False,
         "i_real_checkpoint_path": "" if selected is None else str(selected["i_real_checkpoint_path"]),
@@ -1622,6 +1805,17 @@ def run_m4_shared_injection_dynamics_recovery(
     audit_dataset_path = str(config["runtime"].get("pilot_val_audit_dataset_path", "")).strip()
     if audit_dataset_path:
         support_examples = _load_task_dataset_with_path(config, str(config["task"]["support_dataset_path"]))
+        lookup_paths = _resolve_support_lookup_dataset_paths(
+            config,
+            default_paths=[
+                str(config["task"]["support_dataset_path"]),
+                str(config["task"].get("train_dataset_path", config["task"]["support_dataset_path"])),
+                str(config["task"]["dataset_path"]),
+            ],
+        )
+        lookup_examples: list[dict[str, Any]] = []
+        for lookup_path in lookup_paths:
+            lookup_examples.extend(_load_task_dataset_with_path(config, lookup_path))
         for suite_name, suite_root in sorted(suite_roots.items()):
             runs = _collect_shared_injection_runs(suite_root)
             prompt_variant = str(runs["I_real"][0].get("prompt_variant", ""))
@@ -1629,6 +1823,11 @@ def run_m4_shared_injection_dynamics_recovery(
                 config,
                 audit_dataset_path,
                 prompt_variant=prompt_variant,
+            )
+            attention_lookup = _merge_example_lookup(
+                support_examples,
+                [cache.example for cache in audit_examples],
+                lookup_examples,
             )
             snapshots = {alias: _load_snapshot_eval_rows(run_dir) for alias, (_, run_dir) in runs.items()}
             for step in sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"])):
@@ -1641,6 +1840,7 @@ def run_m4_shared_injection_dynamics_recovery(
                             config=config,
                             support_examples=support_examples,
                             audit_examples=audit_examples,
+                            example_lookup=attention_lookup,
                             support_serialization_variant=suite_support_variant[suite_name],
                             writer_memory_control=memory_control,
                             checkpoint_path=checkpoint_path,
@@ -1682,6 +1882,9 @@ def run_m4_shared_injection_dynamics_recovery(
         {
             "selection_passed": bool(selection_payload["selection_passed"]),
             "screen248_test_gate_passed": bool(selection_payload["screen248_test_gate_passed"]),
+            "support_bank_brittle": bool(selection_payload["support_bank_brittle"]),
+            "heldout_sane_bank_count": int(selection_payload["heldout_sane_bank_count"]),
+            "fixed64_report_generated": bool(selection_payload["fixed64_report_generated"]),
             "fixed64_gate_passed": bool(selection_payload["fixed64_gate_passed"]),
             "milestone_gate_passed": bool(selection_payload["milestone_gate_passed"]),
         },
@@ -1693,6 +1896,9 @@ def run_m4_shared_injection_dynamics_recovery(
             f"- selected_step: {selection_payload['selected_step']}",
             f"- selected_support_serialization: {selection_payload['selected_support_serialization']}",
             f"- screen248_test_gate_passed: {selection_payload['screen248_test_gate_passed']}",
+            f"- support_bank_brittle: {selection_payload['support_bank_brittle']}",
+            f"- heldout_sane_bank_count: {selection_payload['heldout_sane_bank_count']}",
+            f"- fixed64_report_generated: {selection_payload['fixed64_report_generated']}",
             f"- fixed64_gate_passed: {selection_payload['fixed64_gate_passed']}",
             f"- milestone_gate_passed: {selection_payload['milestone_gate_passed']}",
             "",
@@ -1715,6 +1921,9 @@ def run_m4_shared_injection_dynamics_recovery(
             "selected_suite": selection_payload["selected_suite"],
             "selected_step": selection_payload["selected_step"],
             "selected_support_serialization": selection_payload["selected_support_serialization"],
+            "support_bank_brittle": bool(selection_payload["support_bank_brittle"]),
+            "heldout_sane_bank_count": int(selection_payload["heldout_sane_bank_count"]),
+            "fixed64_report_generated": bool(selection_payload["fixed64_report_generated"]),
             "summary_csv": str(summary_csv.resolve()),
             "pairwise_csv": str(pairwise_csv.resolve()),
             "content_gap_csv": str(content_gap_csv.resolve()),
@@ -1726,3 +1935,157 @@ def run_m4_shared_injection_dynamics_recovery(
             "report_path": str(report_path.resolve()),
         },
     )
+
+
+def _load_optional_metrics(path: str | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    return json.loads(Path(path).read_text())
+
+
+def _load_csv_rows(path: str) -> list[dict[str, Any]]:
+    with Path(path).open(newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _onset_step_from_prefix_norm_csv(prefix_norm_csv: str, *, total_cap: float) -> int | None:
+    if total_cap <= 0.0:
+        return None
+    threshold = total_cap * 0.95
+    rows = _load_csv_rows(prefix_norm_csv)
+    matching_steps = sorted(
+        {
+            int(row["step"])
+            for row in rows
+            if row.get("row_type") == "snapshot_aggregate"
+            and row.get("arm_alias") == "I_real"
+            and float(row.get("prefix_l2", 0.0) or 0.0) >= threshold
+        }
+    )
+    return None if not matching_steps else matching_steps[0]
+
+
+def _onset_step_from_dominant_label_csv(summary_csv: str) -> int | None:
+    rows = _load_csv_rows(summary_csv)
+    matching_steps = sorted(
+        {
+            int(row["step"])
+            for row in rows
+            if row.get("alias") == "I_real"
+            and float(row.get("dominant_label_fraction", 0.0) or 0.0) >= 0.99
+        }
+    )
+    return None if not matching_steps else matching_steps[0]
+
+
+def _heldout_bank_is_sane(compare_metrics: dict[str, Any]) -> bool:
+    if not compare_metrics:
+        return False
+    return bool(
+        float(compare_metrics.get("i_real_task_score", 0.0)) >= float(compare_metrics.get("a_task_score", 0.0))
+        and int(compare_metrics.get("flip_gain_vs_shuffle", -10**9)) >= 0
+        and int(compare_metrics.get("flip_gain_vs_zero", -10**9)) >= 0
+        and int(compare_metrics.get("regressions_vs_base", 10**9)) <= 4
+    )
+
+
+def summarize_m4_support_bank_run(
+    *,
+    selection_json: str,
+    run_metrics_json: str,
+    dynamics_summary_csv: str,
+    prefix_norm_csv: str,
+    screen248_test_metrics_json: str | None = None,
+    heldout_metrics_by_name: dict[str, str] | None = None,
+    fixed64_metrics_json: str | None = None,
+) -> dict[str, Any]:
+    selection = json.loads(Path(selection_json).read_text())
+    run_metrics = json.loads(Path(run_metrics_json).read_text())
+    screen248_test_metrics = _load_optional_metrics(screen248_test_metrics_json)
+    heldout_results: dict[str, Any] = {}
+    sane_count = 0
+    for name, path in sorted((heldout_metrics_by_name or {}).items()):
+        compare_metrics = _load_optional_metrics(path)
+        sane = _heldout_bank_is_sane(compare_metrics)
+        sane_count += int(sane)
+        heldout_results[name] = {
+            "metrics_path": str(Path(path).resolve()),
+            "gate_passed": bool(compare_metrics.get("gate_passed", False)),
+            "sane": sane,
+            "regressions_vs_base": int(compare_metrics.get("regressions_vs_base", 0)),
+            "flip_gain_vs_shuffle": int(compare_metrics.get("flip_gain_vs_shuffle", 0)),
+            "flip_gain_vs_zero": int(compare_metrics.get("flip_gain_vs_zero", 0)),
+            "i_real_task_score": float(compare_metrics.get("i_real_task_score", 0.0)),
+            "a_task_score": float(compare_metrics.get("a_task_score", 0.0)),
+        }
+    screen248_test_gate_passed = bool(screen248_test_metrics.get("gate_passed", False))
+    support_bank_brittle = bool(
+        screen248_test_gate_passed and heldout_results and sane_count == 0
+    )
+    fixed64_metrics = _load_optional_metrics(fixed64_metrics_json)
+    fixed64_report_generated = bool(fixed64_metrics_json)
+    total_cap = float(run_metrics.get("pilot_prefix_total_max_norm", 0.0))
+    summary = {
+        "selection_passed": bool(selection.get("selection_passed", False)),
+        "selected_suite": selection.get("selected_suite"),
+        "selected_step": selection.get("selected_step"),
+        "selected_support_serialization": selection.get("selected_support_serialization"),
+        "selected_prompt_variant": selection.get("selected_prompt_variant"),
+        "screen248_test_gate_passed": screen248_test_gate_passed,
+        "screen248_test_metrics_path": (
+            "" if not screen248_test_metrics_json else str(Path(screen248_test_metrics_json).resolve())
+        ),
+        "heldout_results": heldout_results,
+        "heldout_sane_bank_count": sane_count,
+        "support_bank_brittle": support_bank_brittle,
+        "fixed64_report_generated": fixed64_report_generated,
+        "fixed64_gate_passed": bool(fixed64_metrics.get("gate_passed", False)),
+        "fixed64_metrics_path": "" if not fixed64_metrics_json else str(Path(fixed64_metrics_json).resolve()),
+        "milestone_gate_passed": bool(
+            selection.get("selection_passed", False)
+            and screen248_test_gate_passed
+            and not support_bank_brittle
+        ),
+        "cap_saturation_onset_step": _onset_step_from_prefix_norm_csv(prefix_norm_csv, total_cap=total_cap),
+        "dominant_label_collapse_onset_step": _onset_step_from_dominant_label_csv(dynamics_summary_csv),
+        "pilot_prefix_total_max_norm": total_cap,
+    }
+    return summary
+
+
+def compare_m4_anti_shortcut_runs(
+    *,
+    run_a_summary_json: str,
+    run_b_summary_json: str,
+) -> dict[str, Any]:
+    run_a = json.loads(Path(run_a_summary_json).read_text())
+    run_b = json.loads(Path(run_b_summary_json).read_text())
+    conclusion = "run_a_equals_run_b"
+    if bool(run_a.get("milestone_gate_passed")) and not bool(run_b.get("milestone_gate_passed")):
+        conclusion = "run_a_passes_run_b_fails"
+    elif not bool(run_a.get("milestone_gate_passed")) and not bool(run_b.get("milestone_gate_passed")):
+        a_cap = run_a.get("cap_saturation_onset_step")
+        b_cap = run_b.get("cap_saturation_onset_step")
+        a_collapse = run_a.get("dominant_label_collapse_onset_step")
+        b_collapse = run_b.get("dominant_label_collapse_onset_step")
+        a_less_saturated = a_cap is None or (b_cap is not None and int(a_cap) > int(b_cap))
+        a_less_collapsed = a_collapse is None or (b_collapse is not None and int(a_collapse) > int(b_collapse))
+        if a_less_saturated or a_less_collapsed:
+            conclusion = "both_fail_run_a_less_collapsed"
+    return {
+        "run_a_selection_passed": bool(run_a.get("selection_passed", False)),
+        "run_b_selection_passed": bool(run_b.get("selection_passed", False)),
+        "run_a_primary_gate_passed": bool(run_a.get("screen248_test_gate_passed", False)),
+        "run_b_primary_gate_passed": bool(run_b.get("screen248_test_gate_passed", False)),
+        "run_a_support_bank_brittle": bool(run_a.get("support_bank_brittle", False)),
+        "run_b_support_bank_brittle": bool(run_b.get("support_bank_brittle", False)),
+        "run_a_fixed64_gate_passed": bool(run_a.get("fixed64_gate_passed", False)),
+        "run_b_fixed64_gate_passed": bool(run_b.get("fixed64_gate_passed", False)),
+        "run_a_selected_step": run_a.get("selected_step"),
+        "run_b_selected_step": run_b.get("selected_step"),
+        "run_a_cap_saturation_onset_step": run_a.get("cap_saturation_onset_step"),
+        "run_b_cap_saturation_onset_step": run_b.get("cap_saturation_onset_step"),
+        "run_a_dominant_label_collapse_onset_step": run_a.get("dominant_label_collapse_onset_step"),
+        "run_b_dominant_label_collapse_onset_step": run_b.get("dominant_label_collapse_onset_step"),
+        "comparison_conclusion": conclusion,
+    }

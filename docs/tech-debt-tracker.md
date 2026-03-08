@@ -3,16 +3,15 @@
 ## Open
 
 - 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
-- `M4.5` sparse deep prompt 已经把 shared injection 主线推进到更强主链路注入，但最新 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/selection.json` 仍是 `selection_passed=false`。当前新的第一优先级 tech debt 不再是“有没有层内控制力”，而是：
-  - `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap
-  - `I_real` 虽然在 `step64` 出现 `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=2`
-  - 但同一步仍有 `regressions_vs_base=18`
-  - `dominant_label_fraction` 从 `step16` 起基本塌到 `1.0`
-  - 这说明 deep prompt 当前更像在学强偏置前缀，而不是稳定的 content-sensitive memory use
+- `M4.6` anti-shortcut deep prompt 已经把“static support memorization 是否是主因”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/anti-shortcut-comparison.json` 显示 `comparison_conclusion=run_a_equals_run_b`。当前新的第一优先级 tech debt 不再是“要不要把 triad6 换成 episode bank”，而是：
+  - 为什么 `Run A=episode_bank` 与 `Run B=static triad6` 都会在 `step4` 出现 `dominant_label_collapse`
+  - 为什么两条 run 都会在 `step80` 左右进入 cap saturation
+  - 为什么 `I_real` 只能恢复出弱的 `vs_zero` 信号，却始终拉不开 `vs_shuffle`
+  - 当前是否已经需要把 writer latent 直接对齐到 frozen Qwen 的决策方向
 - 因而，当前 top tech debt 已进一步收缩成：
-  - 如何防止 sparse deep prompt 在早期直接撞上 norm cap
-  - 如何把 `real` 与 `shuffle` 的层内控制轨迹真正拉开
-  - 如果继续收紧 projector 自由度仍不过 gate，何时重写 writer objective，使 latent 直接对齐 frozen reasoner 的最终行为
+  - `shared injection` 的 shortcut attractor 是如何形成的
+  - writer / projector / frozen-reasoner 的梯度与表示错配具体发生在哪里
+  - 下一轮 `M5 writer–reasoner alignment` 应采用怎样的 task-first objective，才能把 probe-readable latent 变成 reasoner-readable control
 - 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
 - `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。
 - `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
@@ -26,10 +25,11 @@
 - 这条 tech debt 现在已经不再是“下一轮若继续 shared injection”；`M4.5` 已经把 deep prompt 实做出来并真实跑完。因此当前文档里凡是还把 `deep prompt / per-layer prefix` 写成“未来 fallback”的地方，都应视为待清理历史表述。
 - 因而当前最应优先补的不是新的 score-side residual family，而是：
   - 继续把 `shared injection` 当作主线
-  - 在 `screen248-train / screen248-val / fixed64-test` 的预注册口径下继续做稳定训练
-  - 但不再把“多一个浅层 norm tweak”当成主解
-  - 更合理的 next step 是 `triad6 + 更强主链路注入（deep prompt / per-layer prefix）`
-  - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，再进入 `Story Cloze / Qwen3-8B`
+  - 在 `screen248-train / screen248-val / screen248-test` 的预注册口径下继续做稳定训练
+  - `fixed64` 只保留为 legacy report，不再做硬 veto
+  - 但不再把“再换一个 support bank / 再补一个浅层 tweak”当成主解
+  - 更合理的 next step 已经变成 `M5 writer–reasoner alignment under shared injection`
+  - 只有 `screen248-test` 真正稳定通过后，再进入 `fixed64 / Story Cloze / Qwen3-8B`
 - 旧的 `candidate-conditioned residual family` 现已进入停止维护状态：`FEVER-first repair` fresh pilot 已证明 `R-real = R-shuffle = R-zero = 0.25`，当前没有任何继续在这条 family 上叠 router / sign selector / 更多 sweep 的理由。后续若回到 candidate-specific `Stage C`，必须建立在 shared injection 已先证明 `real > shuffle > zero` 的前提上。
 - 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
 - 将当前 toy smoke 数据替换为与 `docs/EXPERIMENTS_INFO.md` 主套件兼容的数据准备流水线。

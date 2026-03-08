@@ -1,0 +1,92 @@
+{
+  "best_adapt_macro_f1": 0.1518987341772152,
+  "best_adapt_task_margin": -14.260801338758625,
+  "best_adapt_task_score": 0.29508196721311475,
+  "checkpoint_path": "/root/autodl-tmp/runs/verify/m4-fever-anti-shortcut-recovery-qwen25/run-a/phase2-selected/pilot-I-shuffle/snapshot_evals/step_0048/checkpoint.pt",
+  "dominant_label_fraction": 1.0,
+  "label_recall_by_class": {
+    "NOT_ENOUGH_INFO": 0.0,
+    "REFUTES": 0.0,
+    "SUPPORTS": 1.0
+  },
+  "pilot_arm_alias": "I_shuffle",
+  "prefix_artifact_stats": {
+    "active_prefix_layers": [
+      0,
+      7,
+      14,
+      21,
+      27
+    ],
+    "layer_hidden_l2_by_layer": {
+      "0": 59.04922866821289,
+      "14": 58.42967987060547,
+      "21": 56.753807067871094,
+      "27": 57.91102981567383,
+      "7": 56.869808197021484
+    },
+    "layer_key_l2_by_layer": {
+      "0": 3125.719970703125,
+      "14": 156.97720336914062,
+      "21": 75.99163818359375,
+      "27": 87.16482543945312,
+      "7": 144.1783905029297
+    },
+    "layer_slot_norm_max_by_layer": {
+      "0": 20.8768367767334,
+      "14": 20.655733108520508,
+      "21": 20.064205169677734,
+      "27": 20.474647521972656,
+      "7": 20.107276916503906
+    },
+    "layer_slot_norm_mean_by_layer": {
+      "0": 20.8768367767334,
+      "14": 20.655733108520508,
+      "21": 20.064207077026367,
+      "27": 20.474647521972656,
+      "7": 20.107276916503906
+    },
+    "layer_slot_norm_std_by_layer": {
+      "0": 6.743495646333031e-07,
+      "14": 6.743495646333031e-07,
+      "21": 2.236564569102484e-06,
+      "27": 1.3486991292666062e-06,
+      "7": 0.0
+    },
+    "layer_value_l2_by_layer": {
+      "0": 21.108366012573242,
+      "14": 83.88819122314453,
+      "21": 108.02068328857422,
+      "27": 259.8005676269531,
+      "7": 46.14362335205078
+    },
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "prefix_l2": 129.26206970214844,
+    "prefix_slot_norm_max": 20.8768367767334,
+    "prefix_slot_norm_mean": 20.435741424560547,
+    "prefix_slot_norm_std": 0.31317824125289917,
+    "prefix_tokens": 8.0,
+    "writer_memory_l2": 117.75126647949219,
+    "writer_slot_norm_max": 41.63136672973633,
+    "writer_slot_norm_mean": 41.63136672973633,
+    "writer_slot_norm_std": 1.3486991292666062e-06
+  },
+  "prefix_l2": 129.26206970214844,
+  "prefix_slot_norm_max": 20.8768367767334,
+  "prefix_slot_norm_mean": 20.435741424560547,
+  "prefix_slot_norm_std": 0.31317824125289917,
+  "prefix_tokens": 8,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "injected",
+  "step": 48,
+  "support_serialization_variant": "triad_curated6",
+  "support_text_block_chars": 1415,
+  "task_case_dump_path": "/root/autodl-tmp/runs/verify/m4-fever-anti-shortcut-recovery-qwen25/run-a/phase2-selected/pilot-I-shuffle/snapshot_evals/step_0048/task_case_dump.jsonl",
+  "task_case_dump_rows": 61,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "shuffled",
+  "writer_memory_l2": 117.75126647949219,
+  "writer_slot_norm_max": 41.63136672973633,
+  "writer_slot_norm_mean": 41.63136672973633,
+  "writer_slot_norm_std": 1.3486991292666062e-06
+}

@@ -56,6 +56,9 @@ sync_dir "runs/verify/m4-fever-dynamics-recovery-stabilized-qwen25" "runs/review
 sync_first_available "runs/review/m4-fever-deep-prompt-recovery-qwen25" \
   "runs/verify/m4-fever-deep-prompt-recovery-qwen25" \
   "/root/autodl-tmp/runs/verify/m4-fever-deep-prompt-recovery-qwen25"
+sync_first_available "runs/review/m4-fever-anti-shortcut-recovery-qwen25" \
+  "runs/verify/m4-fever-anti-shortcut-recovery-qwen25" \
+  "/root/autodl-tmp/runs/verify/m4-fever-anti-shortcut-recovery-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -69,6 +72,9 @@ sync_dir "results/generated/m4-fever-dynamics-recovery-stabilized-qwen25" "resul
 sync_first_available "results/generated/review/m4-fever-deep-prompt-recovery-qwen25" \
   "results/generated/m4-fever-deep-prompt-recovery-qwen25" \
   "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25"
+sync_first_available "results/generated/review/m4-fever-anti-shortcut-recovery-qwen25" \
+  "results/generated/m4-fever-anti-shortcut-recovery-qwen25" \
+  "/root/autodl-tmp/results/generated/m4-fever-anti-shortcut-recovery-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

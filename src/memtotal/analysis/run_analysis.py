@@ -18,6 +18,7 @@ from memtotal.analysis.m3_stage_c_probe import run_m3_stage_c_probe_summary
 from memtotal.analysis.m3_stage_c_seed_sweep import run_m3_stage_c_seed_sweep_summary
 from memtotal.analysis.m4_shared_injection import (
     run_m4_phase0_gate_sweep,
+    run_m4_prepare_fever_support_banks,
     run_m4_prepare_fever_validation_splits,
     run_m4_shared_injection_compare,
     run_m4_shared_injection_dynamics_recovery,
@@ -182,6 +183,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if analysis_mode == "m4_prepare_fever_validation_splits":
         run_m4_prepare_fever_validation_splits(
+            config=config,
+            output_dir=output_dir,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "m4_prepare_fever_support_banks":
+        run_m4_prepare_fever_support_banks(
             config=config,
             output_dir=output_dir,
             dry_run=args.dry_run,

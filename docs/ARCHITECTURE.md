@@ -14,6 +14,7 @@
 - `scripts/run_m4_fever_shared_injection_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `FEVER-first` shared generative injection gate，会先跑 `A=base_only`、`T=teacher-text upper bound`、`writer information audit`，只有 gate 通过后才继续 `I-real / I-shuffle / I-zero`
 - `scripts/run_m4_fever_dynamics_recovery_qwen25.sh`: `M4.3` 的 shared-injection dynamics recovery 入口，会并排跑 `raw8 / triad6` 两条 shared-injection suite，并把 `step0/8/16/24/32/48/64` 的 snapshot case dump 汇总成预注册 validation 的 `dynamics-recovery`
 - `scripts/run_m4_fever_deep_prompt_recovery_qwen25.sh`: `M4.5` 的 triad6 sparse deep-prompt recovery 入口，会固定 `triad6`，使用 `0/7/14/21/27` 五层 shared low-rank deep prompt，在 `screen-val` 做 earliest-pass selection；只有 selection 通过后才依次打开 `screen248-test` 与 `fixed64` 双 gate
+- `scripts/run_m4_fever_anti_shortcut_recovery_qwen25.sh`: `M4.6` 的 anti-shortcut recovery 入口，会先构建 `32` 个 `2/2/2` train triad episodes 和 `screen-val / screen248-test / heldout A/B` support banks，再并排跑 `Run A=episode_bank` 与 `Run B=static triad6`，最后生成 top-level anti-shortcut comparison
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -34,6 +35,8 @@
 - `src/memtotal/training/m4_shared_injection.py`: 真实 `FEVER` shared generative injection 分支，负责 `teacher-text`、`writer information audit` 的上游协作点，以及 `shared latent prefix injection` 的训练/评测入口
 - `scripts/run_m4_gate_from_selection.py`: 通用 post-selection gate runner；由 selection 结果驱动 `A/T/I_real/I_shuffle/I_zero` 在任意 gate task 上重放，不再绑死 `fixed64`
 - `scripts/update_m4_dual_gate_summary.py`: 汇总 `selection + screen248-test + fixed64` 的双 gate 结论，并回写 `dual_gate_summary.json`
+- `scripts/update_m4_run_summary.py`: 汇总单条 `M4.6` run 的 `selection / screen248-test / heldout sanity / fixed64 legacy` 状态，并回写 `run-summary.json`
+- `scripts/update_m4_anti_shortcut_summary.py`: 汇总 `Run A vs Run B` 的 anti-shortcut comparison，并生成 `anti-shortcut-comparison.{json,md}`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -241,6 +244,18 @@
     - 再经 `SharedLowRankDeepPrefixProjector` 映射成多层 hidden prefix
     - 当前 canonical 层位是 `0/7/14/21/27`
     - `BackboneWrapper` 会在层内复用冻结 Qwen 的 `input_layernorm + k_proj + v_proj + rotary` 构造 prefix cache，再通过 `score_continuations(layer_prefix_hidden_by_layer=...)` 进入主链路
+- `M4.6` 又在训练侧补了一层 support-source 解耦：
+  - `task.support_dataset_path` 继续表示 eval-time 单个 support bank
+  - `task.train_support_dataset_path` 允许 train-time 静态 support rows
+  - `task.train_support_episode_bank_path` 允许 train-time episode bank
+  - `runtime.pilot_train_support_mode in {static_support_rows, episode_bank}`
+  - `task.support_lookup_dataset_paths` 用于 attention audit / shuffled id 回查
+- `analysis_mode=m4_prepare_fever_support_banks` 会从 `screen-train` 构建：
+  - `32` 个 `2/2/2` train triad episodes
+  - `screen-val canonical`
+  - `screen248-test canonical`
+  - `screen248-test heldout A/B`
+  - `support-bank-manifest.json`
 - 第一版训练只允许更新：
   - `MemoryWriter`
   - `LatentPrefixProjector` 或 `SharedLowRankDeepPrefixProjector`
@@ -280,21 +295,23 @@
     - 但 `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap
     - `I_real` 只在 `step64` 出现弱内容信号，同时伴随 `regressions_vs_base=18`
     - 因而当前 blocker 已变成 “cap-saturation + label-bias collapse”，而不是 “模型完全不读 prefix”
-- 当前真正新增的关键 observability 是：
-  - `prefix_attention_consumption.csv` 已证明 frozen Qwen 确实会消费 prefix，而不是完全忽略
-  - `prefix_norm_drift.csv` 同时显示明显的 prefix norm blow-up：
-    - `raw8 / I-real`: `84.54 -> 7001.36`
-    - `triad6 / I-real`: `86.66 -> 11397.91`
-- 而 `M4.4` 又证明：
-  - 即便把 `prefix_l2` 稳定压在约 `135.76`，validation gate 仍然不过
-  - 所以下一轮 fallback 应更偏向 `deep prompt / per-layer prefix`，而不是继续修旧 residual family
-- 因而，当前 immediate blocker 已经更准确地改写成：
-  - shared injection 不是“完全没用”
-  - shared injection 现在是“可训练但不稳健”
-  - 当前主矛盾已进一步收紧成 `shallow prefix capacity / optimization tradeoff`，而不是“Qwen 会不会读 prefix”
-- 当前这条主线的下一步不应回到旧 residual family；更合理的顺序是：
-  - 继续用 `screen248-train / screen248-val / fixed64-test` 的预注册口径稳定训练动力学
-  - 只有当 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero`，才进入 `Story Cloze / candidate-conditioned / Qwen3-8B`
+- `M4.6` 当前又把主线推进到 anti-shortcut support protocol：
+  - `Run A` 使用 `32` 个 train-time triad episodes + uniform `5/6` masking
+  - `Run B` 保持固定 `triad6`，其余 deep prompt / optimizer / masking 预算完全相同
+  - `screen248-test` 现在是 primary capability gate；`fixed64` 只保留为 legacy report
+  - 顶层 comparison 位于 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/anti-shortcut-comparison.{json,md}`
+  - 最新真实结论是：
+    - `run_a_selection_passed=false`
+    - `run_b_selection_passed=false`
+    - `comparison_conclusion=run_a_equals_run_b`
+    - 两条 run 都在 `step4` 出现 `dominant_label_collapse`
+    - 两条 run 都在 `step80` 左右进入 cap saturation
+  - 因而，当前 blocker 已不再像“static support memorization 是第一主因”
+  - 更合理的下一步顺序是：
+    - 继续留在 shared injection 主线
+    - 不回 residual family
+    - 进入 `M5 writer–reasoner alignment under shared injection`
+    - 等 `screen248-test` 真正过 gate 后，再把 `fixed64 / Story Cloze / candidate-conditioned / Qwen3-8B` 打开
 
 ## M3 Failure Checks
 

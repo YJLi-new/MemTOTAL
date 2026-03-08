@@ -1,0 +1,85 @@
+{
+  "events": [],
+  "snapshots": [
+    {
+      "accuracy": 0.29508196721311475,
+      "checkpoint_path": "",
+      "dominant_label_fraction": 1.0,
+      "macro_f1": 0.1518987341772152,
+      "mean_margin": -1.7676836389010069,
+      "prefix_artifact_stats": {
+        "active_prefix_layers": [
+          0,
+          7,
+          14,
+          21,
+          27
+        ],
+        "layer_hidden_l2_by_layer": {
+          "0": 0.0,
+          "14": 0.0,
+          "21": 0.0,
+          "27": 0.0,
+          "7": 0.0
+        },
+        "layer_key_l2_by_layer": {
+          "0": 3118.994384765625,
+          "14": 25.89426612854004,
+          "21": 30.194124221801758,
+          "27": 42.11817169189453,
+          "7": 138.72927856445312
+        },
+        "layer_slot_norm_max_by_layer": {
+          "0": 0.0,
+          "14": 0.0,
+          "21": 0.0,
+          "27": 0.0,
+          "7": 0.0
+        },
+        "layer_slot_norm_mean_by_layer": {
+          "0": 0.0,
+          "14": 0.0,
+          "21": 0.0,
+          "27": 0.0,
+          "7": 0.0
+        },
+        "layer_slot_norm_std_by_layer": {
+          "0": 0.0,
+          "14": 0.0,
+          "21": 0.0,
+          "27": 0.0,
+          "7": 0.0
+        },
+        "layer_value_l2_by_layer": {
+          "0": 10.266121864318848,
+          "14": 5.364916801452637,
+          "21": 11.934253692626953,
+          "27": 28.961502075195312,
+          "7": 5.444733619689941
+        },
+        "pilot_injection_mode": "sparse_deep_prefix",
+        "prefix_l2": 0.0,
+        "prefix_slot_norm_max": 0.0,
+        "prefix_slot_norm_mean": 0.0,
+        "prefix_slot_norm_std": 0.0,
+        "prefix_tokens": 8.0,
+        "writer_memory_l2": 0.0,
+        "writer_slot_norm_max": 0.0,
+        "writer_slot_norm_mean": 0.0,
+        "writer_slot_norm_std": 0.0
+      },
+      "prefix_l2": 0.0,
+      "prefix_slot_norm_max": 0.0,
+      "prefix_slot_norm_mean": 0.0,
+      "prefix_slot_norm_std": 0.0,
+      "prefix_tokens": 8,
+      "snapshot_dir": "/root/autodl-tmp/runs/verify/m4-fever-anti-shortcut-recovery-qwen25/run-a/phase2-selected/pilot-I-zero/snapshot_evals/step_0000",
+      "step": 0,
+      "task_case_dump_path": "/root/autodl-tmp/runs/verify/m4-fever-anti-shortcut-recovery-qwen25/run-a/phase2-selected/pilot-I-zero/snapshot_evals/step_0000/task_case_dump.jsonl",
+      "writer_memory_l2": 0.0,
+      "writer_slot_norm_max": 0.0,
+      "writer_slot_norm_mean": 0.0,
+      "writer_slot_norm_std": 0.0
+    }
+  ]
+}

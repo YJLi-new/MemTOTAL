@@ -54,6 +54,9 @@
 
 ## Progress
 
+- 2026-03-08 07:18 UTC: 已完成 `M4.6 anti-shortcut recovery` 的代码实现与真实主跑：训练侧新增 `episode_bank` support mode、`screen-train` 支持集构建器、`screen248-test heldout A/B`、`Run A vs Run B` 对照、per-run `run-summary.json` 与顶层 `anti-shortcut-comparison.{json,md}`。
+- 2026-03-08 07:18 UTC: `M4.6` 真实结果位于 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/` 与 `runs/review/m4-fever-anti-shortcut-recovery-qwen25/`。最新结论为：`run_a_selection_passed=false`、`run_b_selection_passed=false`、`comparison_conclusion=run_a_equals_run_b`；两条 run 都在 `step4` 出现 `dominant_label_collapse`，并在 `step80` 左右进入 cap saturation。
+- 2026-03-08 07:18 UTC: 因而，当前 blocker 已不再像“static triad6 memorization 是首因”。shared injection 仍然是主线，但下一步更应进入 `M5 writer–reasoner alignment under shared injection`，而不是继续做 support-bank 微调或回到旧 residual family。
 - 2026-03-08 08:45 UTC: 已完成 `M4.5` sparse deep prompt 实做：`BackboneWrapper` 新增 `layer_prefix_hidden_by_layer` 注入路径，`m4_shared_injection` 新增 shared low-rank deep projector、layer-wise K/V norm diagnostics、通用 gate-from-selection 脚本与 dual-gate summary。
 - 2026-03-08 08:45 UTC: 已真实跑完 canonical `triad6 + sparse_deep_prefix(0/7/14/21/27) + rank32 + warmup32 + total96`，产物位于 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/` 与 `runs/review/m4-fever-deep-prompt-recovery-qwen25/`。
 - 2026-03-08 08:45 UTC: 最新结果为 `selection_passed=false`，因此没有打开 `screen248-test / fixed64` 双 gate。当前关键现象是：deep prompt 的 layer-wise consumption 已成立，但 `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap，`I_real` 在 `step64` 仅恢复出弱内容信号并同时伴随 `regressions_vs_base=18`。

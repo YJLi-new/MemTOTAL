@@ -24,12 +24,12 @@
 > 任何任务若无法服务于这六类产物，应降低优先级。
 
 ### Current Active Blocker
-- `M4.5` 的 `triad6 + sparse deep prompt` 已真实跑完，但 `screen248-val` 仍未通过 selection。
-- 当前 canonical 结果位于 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/`。
-- 当前最优先问题不是“是否继续 deep prompt”，而是：
-  - 如何阻止 `I_real / I_shuffle` 在 `step16` 起同时撞上 prefix cap
-  - 如何避免 `dominant_label_fraction -> 1.0` 的标签偏置塌缩
-  - 若更强 bottleneck / regularization 仍不过 gate，何时转入 writer objective 重写
+- `M4.6` 的 anti-shortcut deep prompt 已真实跑完，但 `Run A` 与 `Run B` 都没有通过 `screen248-val` selection。
+- 当前 canonical 结果位于 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/`。
+- 当前最优先问题已经不是“static triad6 是否导致 shortcut”，而是：
+  - 为什么 `episode_bank` 与 `static triad6` 都会在 `step4` 就塌成 `dominant_label_fraction -> 1.0`
+  - 为什么两条 run 都会在 `step80` 左右进入 cap saturation
+  - 当前是否已经该从 `M4 support protocol` 转入 `M5 writer–reasoner alignment`
 
 ---
 
@@ -744,12 +744,11 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `Phase 1 writer audit` 也已通过：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_gate_passed=true`
   - 因而当前已不再适合把问题归因成“prompt/support surface 没修好”或“writer 完全没信息”
 - `M4.3` 已把这条线推进到预注册 validation 口径：
-  - 训练与选择现在严格分成 `screen248-train / screen248-val / fixed64-test`
-  - `fixed64` 不再参与 step 选择，只在 validation 规则锁定后才允许打开一次
+  - 训练与选择现在严格分成 `screen248-train / screen248-val / gate tasks`
   - 当前 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示 `selection_passed=false`
   - 两条 support variant 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`
   - 但同一时刻都伴随 `regressions_vs_base=18`
-  - 因此本轮没有打开 `fixed64`
+  - 因此本轮没有打开任何 post-selection gate
 - 这轮新增的主链路 observability 已进一步把 blocker 收紧：
   - `prefix_attention_consumption.csv` 已证明 frozen Qwen 会消费 prefix，而不是完全忽略
   - `prefix_norm_drift.csv` 同时显示明显 norm blow-up：`raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`，`triad6 / I-real` 从 `86.66` 升到 `11397.91`
@@ -766,10 +765,22 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
     - `triad6` 才像真实有效的 support variant
     - `shallow prefix` 在强稳定化下仍然太脆弱
     - 下一轮应优先尝试更强主链路注入（如 `deep prompt / per-layer prefix`），而不是回到旧 residual family
-- 因而当前最值得继续的不是回去修 score-side residual family，也不是直接扩 `Story Cloze / Qwen3-8B`，而是：
+- `M4.5` 已把这条线推进到 sparse deep prompt：
+  - `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/` 证明 layer-wise consumption 已成立
+  - 但 `I_real / I_shuffle` 都会在 `step16` 起撞上 `~192` total cap
+  - `dominant_label_fraction` 从 `step16` 起基本塌到 `1.0`
+- `M4.6` 又补了一轮 anti-shortcut 对照：
+  - 新增 `32` 个 `2/2/2` train triad episodes
+  - `Run A=episode_bank` 与 `Run B=static triad6` 共享同一 deep prompt / optimizer / masking 预算
+  - 顶层结论是 `comparison_conclusion=run_a_equals_run_b`
+  - 两条 run 都 `selection_passed=false`
+  - 两条 run 都在 `step4` 出现 dominant-label collapse，在 `step80` 左右进入 cap saturation
+  - 因而当前 blocker 已不再像“static support memorization 是首因”
+- 因而当前最值得继续的不是回去修 score-side residual family，也不是再做一轮 support-bank 微调，而是：
   - 继续把 `shared injection` 当作主线
-  - 优先做 `triad6` 主导的 dynamics recovery 与更强主链路注入
-  - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，才升级到更强主链路注入（如 `deep prompt / per-layer prefix`）
+  - 把 `screen248-test` 固定为 primary capability gate
+  - 把 `fixed64` 降级成 legacy report，不再当硬 veto
+  - 下一轮进入 `M5 writer–reasoner alignment under shared injection`
 
 ### P0 必须
 - [ ] 接入主套件 benchmark

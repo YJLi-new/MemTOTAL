@@ -1,0 +1,19 @@
+task:
+  name: fever_real_screen_val_m46_canonical
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: real_screen_val_m46_canonical
+  pilot_split: screen_val
+  dataset_path: data/benchmarks/pilots/fever/screen-val.jsonl
+  train_dataset_path: data/benchmarks/pilots/fever/screen-train.jsonl
+  support_dataset_path: data/benchmarks/pilots/fever/m46-screen-val-canonical-support6.jsonl
+  support_lookup_dataset_paths:
+    - data/benchmarks/pilots/fever/screen-train.jsonl
+    - data/benchmarks/pilots/fever/screen-val.jsonl
+    - data/benchmarks/pilots/fever/screen-eval248.jsonl
+    - data/benchmarks/pilots/fever/fixed64.jsonl
+    - data/benchmarks/pilots/fever/pilot-support8.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

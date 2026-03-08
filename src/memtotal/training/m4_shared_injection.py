@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,14 @@ class PrefixInjectionArtifacts:
     prefix_embeddings: torch.Tensor | None
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None
     prefix_stats: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SupportEpisode:
+    episode_id: str
+    support_rows: list[dict[str, Any]]
+    source_split: str
+    label_counts: dict[str, int]
 
 
 class LatentPrefixProjector(nn.Module):
@@ -153,6 +162,55 @@ def _load_task_dataset_with_path(config: dict[str, Any], dataset_path: str) -> l
     return load_task_dataset(config_copy)
 
 
+def _load_support_episode_bank(bank_path: str) -> list[SupportEpisode]:
+    payload = json.loads(Path(bank_path).read_text())
+    episodes = payload.get("episodes", [])
+    if not isinstance(episodes, list) or not episodes:
+        raise ValueError(f"Support episode bank at {bank_path} is missing a non-empty episodes list.")
+    parsed: list[SupportEpisode] = []
+    for raw_episode in episodes:
+        support_rows = [dict(row) for row in raw_episode.get("support_rows", [])]
+        if not support_rows:
+            raise ValueError(f"Support episode bank at {bank_path} contains an empty episode.")
+        parsed.append(
+            SupportEpisode(
+                episode_id=str(raw_episode.get("episode_id", "")),
+                support_rows=support_rows,
+                source_split=str(raw_episode.get("source_split", "")),
+                label_counts={
+                    str(label): int(count)
+                    for label, count in dict(raw_episode.get("label_counts", {})).items()
+                },
+            )
+        )
+    return parsed
+
+
+def _merge_example_lookup(*example_groups: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for group in example_groups:
+        for example in group:
+            example_id = str(example.get("id", "")).strip()
+            if not example_id:
+                continue
+            lookup[example_id] = dict(example)
+    return lookup
+
+
+def _resolve_support_lookup_dataset_paths(
+    config: dict[str, Any],
+    *,
+    default_paths: list[str],
+) -> list[str]:
+    paths: list[str] = []
+    for raw_path in [*default_paths, *list(config["task"].get("support_lookup_dataset_paths", []))]:
+        path = str(raw_path).strip()
+        if not path or path in paths:
+            continue
+        paths.append(path)
+    return paths
+
+
 def _resolve_shared_injection_arm(config: dict[str, Any]) -> str:
     arm = str(config["runtime"].get("shared_injection_arm", "base_only"))
     if arm not in {"base_only", "teacher_text", "injected"}:
@@ -227,6 +285,16 @@ def _resolve_deep_prefix_layers(config: dict[str, Any]) -> list[int]:
 
 def _resolve_deep_prefix_rank(config: dict[str, Any]) -> int:
     return int(config["runtime"].get("pilot_deep_prefix_rank", 32))
+
+
+def _resolve_train_support_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_train_support_mode", "static_support_rows"))
+    if mode not in {"static_support_rows", "episode_bank"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_train_support_mode={mode}. "
+            "Expected one of static_support_rows, episode_bank."
+        )
+    return mode
 
 
 def _resolve_snapshot_steps(config: dict[str, Any], *, train_steps: int, warmup_steps: int) -> list[int]:
@@ -666,7 +734,14 @@ def _build_support_text_block(
     )
 
 
-def _resolve_train_support_mask_count(support_serialization_variant: str) -> int | None:
+def _resolve_train_support_mask_count(
+    config: dict[str, Any],
+    *,
+    support_serialization_variant: str,
+) -> int | None:
+    explicit = config["runtime"].get("pilot_train_support_mask_count")
+    if explicit is not None:
+        return int(explicit)
     if support_serialization_variant == "triad_curated6":
         return 4
     if support_serialization_variant in {"flat_raw8", "example_blocks_raw8"}:
@@ -679,12 +754,17 @@ def _sample_support_examples_for_training(
     support_examples: list[dict[str, Any]],
     support_serialization_variant: str,
     generator: torch.Generator,
+    target_count: int | None = None,
 ) -> list[dict[str, Any]]:
     selected_rows = _select_support_rows_for_variant(
         support_examples,
         support_serialization_variant=support_serialization_variant,
     )
-    target_count = _resolve_train_support_mask_count(support_serialization_variant)
+    if target_count is None:
+        if support_serialization_variant == "triad_curated6":
+            target_count = 4
+        elif support_serialization_variant in {"flat_raw8", "example_blocks_raw8"}:
+            target_count = 5
     if target_count is None or target_count >= len(selected_rows):
         return [dict(row) for row in selected_rows]
     permutation = torch.randperm(len(selected_rows), generator=generator).tolist()
@@ -977,8 +1057,11 @@ def run_shared_injection_pilot(
     injection_mode = _resolve_injection_mode(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
+    train_support_mode = _resolve_train_support_mode(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
+    train_support_dataset_path = str(config["task"].get("train_support_dataset_path", support_dataset_path))
+    train_support_episode_bank_path = str(config["task"].get("train_support_episode_bank_path", "")).strip()
     support_limit = max(0, int(config["runtime"].get("pilot_support_examples", 8)))
     train_steps = int(config["runtime"].get("pilot_train_steps", 96))
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
@@ -1002,8 +1085,22 @@ def run_shared_injection_pilot(
     support_examples = _load_task_dataset_with_path(config, support_dataset_path)
     train_examples = _load_task_dataset_with_path(config, train_dataset_path)
     eval_examples = load_task_dataset(config)
+    train_support_examples: list[dict[str, Any]] = []
+    train_support_episodes: list[SupportEpisode] = []
+    if train_support_mode == "episode_bank":
+        if not train_support_episode_bank_path:
+            raise ValueError(
+                "runtime.pilot_train_support_mode=episode_bank requires task.train_support_episode_bank_path."
+            )
+        train_support_episodes = _load_support_episode_bank(train_support_episode_bank_path)
+        if dry_run:
+            train_support_episodes = train_support_episodes[: min(4, len(train_support_episodes))]
+    else:
+        train_support_examples = _load_task_dataset_with_path(config, train_support_dataset_path)
     if support_limit:
         support_examples = support_examples[: min(support_limit, len(support_examples))]
+        if train_support_examples:
+            train_support_examples = train_support_examples[: min(support_limit, len(train_support_examples))]
     if dry_run:
         train_examples = train_examples[: min(24, len(train_examples))]
         eval_examples = eval_examples[: min(12, len(eval_examples))]
@@ -1011,10 +1108,30 @@ def run_shared_injection_pilot(
     eval_caches = _build_example_caches(eval_examples, prompt_variant=prompt_variant)
     support_caches = _build_example_caches(support_examples, prompt_variant=prompt_variant)
     train_caches = _build_example_caches(train_examples, prompt_variant=prompt_variant)
-    example_lookup = {
-        str(cache.example["id"]): cache.example
-        for cache in [*support_caches, *train_caches, *eval_caches]
-    }
+    lookup_paths = _resolve_support_lookup_dataset_paths(
+        config,
+        default_paths=[
+            support_dataset_path,
+            train_dataset_path,
+            str(config["task"]["dataset_path"]),
+            train_support_dataset_path,
+        ],
+    )
+    lookup_examples: list[dict[str, Any]] = []
+    for lookup_path in lookup_paths:
+        if train_support_mode == "episode_bank" and lookup_path == train_support_episode_bank_path:
+            continue
+        lookup_examples.extend(_load_task_dataset_with_path(config, lookup_path))
+    if train_support_episodes:
+        for episode in train_support_episodes:
+            lookup_examples.extend(episode.support_rows)
+    example_lookup = _merge_example_lookup(
+        [cache.example for cache in support_caches],
+        [cache.example for cache in train_caches],
+        [cache.example for cache in eval_caches],
+        train_support_examples,
+        lookup_examples,
+    )
     support_text_block = _build_support_text_block(
         [cache.example for cache in support_caches],
         memory_control=writer_memory_control if arm == "injected" else "real",
@@ -1053,6 +1170,10 @@ def run_shared_injection_pilot(
     snapshot_metrics: list[dict[str, Any]] = []
     support_mask_generator = torch.Generator(device="cpu")
     support_mask_generator.manual_seed(seed + 101)
+    train_support_mask_count = _resolve_train_support_mask_count(
+        config,
+        support_serialization_variant=support_serialization_variant,
+    )
 
     def evaluate_snapshot(step: int) -> None:
         prefix_artifacts = PrefixInjectionArtifacts(
@@ -1119,19 +1240,19 @@ def run_shared_injection_pilot(
                 "dominant_label_fraction": metrics["dominant_label_fraction"],
                 "snapshot_dir": str(snapshot_dir.resolve()),
                 "task_case_dump_path": snapshot_payload["task_case_dump_path"],
-                    "checkpoint_path": snapshot_payload["checkpoint_path"],
-                    "prefix_tokens": snapshot_payload["prefix_tokens"],
-                    "prefix_l2": snapshot_payload["prefix_l2"],
-                    "prefix_slot_norm_mean": snapshot_payload["prefix_slot_norm_mean"],
-                    "prefix_slot_norm_std": snapshot_payload["prefix_slot_norm_std"],
-                    "prefix_slot_norm_max": snapshot_payload["prefix_slot_norm_max"],
-                    "writer_memory_l2": snapshot_payload["writer_memory_l2"],
-                    "writer_slot_norm_mean": snapshot_payload["writer_slot_norm_mean"],
-                    "writer_slot_norm_std": snapshot_payload["writer_slot_norm_std"],
-                    "writer_slot_norm_max": snapshot_payload["writer_slot_norm_max"],
-                    "prefix_artifact_stats": snapshot_payload["prefix_artifact_stats"],
-                }
-            )
+                "checkpoint_path": snapshot_payload["checkpoint_path"],
+                "prefix_tokens": snapshot_payload["prefix_tokens"],
+                "prefix_l2": snapshot_payload["prefix_l2"],
+                "prefix_slot_norm_mean": snapshot_payload["prefix_slot_norm_mean"],
+                "prefix_slot_norm_std": snapshot_payload["prefix_slot_norm_std"],
+                "prefix_slot_norm_max": snapshot_payload["prefix_slot_norm_max"],
+                "writer_memory_l2": snapshot_payload["writer_memory_l2"],
+                "writer_slot_norm_mean": snapshot_payload["writer_slot_norm_mean"],
+                "writer_slot_norm_std": snapshot_payload["writer_slot_norm_std"],
+                "writer_slot_norm_max": snapshot_payload["writer_slot_norm_max"],
+                "prefix_artifact_stats": snapshot_payload["prefix_artifact_stats"],
+            }
+        )
 
     if 0 in snapshot_steps:
         evaluate_snapshot(0)
@@ -1158,10 +1279,32 @@ def run_shared_injection_pilot(
             writer_frozen = step < projector_warmup_steps
             runtime.set_writer_trainable(not writer_frozen)
             train_example = train_caches[step % len(train_caches)]
+            selected_episode_id = ""
+            selected_episode_source_split = ""
+            selected_episode_label_counts: dict[str, int] = {}
+            train_support_source_rows = [cache.example for cache in support_caches]
+            if train_support_mode == "episode_bank":
+                if not train_support_episodes:
+                    raise ValueError("Episode-bank training requested but no episodes were loaded.")
+                episode_index = int(
+                    torch.randint(
+                        len(train_support_episodes),
+                        (1,),
+                        generator=support_mask_generator,
+                    ).item()
+                )
+                selected_episode = train_support_episodes[episode_index]
+                selected_episode_id = selected_episode.episode_id
+                selected_episode_source_split = selected_episode.source_split
+                selected_episode_label_counts = dict(selected_episode.label_counts)
+                train_support_source_rows = selected_episode.support_rows
+            elif train_support_examples:
+                train_support_source_rows = train_support_examples
             masked_support_rows = _sample_support_examples_for_training(
-                support_examples=[cache.example for cache in support_caches],
+                support_examples=train_support_source_rows,
                 support_serialization_variant=support_serialization_variant,
                 generator=support_mask_generator,
+                target_count=train_support_mask_count,
             )
             masked_support_text_block = _build_support_text_block(
                 masked_support_rows,
@@ -1205,6 +1348,10 @@ def run_shared_injection_pilot(
                     "loss": float(loss.item()),
                     "train_example_id": str(train_example.example["id"]),
                     "writer_frozen": writer_frozen,
+                    "train_support_mode": train_support_mode,
+                    "support_episode_id": selected_episode_id,
+                    "support_episode_source_split": selected_episode_source_split,
+                    "support_episode_label_counts": selected_episode_label_counts,
                     "masked_support_rows": len(masked_support_rows),
                     "masked_support_ids": [str(row["id"]) for row in masked_support_rows],
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
@@ -1278,6 +1425,7 @@ def run_shared_injection_pilot(
         "pilot_injection_mode": injection_mode,
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
+        "pilot_train_support_mode": train_support_mode,
         "prompt_variant": prompt_variant,
         "support_serialization_variant": support_serialization_variant,
         "task_name": config["task"]["name"],
@@ -1285,8 +1433,15 @@ def run_shared_injection_pilot(
         "pilot_split": str(config["task"].get("pilot_split", config["task"].get("smoke_subset", ""))),
         "support_dataset_path": str(Path(support_dataset_path).resolve()),
         "train_dataset_path": str(Path(train_dataset_path).resolve()),
+        "train_support_dataset_path": str(Path(train_support_dataset_path).resolve()),
+        "train_support_episode_bank_path": (
+            "" if not train_support_episode_bank_path else str(Path(train_support_episode_bank_path).resolve())
+        ),
         "eval_dataset_path": str(Path(config["task"]["dataset_path"]).resolve()),
+        "support_lookup_dataset_paths": [str(Path(path).resolve()) for path in lookup_paths],
         "support_examples": len(support_caches),
+        "train_support_examples": len(train_support_examples),
+        "train_support_episode_count": len(train_support_episodes),
         "train_examples": len(train_caches),
         "eval_examples": len(eval_caches),
         "teacher_text_block_chars": len(teacher_support_text_block),
@@ -1306,6 +1461,7 @@ def run_shared_injection_pilot(
         "pilot_writer_weight_decay": writer_weight_decay,
         "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_projector_warmup_steps": projector_warmup_steps,
+        "pilot_train_support_mask_count": train_support_mask_count,
         "pilot_gradient_clip_norm": gradient_clip_norm,
         "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
         "pilot_prefix_total_max_norm": float(config["runtime"].get("pilot_prefix_total_max_norm", 0.0)),
