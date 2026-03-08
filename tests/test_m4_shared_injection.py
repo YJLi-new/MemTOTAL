@@ -132,6 +132,19 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         projected = projector(memory_slots)
         self.assertEqual(list(projected.shape), [2, 3, 6])
 
+    def test_latent_prefix_projector_applies_norm_caps(self) -> None:
+        projector = LatentPrefixProjector(
+            hidden_size=6,
+            prefix_tokens=3,
+            slot_max_norm=2.0,
+            total_max_norm=4.0,
+        )
+        memory_slots = torch.full((1, 3, 6), 50.0)
+        projected = projector(memory_slots)
+        slot_norms = projected.norm(dim=-1)
+        self.assertTrue(bool(torch.all(slot_norms <= 2.0001)))
+        self.assertLessEqual(float(projected.flatten(start_dim=1).norm(dim=1).max().item()), 4.0001)
+
 
 class SharedInjectionAnalysisTest(unittest.TestCase):
     def _write_run(

@@ -746,9 +746,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `prefix_attention_consumption.csv` 已证明 frozen Qwen 会消费 prefix，而不是完全忽略
   - `prefix_norm_drift.csv` 同时显示明显 norm blow-up：`raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`，`triad6 / I-real` 从 `86.66` 升到 `11397.91`
   - 所以当前更准确的结论已变成：shared injection 已经“可训练但不稳健”，当前主矛盾是 `dynamics stability`，不是“Qwen 会不会读 prefix”
+  - 最新 `M4.4` stabilized run 又补了一轮更强约束：
+    - 显式 `prefix norm cap`
+    - `grad clip`
+    - 更温和的 `lr / weight decay`
+  - 结果是：
+    - `raw8` 全程基本不学
+    - `triad6` 只在 `step64` 恢复出弱的 `I-real > I-shuffle / I-zero`
+    - `selection_passed` 仍然是 `false`
+  - 因此，当前 blocker 已从单纯的 norm blow-up 进一步收紧成：
+    - `triad6` 才像真实有效的 support variant
+    - `shallow prefix` 在强稳定化下仍然太脆弱
+    - 下一轮应优先尝试更强主链路注入（如 `deep prompt / per-layer prefix`），而不是回到旧 residual family
 - 因而当前最值得继续的不是回去修 score-side residual family，也不是直接扩 `Story Cloze / Qwen3-8B`，而是：
   - 继续把 `shared injection` 当作主线
-  - 优先做 validation 下的 stopping 规则与 dynamics stabilization
+  - 优先做 `triad6` 主导的 dynamics recovery 与更强主链路注入
   - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，才升级到更强主链路注入（如 `deep prompt / per-layer prefix`）
 
 ### P0 必须

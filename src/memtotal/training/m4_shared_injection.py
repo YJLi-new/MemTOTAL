@@ -40,14 +40,35 @@ class SharedInjectionExampleCache:
 
 
 class LatentPrefixProjector(nn.Module):
-    def __init__(self, hidden_size: int, prefix_tokens: int) -> None:
+    def __init__(
+        self,
+        hidden_size: int,
+        prefix_tokens: int,
+        *,
+        slot_max_norm: float | None = None,
+        total_max_norm: float | None = None,
+    ) -> None:
         super().__init__()
         self.hidden_size = int(hidden_size)
         self.prefix_tokens = int(prefix_tokens)
+        self.slot_max_norm = None if slot_max_norm is None else float(slot_max_norm)
+        self.total_max_norm = None if total_max_norm is None else float(total_max_norm)
         self.prefix_norm = nn.LayerNorm(hidden_size)
         self.prefix_proj = nn.Linear(hidden_size, hidden_size)
         nn.init.normal_(self.prefix_proj.weight, mean=0.0, std=0.02)
         nn.init.zeros_(self.prefix_proj.bias)
+
+    def _apply_norm_caps(self, prefix_embeddings: torch.Tensor) -> torch.Tensor:
+        clipped = prefix_embeddings
+        if self.slot_max_norm is not None and self.slot_max_norm > 0.0:
+            slot_norms = clipped.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+            slot_scales = torch.clamp(self.slot_max_norm / slot_norms, max=1.0)
+            clipped = clipped * slot_scales
+        if self.total_max_norm is not None and self.total_max_norm > 0.0:
+            total_norms = clipped.flatten(start_dim=1).norm(dim=1, keepdim=True).clamp_min(1e-6)
+            total_scales = torch.clamp(self.total_max_norm / total_norms, max=1.0).view(-1, 1, 1)
+            clipped = clipped * total_scales
+        return clipped
 
     def forward(self, memory_slots: torch.Tensor) -> torch.Tensor:
         if memory_slots.ndim != 3:
@@ -56,7 +77,8 @@ class LatentPrefixProjector(nn.Module):
             raise ValueError(
                 f"LatentPrefixProjector expected {self.prefix_tokens} slots, got {memory_slots.shape[1]}."
             )
-        return self.prefix_proj(self.prefix_norm(memory_slots))
+        projected = self.prefix_proj(self.prefix_norm(memory_slots))
+        return self._apply_norm_caps(projected)
 
 
 def _load_task_dataset_with_path(config: dict[str, Any], dataset_path: str) -> list[dict[str, Any]]:
@@ -518,6 +540,8 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.prefix_projector = LatentPrefixProjector(
             hidden_size=self.backbone.hidden_size,
             prefix_tokens=int(writer_cfg["memory_slots"]),
+            slot_max_norm=config["runtime"].get("pilot_prefix_slot_max_norm"),
+            total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
         )
         self.arm = arm
         self.writer_memory_control = writer_memory_control
@@ -601,6 +625,16 @@ def _choice_task_loss(scores: torch.Tensor, gold_index: int, *, margin_value: fl
         margin=margin_value,
     )
     return ce_loss + margin_loss
+
+
+def _grad_norm(module: nn.Module) -> float:
+    total = 0.0
+    for parameter in module.parameters():
+        if parameter.grad is None:
+            continue
+        grad = parameter.grad.detach().to(dtype=torch.float32)
+        total += float(torch.sum(grad * grad).item())
+    return float(total ** 0.5)
 
 
 def _prediction_row(
@@ -704,6 +738,9 @@ def run_shared_injection_pilot(
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 16))
     writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 0.002))
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 0.01))
+    writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
+    projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
+    gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
     choice_margin = float(config["runtime"].get("stage_c_choice_margin", 0.1))
     injection_checkpoint_path = config["runtime"].get("pilot_checkpoint_path")
     if arm in {"base_only", "teacher_text"} or writer_memory_control == "zero":
@@ -850,8 +887,16 @@ def run_shared_injection_pilot(
         runtime.set_writer_trainable(False)
         optimizer = torch.optim.AdamW(
             [
-                {"params": list(runtime.prefix_projector.parameters()), "lr": projector_learning_rate},
-                {"params": list(runtime.writer.parameters()), "lr": writer_learning_rate},
+                {
+                    "params": list(runtime.prefix_projector.parameters()),
+                    "lr": projector_learning_rate,
+                    "weight_decay": projector_weight_decay,
+                },
+                {
+                    "params": list(runtime.writer.parameters()),
+                    "lr": writer_learning_rate,
+                    "weight_decay": writer_weight_decay,
+                },
             ]
         )
         for step in range(train_steps):
@@ -879,6 +924,19 @@ def run_shared_injection_pilot(
             )
             loss = _choice_task_loss(scores, train_example.gold_index, margin_value=choice_margin)
             loss.backward()
+            prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
+            writer_grad_norm = _grad_norm(runtime.writer)
+            total_grad_norm = 0.0
+            if gradient_clip_norm > 0.0:
+                parameters = [
+                    parameter
+                    for parameter in runtime.parameters()
+                    if parameter.requires_grad and parameter.grad is not None
+                ]
+                if parameters:
+                    total_grad_norm = float(
+                        torch.nn.utils.clip_grad_norm_(parameters, gradient_clip_norm).item()
+                    )
             optimizer.step()
             profiler.add_example()
             profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
@@ -893,6 +951,9 @@ def run_shared_injection_pilot(
                     "writer_frozen": writer_frozen,
                     "masked_support_rows": len(masked_support_rows),
                     "masked_support_ids": [str(row["id"]) for row in masked_support_rows],
+                    "prefix_projector_grad_norm": prefix_projector_grad_norm,
+                    "writer_grad_norm": writer_grad_norm,
+                    "total_grad_norm_pre_clip": total_grad_norm,
                     **_prefix_stats(prefix_embeddings),
                 }
             )
@@ -975,7 +1036,12 @@ def run_shared_injection_pilot(
         "pilot_train_steps": train_steps,
         "pilot_writer_learning_rate": writer_learning_rate,
         "pilot_projector_learning_rate": projector_learning_rate,
+        "pilot_writer_weight_decay": writer_weight_decay,
+        "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_projector_warmup_steps": projector_warmup_steps,
+        "pilot_gradient_clip_norm": gradient_clip_norm,
+        "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
+        "pilot_prefix_total_max_norm": float(config["runtime"].get("pilot_prefix_total_max_norm", 0.0)),
         "pilot_snapshot_steps": snapshot_steps,
         "snapshot_metrics": snapshot_metrics,
         "stage_c_choice_margin": choice_margin,

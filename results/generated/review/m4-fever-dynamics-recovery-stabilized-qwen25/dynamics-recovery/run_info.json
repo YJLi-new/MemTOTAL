@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/m4_fever_qwen25_dynamics_recovery_stabilized.yaml",
+    "--seed",
+    "14001",
+    "--output_dir",
+    "results/generated/m4-fever-dynamics-recovery-stabilized-qwen25/dynamics-recovery",
+    "--input_root",
+    "runs/verify/m4-fever-dynamics-recovery-stabilized-qwen25"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "m4_fever_qwen25_dynamics_recovery_stabilized",
+  "git_hash": "1f51aed0a8edd6e7e2b012579522d664eff09fdf",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-dynamics-recovery-stabilized",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 14001,
+  "smoke_subset": "real_screen_val",
+  "stage": "M4-shared-injection",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_val",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-08T03:47:30.229479+00:00",
+  "torch_version": "2.8.0+cu128"
+}

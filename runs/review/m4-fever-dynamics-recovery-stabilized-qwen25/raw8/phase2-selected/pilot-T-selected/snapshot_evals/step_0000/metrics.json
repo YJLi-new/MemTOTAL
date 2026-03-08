@@ -1,0 +1,27 @@
+{
+  "best_adapt_macro_f1": 0.6347380156075808,
+  "best_adapt_task_margin": 0.7818380516694218,
+  "best_adapt_task_score": 0.6885245901639344,
+  "checkpoint_path": "",
+  "dominant_label_fraction": 0.5245901639344263,
+  "label_recall_by_class": {
+    "NOT_ENOUGH_INFO": 0.9565217391304348,
+    "REFUTES": 0.2,
+    "SUPPORTS": 0.8888888888888888
+  },
+  "pilot_arm_alias": "T",
+  "prefix_l2": 0.0,
+  "prefix_slot_norm_max": 0.0,
+  "prefix_slot_norm_mean": 0.0,
+  "prefix_slot_norm_std": 0.0,
+  "prefix_tokens": 0,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "teacher_text",
+  "step": 0,
+  "support_serialization_variant": "example_blocks_raw8",
+  "support_text_block_chars": 1988,
+  "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-dynamics-recovery-stabilized-qwen25/raw8/phase2-selected/pilot-T-selected/snapshot_evals/step_0000/task_case_dump.jsonl",
+  "task_case_dump_rows": 61,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "real"
+}

@@ -8,11 +8,17 @@
 - `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
 - 这轮的新证据比“step32 曾经好过”更强：两条 support variant 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`，但同时都带来 `regressions_vs_base=18`。因此当前不该把问题写成“只要挑对 checkpoint 就行”，而应写成“shared injection 的正信号目前可训练但不稳健”。
 - 当前真正最关键的 tech debt 已继续收紧成动力学问题：`results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/prefix_attention_consumption.csv` 已证明 frozen Qwen 会消费 prefix，而 `prefix_norm_drift.csv` 同时显示明显 norm blow-up。当前 `raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`，`triad6 / I-real` 从 `86.66` 升到 `11397.91`。
+- 最新 `results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25/dynamics-recovery/selection.json` 进一步说明：单纯加 `prefix norm cap + grad clip + 更温和 lr` 并不能让 shared injection 稳定过 gate。`raw8` 在 `step0..64` 全程保持 `macro_f1=0.1518987341772152`，几乎完全学不动；`triad6` 虽然在 `step64` 恢复出 `flip_gain_vs_shuffle=2`、`flip_gain_vs_zero=2`，但仍伴随 `regressions_vs_base=18`。
+- 因而，当前 top tech debt 已从“无控制的 norm blow-up”收缩成“shallow prefix 在强稳定化下仍然太脆弱”。也就是说：
+  - `raw8` 更像负对照，不再适合承担主恢复路线
+  - `triad6` 才是当前唯一值得继续押的 support variant
+  - 下一轮若继续 shared injection，优先级应转向 `deep prompt / per-layer prefix`，而不是继续堆更多浅层 prefix 的 score-side小修补
 - 因而当前最应优先补的不是新的 score-side residual family，而是：
   - 继续把 `shared injection` 当作主线
-  - 在 `screen248-train / screen248-val / fixed64-test` 的预注册口径下恢复稳定训练动力学
-  - 优先修 `support masking / prefix norm control / validation stopping rule`
-  - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，再尝试更强的主链路注入（如 `deep prompt / per-layer prefix`）
+  - 在 `screen248-train / screen248-val / fixed64-test` 的预注册口径下继续做稳定训练
+  - 但不再把“多一个浅层 norm tweak”当成主解
+  - 更合理的 next step 是 `triad6 + 更强主链路注入（deep prompt / per-layer prefix）`
+  - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，再进入 `Story Cloze / Qwen3-8B`
 - 旧的 `candidate-conditioned residual family` 现已进入停止维护状态：`FEVER-first repair` fresh pilot 已证明 `R-real = R-shuffle = R-zero = 0.25`，当前没有任何继续在这条 family 上叠 router / sign selector / 更多 sweep 的理由。后续若回到 candidate-specific `Stage C`，必须建立在 shared injection 已先证明 `real > shuffle > zero` 的前提上。
 - 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
 - 将当前 toy smoke 数据替换为与 `docs/EXPERIMENTS_INFO.md` 主套件兼容的数据准备流水线。

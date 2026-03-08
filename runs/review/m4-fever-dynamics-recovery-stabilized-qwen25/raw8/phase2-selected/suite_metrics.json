@@ -1,0 +1,46 @@
+{
+  "rows": [
+    {
+      "alias": "A",
+      "arm": "base_only",
+      "macro_f1": 0.1518987341772152,
+      "subdir": "pilot-A-selected",
+      "task_score": 0.29508196721311475,
+      "writer_memory_control": "real"
+    },
+    {
+      "alias": "T",
+      "arm": "teacher_text",
+      "macro_f1": 0.6347380156075808,
+      "subdir": "pilot-T-selected",
+      "task_score": 0.6885245901639344,
+      "writer_memory_control": "real"
+    },
+    {
+      "alias": "I_real",
+      "arm": "injected",
+      "macro_f1": 0.1518987341772152,
+      "subdir": "pilot-I-real",
+      "task_score": 0.29508196721311475,
+      "writer_memory_control": "real"
+    },
+    {
+      "alias": "I_shuffle",
+      "arm": "injected",
+      "macro_f1": 0.1518987341772152,
+      "subdir": "pilot-I-shuffle",
+      "task_score": 0.29508196721311475,
+      "writer_memory_control": "shuffled"
+    },
+    {
+      "alias": "I_zero",
+      "arm": "injected",
+      "macro_f1": 0.1518987341772152,
+      "subdir": "pilot-I-zero",
+      "task_score": 0.29508196721311475,
+      "writer_memory_control": "zero"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "example_blocks_raw8"
+}

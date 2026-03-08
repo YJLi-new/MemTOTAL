@@ -248,15 +248,28 @@
   - `raw8` 与 `triad6` 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`
   - 但同一时刻都伴随 `regressions_vs_base=18`
   - 所以当前并没有一个可直接锁定到 `fixed64` 的稳定 checkpoint
+- 最新 `M4.4` stabilized dynamics recovery 又补了一轮更强稳定化：
+  - 显式 `prefix norm cap`
+  - `grad clip`
+  - 更温和的 `lr / weight decay`
+  - review 路径：`results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25/`
+- 这轮的新结论是：
+  - `raw8` 在强稳定化下几乎完全学不动
+  - `triad6` 仍只有到 `step64` 才恢复出弱的 `I-real > I-shuffle / I-zero`
+  - 但 `selection_passed` 依然是 `false`
+  - 因此当前问题已从“norm 爆炸”进一步变成“shallow prefix 的有效信号太脆弱，norm control 会把过冲压住，也会把学习一起压平”
 - 当前真正新增的关键 observability 是：
   - `prefix_attention_consumption.csv` 已证明 frozen Qwen 确实会消费 prefix，而不是完全忽略
   - `prefix_norm_drift.csv` 同时显示明显的 prefix norm blow-up：
     - `raw8 / I-real`: `84.54 -> 7001.36`
     - `triad6 / I-real`: `86.66 -> 11397.91`
+- 而 `M4.4` 又证明：
+  - 即便把 `prefix_l2` 稳定压在约 `135.76`，validation gate 仍然不过
+  - 所以下一轮 fallback 应更偏向 `deep prompt / per-layer prefix`，而不是继续修旧 residual family
 - 因而，当前 immediate blocker 已经更准确地改写成：
   - shared injection 不是“完全没用”
   - shared injection 现在是“可训练但不稳健”
-  - 当前主矛盾是 `dynamics stability`，而不是“Qwen 会不会读 prefix”
+  - 当前主矛盾已进一步收紧成 `shallow prefix capacity / optimization tradeoff`，而不是“Qwen 会不会读 prefix”
 - 当前这条主线的下一步不应回到旧 residual family；更合理的顺序是：
   - 继续用 `screen248-train / screen248-val / fixed64-test` 的预注册口径稳定训练动力学
   - 只有当 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero`，才进入 `Story Cloze / candidate-conditioned / Qwen3-8B`

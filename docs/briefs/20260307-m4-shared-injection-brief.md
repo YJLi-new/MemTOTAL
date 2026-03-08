@@ -2,7 +2,7 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不再是“完全没信号”，但在预注册 `screen248-val` 口径下还不稳定；当前 blocker 是训练动力学与 prefix norm blow-up，不是“frozen Qwen 根本不看 prefix”。
+`shared injection` 已经不再是“完全没信号”。最新 stabilized run 说明：prefix norm blow-up 能被压住，但浅层 shared prefix 在预注册 `screen248-val` 口径下仍然不稳；当前 blocker 已从“norm 爆炸”进一步收缩成“support variant 敏感性 + shallow prefix 容量/优化权衡”。
 
 ## 这轮真正做了什么
 
@@ -43,11 +43,13 @@
 结论：
 - 当前 blocker 不再是 writer 完全无信息
 
-## 当前最新真实结果：M4.3 dynamics recovery
+## 当前最新真实结果：M4.3 + M4.4 dynamics recovery
 
 review 路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
 - `results/generated/review/m4-fever-dynamics-recovery-qwen25/`
+- `runs/review/m4-fever-dynamics-recovery-stabilized-qwen25/`
+- `results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -77,6 +79,28 @@ review 路径：
 - 本轮没有打开 `fixed64`
 - 当前还不能说 capability gate 已通过
 
+### M4.4 stabilized 新增结论
+
+这轮显式加入了：
+- `prefix slot/total norm cap`
+- `grad clip`
+- 更温和的 `lr / weight decay`
+
+结果是：
+- `raw8`
+  - prefix norm 被稳定压住
+  - 但 `step0..64` 全程都没有 `flip_gain`
+- `triad6`
+  - prefix norm 同样被稳定压住
+  - 只在 `step64` 恢复出弱的 `I-real > I-shuffle / I-zero`
+  - 仍然伴随 `regressions_vs_base=18`
+- `selection_passed` 仍然是 `false`
+
+因此最新解释是：
+
+> 简单的 norm control 已经能消掉爆炸，但它还不能把 shared injection 变成预注册 validation 下稳定通过 gate 的方法。  
+> 当前问题更像是 shallow prefix 的有效信号太脆弱，而不是 frozen Qwen 完全不读 prefix。
+
 ### 这轮新增的关键 observability
 
 现在最值钱的新信息不在最终 accuracy，而在主链路 observability。
@@ -105,8 +129,8 @@ review 路径：
 
 当前更合理的解释是：
 
-> shared injection 的正信号已经出现过，但训练过程会把这个信号过冲掉。  
-> 也就是说，当前问题是 `dynamics stability`，不是 `main-chain injection` 本身不存在。
+> shared injection 的正信号已经出现过；在没有控制时会过冲，在加了强 norm control 后又会被压得太平。  
+> 也就是说，当前问题不再只是 `dynamics stability`，而是 `shallow prefix capacity / optimization tradeoff`。
 
 ## 现在不该做什么
 
@@ -119,9 +143,10 @@ review 路径：
 ## 现在最该做什么
 
 继续留在 `shared injection` 主线，先做：
-- 预注册 validation 下的 stopping rule
-- 更强的 support masking / dynamics stabilization
-- prefix norm / attention 的持续 observability
+- 以 `triad6` 为 primary 的下一轮恢复
+- 保持 `screen248-val` 的预注册 stopping rule
+- 继续做 prefix norm / attention / content-gap observability
+- 把 `deep prompt / per-layer prefix` 升级成明确 fallback，而不是继续修旧 residual family
 
 只有当 `fixed64` 也稳定出现：
 - `I-real > I-shuffle`
