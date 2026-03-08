@@ -75,6 +75,10 @@ class MemoryRuntime(nn.Module):
             gating_mode=reader_cfg.get("gating_mode"),
             num_heads=reader_cfg.get("num_heads", 4),
             condition_on_context=reader_cfg.get("condition_on_context", True),
+            conditioning_mode=reader_cfg.get("conditioning_mode"),
+            gated_add_scale=float(reader_cfg.get("gated_add_scale", 0.1)),
+            attention_mode=str(reader_cfg.get("attention_mode", "standard")),
+            masked_partition=reader_cfg.get("masked_partition"),
             dropout=reader_cfg.get("dropout", 0.0),
             query_residual_scale=float(reader_cfg.get("query_residual_scale", 0.0)),
         )

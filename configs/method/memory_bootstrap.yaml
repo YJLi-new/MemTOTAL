@@ -11,6 +11,9 @@ method:
   reader:
     num_queries: 4
     gating_mode: off
+    conditioning_mode: add
+    attention_mode: standard
+    gated_add_scale: 0.1
     query_residual_scale: 1.0
     num_heads: 4
     condition_on_context: true

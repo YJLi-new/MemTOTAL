@@ -15,6 +15,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
     compare_tl_reader_geometry_runs,
+    compare_tl_reader_rg2_runs,
     compare_tl_bridge_rescue_runs,
     compare_tl_slot_basis_runs,
     compare_tl_poc_runs,
@@ -734,6 +735,156 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             two_level_runtime.warm_start_from_injection_checkpoint(checkpoint_path)
             with self.assertRaisesRegex(ValueError, "pilot_memory_path_variant"):
                 two_level_runtime.load_injection_checkpoint(checkpoint_path)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_runtime_threads_reader_modes(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {"memory_slots": 8, "arch": "mlp", "hidden_dim": 12},
+                "reader": {
+                    "num_queries": 4,
+                    "num_heads": 2,
+                    "conditioning_mode": "none",
+                    "attention_mode": "masked_partition",
+                    "masked_partition": [[0, 1], [2, 3], [4, 5], [6, 7]],
+                    "query_residual_scale": 1.0,
+                },
+                "fuser": {"short_slots": 4, "arch": "linear", "num_heads": 2},
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=11,
+            arm="injected",
+            writer_memory_control="real",
+        )
+
+        self.assertIsNotNone(runtime.reader)
+        assert runtime.reader is not None
+        self.assertEqual(runtime.reader.conditioning_mode, "none")
+        self.assertEqual(runtime.reader.attention_mode, "masked_partition")
+        self.assertEqual(runtime.reader.masked_partition, ((0, 1), (2, 3), (4, 5), (6, 7)))
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_warm_start_supports_conditioning_mode_none(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        base_config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {"memory_slots": 8, "arch": "mlp", "hidden_dim": 12},
+                "reader": {"num_queries": 4, "num_heads": 2, "query_residual_scale": 1.0},
+                "fuser": {"short_slots": 4, "arch": "linear", "num_heads": 2},
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+        target_config = json.loads(json.dumps(base_config))
+        target_config["method"]["reader"]["conditioning_mode"] = "none"
+
+        source_runtime = SharedInjectionPilotRuntime(
+            config=base_config,
+            seed=13,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        target_runtime = SharedInjectionPilotRuntime(
+            config=target_config,
+            seed=17,
+            arm="injected",
+            writer_memory_control="real",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "two_level_checkpoint.pt"
+            torch.save(
+                {
+                    "writer_state": source_runtime.writer.state_dict(),
+                    "support_encoder_state": None,
+                    "reader_state": source_runtime.reader.state_dict(),
+                    "fuser_state": source_runtime.fuser.state_dict(),
+                    "prefix_projector_state": source_runtime.prefix_projector.state_dict(),
+                    "pilot_memory_path_variant": "two_level",
+                    "pilot_support_encoder_mode": "pooled_block",
+                    "pilot_injection_mode": "sparse_deep_prefix",
+                    "pilot_deep_prefix_layers": [0, 1],
+                    "pilot_reader_context_mode": "prompt_summary",
+                    "pilot_projector_token_source": "short_slots",
+                    "pilot_reader_num_queries": 4,
+                    "pilot_fuser_short_slots": 4,
+                    "backbone_hidden_size": 6,
+                    "writer_memory_slots": 8,
+                    "pilot_projector_prefix_tokens": 4,
+                },
+                checkpoint_path,
+            )
+
+            target_runtime.warm_start_from_injection_checkpoint(checkpoint_path)
+
+        assert target_runtime.reader is not None
+        assert source_runtime.reader is not None
+        self.assertTrue(
+            torch.allclose(
+                target_runtime.reader.context_proj.weight,
+                source_runtime.reader.context_proj.weight,
+            )
+        )
 
 
 class SharedInjectionAnalysisTest(unittest.TestCase):
@@ -2173,6 +2324,184 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(summary["comparison_conclusion"], "failure")
             self.assertTrue(summary["move_to_rg2"])
             self.assertEqual(summary["primary_interpretation"], "B-1_undetermined_move_to_rg2")
+
+    def test_compare_tl_reader_rg2_runs_marks_competitive_geometry_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_train_events(name: str, events: list[dict[str, object]]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": events}))
+                return path
+
+            control_summary = write_payload(
+                "control.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 0},
+            )
+            control_events = write_train_events(
+                "control_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 1.0,
+                        "reader_attention_entropy_mean": 2.08,
+                        "memory_short_effective_rank": 1.3,
+                        "memory_short_pairwise_cosine_mean": 0.995,
+                        "reader_readout_effective_rank": 1.1,
+                        "fuser_output_effective_rank": 1.3,
+                    }
+                ],
+            )
+            competitive_summary = write_payload(
+                "competitive.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 12},
+            )
+            competitive_events = write_train_events(
+                "competitive_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.82,
+                        "reader_attention_entropy_mean": 1.82,
+                        "memory_short_effective_rank": 1.95,
+                        "memory_short_pairwise_cosine_mean": 0.92,
+                        "reader_readout_effective_rank": 1.5,
+                        "fuser_output_effective_rank": 1.9,
+                    }
+                ],
+            )
+            partition_summary = write_payload(
+                "partition.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 6},
+            )
+            partition_events = write_train_events(
+                "partition_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.91,
+                        "reader_attention_entropy_mean": 1.98,
+                        "memory_short_effective_rank": 1.75,
+                        "memory_short_pairwise_cosine_mean": 0.97,
+                        "reader_readout_effective_rank": 1.4,
+                        "fuser_output_effective_rank": 1.7,
+                    }
+                ],
+            )
+
+            summary = compare_tl_reader_rg2_runs(
+                control_summary_json=str(control_summary),
+                competitive_summary_json=str(competitive_summary),
+                partition_summary_json=str(partition_summary),
+                control_train_events_json=str(control_events),
+                competitive_train_events_json=str(competitive_events),
+                partition_train_events_json=str(partition_events),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "success")
+            self.assertEqual(summary["primary_interpretation"], "rg2_competitive_geometry_alive")
+            self.assertTrue(summary["competitive_geometry_alive"])
+            self.assertTrue(summary["competitive_reader_supported"])
+            self.assertTrue(summary["geometry_alive"])
+            self.assertEqual(summary["bridge_failure_submode"], "B-1b_attention_symmetry_collapse")
+            self.assertFalse(summary["move_to_rg3"])
+
+    def test_compare_tl_reader_rg2_runs_moves_to_rg3_on_partition_only_partial_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_train_events(name: str, events: list[dict[str, object]]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": events}))
+                return path
+
+            control_summary = write_payload(
+                "control.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 0},
+            )
+            control_events = write_train_events(
+                "control_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 1.0,
+                        "reader_attention_entropy_mean": 2.08,
+                        "memory_short_effective_rank": 1.3,
+                        "memory_short_pairwise_cosine_mean": 0.995,
+                        "reader_readout_effective_rank": 1.1,
+                        "fuser_output_effective_rank": 1.3,
+                    }
+                ],
+            )
+            competitive_summary = write_payload(
+                "competitive.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 0},
+            )
+            competitive_events = write_train_events(
+                "competitive_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.99,
+                        "reader_attention_entropy_mean": 2.07,
+                        "memory_short_effective_rank": 1.35,
+                        "memory_short_pairwise_cosine_mean": 0.994,
+                        "reader_readout_effective_rank": 1.12,
+                        "fuser_output_effective_rank": 1.33,
+                    }
+                ],
+            )
+            partition_summary = write_payload(
+                "partition.json",
+                {"selection_passed": False, "selected_step": None, "dominant_label_collapse_onset_step": 10},
+            )
+            partition_events = write_train_events(
+                "partition_events.json",
+                [
+                    {
+                        "step": 8,
+                        "memory_short_slots": 4,
+                        "reader_attention_pairwise_cosine_mean": 0.93,
+                        "reader_attention_entropy_mean": 2.01,
+                        "memory_short_effective_rank": 1.75,
+                        "memory_short_pairwise_cosine_mean": 0.97,
+                        "reader_readout_effective_rank": 1.35,
+                        "fuser_output_effective_rank": 1.7,
+                    }
+                ],
+            )
+
+            summary = compare_tl_reader_rg2_runs(
+                control_summary_json=str(control_summary),
+                competitive_summary_json=str(competitive_summary),
+                partition_summary_json=str(partition_summary),
+                control_train_events_json=str(control_events),
+                competitive_train_events_json=str(competitive_events),
+                partition_train_events_json=str(partition_events),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "informative")
+            self.assertEqual(summary["primary_interpretation"], "rg2_partition_only_partial_gain")
+            self.assertTrue(summary["partition_partial_gain"])
+            self.assertTrue(summary["partition_reader_supported"])
+            self.assertFalse(summary["geometry_alive"])
+            self.assertEqual(summary["bridge_failure_submode"], "B-1b_attention_symmetry_collapse")
+            self.assertTrue(summary["move_to_rg3"])
 
 
 if __name__ == "__main__":

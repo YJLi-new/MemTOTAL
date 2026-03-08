@@ -1,0 +1,12 @@
+includes:
+  - memory_bootstrap_transformer_real_twolevel_h4_k4_slot_basis_ctxnone_linear.yaml
+
+method:
+  reader:
+    conditioning_mode: none
+    attention_mode: masked_partition
+    masked_partition:
+      - [0, 1]
+      - [2, 3]
+      - [4, 5]
+      - [6, 7]

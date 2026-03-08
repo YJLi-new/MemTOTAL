@@ -166,6 +166,10 @@ class MemoryReader(ManagedMemoryModule):
         gating_mode: str | None = None,
         num_heads: int = 4,
         condition_on_context: bool = True,
+        conditioning_mode: str | None = None,
+        gated_add_scale: float = 0.1,
+        attention_mode: str = "standard",
+        masked_partition: list[list[int]] | tuple[tuple[int, ...], ...] | None = None,
         dropout: float = 0.0,
         query_residual_scale: float = 0.0,
     ) -> None:
@@ -173,6 +177,17 @@ class MemoryReader(ManagedMemoryModule):
         self.embed_dim = embed_dim
         self.num_queries = num_queries
         self.query_residual_scale = float(query_residual_scale)
+        resolved_conditioning_mode = conditioning_mode or ("add" if condition_on_context else "none")
+        if resolved_conditioning_mode not in {"add", "gated_add", "none"}:
+            raise ValueError(
+                f"Unsupported reader conditioning mode: {resolved_conditioning_mode}. "
+                "Expected one of add/gated_add/none."
+            )
+        if attention_mode not in {"standard", "competitive_slots", "masked_partition"}:
+            raise ValueError(
+                f"Unsupported reader attention mode: {attention_mode}. "
+                "Expected one of standard/competitive_slots/masked_partition."
+            )
         resolved_gating_mode = gating_mode or ("learned" if use_query_gating else "off")
         if resolved_gating_mode not in {"off", "random", "learned"}:
             raise ValueError(
@@ -180,9 +195,12 @@ class MemoryReader(ManagedMemoryModule):
                 "Expected one of off/random/learned."
             )
         self.gating_mode = resolved_gating_mode
-        self.condition_on_context = condition_on_context
+        self.condition_on_context = bool(condition_on_context)
+        self.conditioning_mode = resolved_conditioning_mode
+        self.gated_add_scale = float(gated_add_scale)
+        self.attention_mode = attention_mode
         self.queries = nn.Parameter(torch.randn(num_queries, embed_dim) * 0.02)
-        self.context_proj = nn.Linear(embed_dim, embed_dim) if condition_on_context else None
+        self.context_proj = nn.Linear(embed_dim, embed_dim) if self.condition_on_context else None
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=embed_dim,
             num_heads=num_heads,
@@ -191,6 +209,7 @@ class MemoryReader(ManagedMemoryModule):
         )
         self.readout_norm = nn.LayerNorm(embed_dim)
         self.gate = nn.Linear(embed_dim, num_queries) if self.gating_mode == "learned" else None
+        self.masked_partition = self._normalize_masked_partition(masked_partition)
 
     def _pool_context(self, context: torch.Tensor | None) -> torch.Tensor | None:
         if context is None:
@@ -222,6 +241,39 @@ class MemoryReader(ManagedMemoryModule):
         *,
         key_padding_mask: torch.Tensor | None,
     ) -> torch.Tensor:
+        projected_queries, projected_keys, _ = self._project_attention_inputs(queries, memory)
+        logits = torch.matmul(projected_queries, projected_keys.transpose(-2, -1))
+        logits = logits * (1.0 / math.sqrt(projected_queries.shape[-1]))
+        if key_padding_mask is not None:
+            logits = logits.masked_fill(key_padding_mask[:, None, None, :], float("-inf"))
+        return logits
+
+    def _normalize_masked_partition(
+        self,
+        masked_partition: list[list[int]] | tuple[tuple[int, ...], ...] | None,
+    ) -> tuple[tuple[int, ...], ...] | None:
+        if masked_partition is None:
+            return None
+        normalized: list[tuple[int, ...]] = []
+        for index, slot_group in enumerate(masked_partition):
+            group = tuple(int(slot) for slot in slot_group)
+            if not group:
+                raise ValueError(
+                    f"masked_partition query {index} must contain at least one allowed slot."
+                )
+            normalized.append(group)
+        if len(normalized) != self.num_queries:
+            raise ValueError(
+                f"masked_partition must define exactly {self.num_queries} query groups, "
+                f"got {len(normalized)}."
+            )
+        return tuple(normalized)
+
+    def _project_attention_inputs(
+        self,
+        queries: torch.Tensor,
+        memory: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         num_heads = int(self.cross_attn.num_heads)
         head_dim = self.embed_dim // max(1, num_heads)
         if head_dim * num_heads != self.embed_dim:
@@ -229,23 +281,27 @@ class MemoryReader(ManagedMemoryModule):
                 f"Reader embed_dim={self.embed_dim} must be divisible by num_heads={num_heads}."
             )
         if self.cross_attn._qkv_same_embed_dim:
-            q_proj_weight, k_proj_weight, _ = self.cross_attn.in_proj_weight.chunk(3, dim=0)
+            q_proj_weight, k_proj_weight, v_proj_weight = self.cross_attn.in_proj_weight.chunk(3, dim=0)
             if self.cross_attn.in_proj_bias is None:
                 q_proj_bias = None
                 k_proj_bias = None
+                v_proj_bias = None
             else:
-                q_proj_bias, k_proj_bias, _ = self.cross_attn.in_proj_bias.chunk(3, dim=0)
+                q_proj_bias, k_proj_bias, v_proj_bias = self.cross_attn.in_proj_bias.chunk(3, dim=0)
         else:
             q_proj_weight = self.cross_attn.q_proj_weight
             k_proj_weight = self.cross_attn.k_proj_weight
+            v_proj_weight = self.cross_attn.v_proj_weight
             if self.cross_attn.in_proj_bias is None:
                 q_proj_bias = None
                 k_proj_bias = None
+                v_proj_bias = None
             else:
-                q_proj_bias, k_proj_bias, _ = self.cross_attn.in_proj_bias.chunk(3, dim=0)
+                q_proj_bias, k_proj_bias, v_proj_bias = self.cross_attn.in_proj_bias.chunk(3, dim=0)
 
         projected_queries = F.linear(queries, q_proj_weight, q_proj_bias)
         projected_keys = F.linear(memory, k_proj_weight, k_proj_bias)
+        projected_values = F.linear(memory, v_proj_weight, v_proj_bias)
         projected_queries = projected_queries.view(
             queries.shape[0],
             queries.shape[1],
@@ -258,11 +314,110 @@ class MemoryReader(ManagedMemoryModule):
             num_heads,
             head_dim,
         ).transpose(1, 2)
+        projected_values = projected_values.view(
+            memory.shape[0],
+            memory.shape[1],
+            num_heads,
+            head_dim,
+        ).transpose(1, 2)
+        return projected_queries, projected_keys, projected_values
+
+    def _query_slot_mask(
+        self,
+        memory_slots: int,
+        *,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        if self.attention_mode != "masked_partition":
+            return None
+        mask = torch.zeros(self.num_queries, memory_slots, dtype=torch.bool, device=device)
+        if self.masked_partition is None:
+            slot_indices = torch.arange(memory_slots, device=device)
+            for query_index, chunk in enumerate(torch.tensor_split(slot_indices, self.num_queries)):
+                if chunk.numel() == 0:
+                    mask[query_index, min(query_index, memory_slots - 1)] = True
+                else:
+                    mask[query_index, chunk] = True
+            return mask
+        for query_index, slot_group in enumerate(self.masked_partition):
+            for slot_index in slot_group:
+                if slot_index < 0 or slot_index >= memory_slots:
+                    raise ValueError(
+                        f"masked_partition slot index {slot_index} is invalid for memory_slots={memory_slots}."
+                    )
+                mask[query_index, slot_index] = True
+        return mask
+
+    def _safe_softmax(
+        self,
+        logits: torch.Tensor,
+        *,
+        valid_mask: torch.Tensor,
+        dim: int,
+    ) -> torch.Tensor:
+        masked_logits = logits.masked_fill(~valid_mask, float("-inf"))
+        no_valid_entries = ~valid_mask.any(dim=dim, keepdim=True)
+        masked_logits = masked_logits.masked_fill(no_valid_entries.expand_as(masked_logits), 0.0)
+        weights = torch.softmax(masked_logits, dim=dim)
+        weights = weights.masked_fill(~valid_mask, 0.0)
+        normalizer = weights.sum(dim=dim, keepdim=True)
+        return torch.where(
+            normalizer > 0,
+            weights / normalizer.clamp_min(1e-9),
+            torch.zeros_like(weights),
+        )
+
+    def _manual_attention(
+        self,
+        queries: torch.Tensor,
+        memory: torch.Tensor,
+        *,
+        key_padding_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        projected_queries, projected_keys, projected_values = self._project_attention_inputs(
+            queries,
+            memory,
+        )
         logits = torch.matmul(projected_queries, projected_keys.transpose(-2, -1))
-        logits = logits * (1.0 / math.sqrt(head_dim))
+        logits = logits * (1.0 / math.sqrt(projected_queries.shape[-1]))
+        valid_mask = torch.ones_like(logits, dtype=torch.bool)
         if key_padding_mask is not None:
-            logits = logits.masked_fill(key_padding_mask[:, None, None, :], float("-inf"))
-        return logits
+            valid_mask = valid_mask & (~key_padding_mask[:, None, None, :])
+        query_slot_mask = self._query_slot_mask(
+            memory.shape[1],
+            device=memory.device,
+        )
+        if query_slot_mask is not None:
+            valid_mask = valid_mask & query_slot_mask[None, None, :, :]
+        attention_logits = logits.masked_fill(~valid_mask, float("-inf"))
+        if self.attention_mode == "competitive_slots":
+            competitive = self._safe_softmax(attention_logits, valid_mask=valid_mask, dim=-2)
+            attention_weights = competitive.masked_fill(~valid_mask, 0.0)
+            attention_normalizer = attention_weights.sum(dim=-1, keepdim=True)
+            attention_weights = torch.where(
+                attention_normalizer > 0,
+                attention_weights / attention_normalizer.clamp_min(1e-9),
+                torch.zeros_like(attention_weights),
+            )
+        else:
+            attention_weights = self._safe_softmax(attention_logits, valid_mask=valid_mask, dim=-1)
+        attention_for_output = F.dropout(
+            attention_weights,
+            p=float(self.cross_attn.dropout),
+            training=self.training,
+        )
+        readouts = torch.matmul(attention_for_output, projected_values)
+        readouts = readouts.transpose(1, 2).contiguous().view(
+            queries.shape[0],
+            queries.shape[1],
+            self.embed_dim,
+        )
+        readouts = F.linear(
+            readouts,
+            self.cross_attn.out_proj.weight,
+            self.cross_attn.out_proj.bias,
+        )
+        return readouts, attention_weights.mean(dim=1), attention_logits
 
     def read(
         self,
@@ -290,30 +445,33 @@ class MemoryReader(ManagedMemoryModule):
                 f"Reader expected candidate_state hidden size {self.embed_dim}, got {pooled_candidate_state.shape[-1]}."
             )
         if self.context_proj is not None and pooled_context is not None:
-            conditioned_queries = conditioned_queries + self.context_proj(pooled_context).unsqueeze(1)
-        if pooled_candidate_state is not None:
-            conditioned_queries = conditioned_queries + pooled_candidate_state.unsqueeze(1)
+            projected_context = self.context_proj(pooled_context).unsqueeze(1)
+            if self.conditioning_mode == "add":
+                conditioned_queries = conditioned_queries + projected_context
+            elif self.conditioning_mode == "gated_add":
+                conditioned_queries = conditioned_queries + (
+                    self.gated_add_scale * projected_context
+                )
+        if pooled_candidate_state is not None and self.conditioning_mode != "none":
+            projected_candidate = pooled_candidate_state.unsqueeze(1)
+            if self.conditioning_mode == "gated_add":
+                conditioned_queries = conditioned_queries + (
+                    self.gated_add_scale * projected_candidate
+                )
+            else:
+                conditioned_queries = conditioned_queries + projected_candidate
         context_shift = conditioned_queries - base_queries
 
         key_padding_mask = self._build_key_padding_mask(memory, memory_mask)
-        attention_logits = self._project_attention_logits(
+        readouts, attention, attention_logits = self._manual_attention(
             conditioned_queries,
             memory,
             key_padding_mask=key_padding_mask,
         )
-        readouts, attention = self.cross_attn(
-            query=conditioned_queries,
-            key=memory,
-            value=memory,
-            key_padding_mask=key_padding_mask,
-            need_weights=True,
-            average_attn_weights=False,
-        )
-        attention = attention.mean(dim=1)
         if self.gating_mode == "learned":
-            gate_source = (
-                pooled_context if pooled_context is not None else conditioned_queries.mean(dim=1)
-            )
+            gate_source = conditioned_queries.mean(dim=1)
+            if pooled_context is not None and self.conditioning_mode != "none":
+                gate_source = pooled_context
             gates = torch.sigmoid(self.gate(gate_source))
             readouts = readouts * gates.unsqueeze(-1)
         elif self.gating_mode == "random":

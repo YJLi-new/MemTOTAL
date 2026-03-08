@@ -1,0 +1,7 @@
+includes:
+  - memory_bootstrap_transformer_real_twolevel_h4_k4_slot_basis_ctxnone_linear.yaml
+
+method:
+  reader:
+    conditioning_mode: none
+    attention_mode: competitive_slots

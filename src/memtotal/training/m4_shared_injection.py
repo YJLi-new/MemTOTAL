@@ -1332,6 +1332,20 @@ def _save_shared_injection_checkpoint(
             "writer_memory_slots": int(runtime.writer.memory_slots),
             "pilot_memory_path_variant": str(runtime.memory_path_variant),
             "pilot_reader_context_mode": str(runtime.reader_context_mode),
+            "pilot_reader_conditioning_mode": (
+                None if runtime.reader is None else str(runtime.reader.conditioning_mode)
+            ),
+            "pilot_reader_gated_add_scale": (
+                None if runtime.reader is None else float(runtime.reader.gated_add_scale)
+            ),
+            "pilot_reader_attention_mode": (
+                None if runtime.reader is None else str(runtime.reader.attention_mode)
+            ),
+            "pilot_reader_masked_partition": (
+                []
+                if runtime.reader is None or runtime.reader.masked_partition is None
+                else [list(group) for group in runtime.reader.masked_partition]
+            ),
             "pilot_projector_token_source": str(runtime.projector_token_source),
             "pilot_reader_num_queries": int(runtime.reader_num_queries),
             "pilot_fuser_short_slots": int(runtime.fuser_short_slots),
@@ -1731,6 +1745,10 @@ class SharedInjectionPilotRuntime(nn.Module):
                 gating_mode=reader_cfg.get("gating_mode", "off"),
                 num_heads=int(reader_cfg.get("num_heads", 4)),
                 condition_on_context=bool(reader_cfg.get("condition_on_context", True)),
+                conditioning_mode=reader_cfg.get("conditioning_mode"),
+                gated_add_scale=float(reader_cfg.get("gated_add_scale", 0.1)),
+                attention_mode=str(reader_cfg.get("attention_mode", "standard")),
+                masked_partition=reader_cfg.get("masked_partition"),
                 dropout=float(reader_cfg.get("dropout", 0.0)),
                 query_residual_scale=float(reader_cfg.get("query_residual_scale", 0.0)),
             )
@@ -3291,6 +3309,15 @@ def run_shared_injection_pilot(
                     "support_state_effective_rank": float(support_state_effective_rank),
                     "pilot_memory_path_variant": runtime.memory_path_variant,
                     "pilot_reader_context_mode": runtime.reader_context_mode,
+                    "pilot_reader_conditioning_mode": (
+                        None if runtime.reader is None else runtime.reader.conditioning_mode
+                    ),
+                    "pilot_reader_gated_add_scale": (
+                        None if runtime.reader is None else float(runtime.reader.gated_add_scale)
+                    ),
+                    "pilot_reader_attention_mode": (
+                        None if runtime.reader is None else runtime.reader.attention_mode
+                    ),
                     "pilot_projector_token_source": runtime.projector_token_source,
                     "pilot_reader_num_queries": int(runtime.reader_num_queries),
                     "pilot_fuser_short_slots": int(runtime.fuser_short_slots),
@@ -3396,6 +3423,20 @@ def run_shared_injection_pilot(
         "pilot_injection_mode": injection_mode,
         "pilot_memory_path_variant": memory_path_variant,
         "pilot_reader_context_mode": reader_context_mode,
+        "pilot_reader_conditioning_mode": (
+            None if runtime.reader is None else runtime.reader.conditioning_mode
+        ),
+        "pilot_reader_gated_add_scale": (
+            None if runtime.reader is None else float(runtime.reader.gated_add_scale)
+        ),
+        "pilot_reader_attention_mode": (
+            None if runtime.reader is None else runtime.reader.attention_mode
+        ),
+        "pilot_reader_masked_partition": (
+            []
+            if runtime.reader is None or runtime.reader.masked_partition is None
+            else [list(group) for group in runtime.reader.masked_partition]
+        ),
         "pilot_reader_num_queries": reader_num_queries,
         "pilot_fuser_short_slots": fuser_short_slots,
         "pilot_projector_token_source": projector_token_source,

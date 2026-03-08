@@ -116,6 +116,129 @@ class SmokeComponentTest(unittest.TestCase):
         self.assertEqual(list(outputs["attention_logits"].shape), [1, 2, 2, 4])
         self.assertTrue(torch.allclose(outputs["attention"][:, :, 2:], torch.zeros(1, 2, 2), atol=1e-6))
 
+    def test_reader_conditioning_mode_none_ignores_context(self) -> None:
+        reader = MemoryReader(
+            embed_dim=4,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=2,
+            condition_on_context=True,
+            conditioning_mode="none",
+        )
+        memory = torch.randn(1, 3, 4)
+        context = torch.randn(1, 4)
+
+        outputs = reader.read(memory, context=context)
+
+        self.assertTrue(torch.allclose(outputs["conditioned_queries"], outputs["base_queries"]))
+        self.assertTrue(torch.allclose(outputs["context_shift"], torch.zeros_like(outputs["context_shift"])))
+
+    def test_reader_gated_add_scales_context_shift(self) -> None:
+        reader_add = MemoryReader(
+            embed_dim=4,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=2,
+            condition_on_context=True,
+            conditioning_mode="add",
+        )
+        reader_gated = MemoryReader(
+            embed_dim=4,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=2,
+            condition_on_context=True,
+            conditioning_mode="gated_add",
+            gated_add_scale=0.25,
+        )
+        with torch.no_grad():
+            for reader in (reader_add, reader_gated):
+                reader.queries.zero_()
+                reader.context_proj.weight.copy_(torch.eye(4))
+                reader.context_proj.bias.zero_()
+        memory = torch.randn(1, 3, 4)
+        context = torch.tensor([[4.0, 2.0, 1.0, 0.0]])
+
+        add_outputs = reader_add.read(memory, context=context)
+        gated_outputs = reader_gated.read(memory, context=context)
+
+        self.assertTrue(torch.allclose(add_outputs["context_shift"], context.unsqueeze(1)))
+        self.assertTrue(
+            torch.allclose(
+                gated_outputs["context_shift"],
+                0.25 * add_outputs["context_shift"],
+                atol=1e-6,
+            )
+        )
+
+    def test_reader_competitive_slots_reassigns_slot_preference(self) -> None:
+        standard = MemoryReader(
+            embed_dim=2,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=1,
+            condition_on_context=False,
+            attention_mode="standard",
+        )
+        competitive = MemoryReader(
+            embed_dim=2,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=1,
+            condition_on_context=False,
+            attention_mode="competitive_slots",
+        )
+        with torch.no_grad():
+            for reader in (standard, competitive):
+                reader.cross_attn.in_proj_weight.zero_()
+                reader.cross_attn.in_proj_bias.zero_()
+                reader.cross_attn.in_proj_weight[:2].copy_(torch.eye(2))
+                reader.cross_attn.in_proj_weight[2:4].copy_(torch.eye(2))
+                reader.cross_attn.in_proj_weight[4:6].copy_(torch.eye(2))
+                reader.cross_attn.out_proj.weight.copy_(torch.eye(2))
+                reader.cross_attn.out_proj.bias.zero_()
+                reader.queries.copy_(torch.tensor([[10.0, 9.0], [9.0, 0.0]]))
+        memory = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
+
+        standard_outputs = standard.read(memory)
+        competitive_outputs = competitive.read(memory)
+
+        self.assertEqual(int(torch.argmax(standard_outputs["attention"][0, 0]).item()), 0)
+        self.assertEqual(int(torch.argmax(competitive_outputs["attention"][0, 0]).item()), 1)
+
+    def test_reader_masked_partition_zeros_disallowed_slots(self) -> None:
+        reader = MemoryReader(
+            embed_dim=4,
+            num_queries=2,
+            use_query_gating=False,
+            num_heads=2,
+            condition_on_context=False,
+            attention_mode="masked_partition",
+            masked_partition=[[0, 1], [2, 3]],
+        )
+        with torch.no_grad():
+            reader.cross_attn.in_proj_weight.zero_()
+            reader.cross_attn.in_proj_bias.zero_()
+            reader.cross_attn.in_proj_weight[:4].copy_(torch.eye(4))
+            reader.cross_attn.in_proj_weight[4:8].copy_(torch.eye(4))
+            reader.cross_attn.in_proj_weight[8:12].copy_(torch.eye(4))
+            reader.cross_attn.out_proj.weight.copy_(torch.eye(4))
+            reader.cross_attn.out_proj.bias.zero_()
+            reader.queries.copy_(
+                torch.tensor(
+                    [
+                        [1.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 1.0],
+                    ]
+                )
+            )
+        memory = torch.eye(4, dtype=torch.float32).unsqueeze(0)
+
+        outputs = reader.read(memory)
+
+        self.assertTrue(torch.allclose(outputs["attention"][0, 0, 2:], torch.zeros(2), atol=1e-6))
+        self.assertTrue(torch.allclose(outputs["attention"][0, 1, :2], torch.zeros(2), atol=1e-6))
+
     def test_reader_query_residual_preserves_query_signal(self) -> None:
         reader = MemoryReader(
             embed_dim=4,

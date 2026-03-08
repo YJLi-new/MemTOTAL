@@ -2612,32 +2612,7 @@ def _reader_query_summary(reader_query_csv: str | None) -> dict[str, float]:
 
 
 def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
-    if not train_events_json:
-        return {
-            "final_memory_long_effective_rank": 0.0,
-            "final_memory_short_effective_rank": 0.0,
-            "final_reader_attention_pairwise_cosine_mean": 0.0,
-            "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
-            "final_reader_context_overwrite_ratio": 0.0,
-            "final_reader_readout_effective_rank": 0.0,
-            "final_fuser_output_effective_rank": 0.0,
-        }
-    path = Path(train_events_json)
-    if not path.exists():
-        return {
-            "final_memory_long_effective_rank": 0.0,
-            "final_memory_short_effective_rank": 0.0,
-            "final_reader_attention_pairwise_cosine_mean": 0.0,
-            "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
-            "final_reader_context_overwrite_ratio": 0.0,
-            "final_reader_readout_effective_rank": 0.0,
-            "final_fuser_output_effective_rank": 0.0,
-        }
-    payload = json.loads(path.read_text())
-    if isinstance(payload, dict):
-        events = payload.get("events", [])
-    else:
-        events = payload
+    events = _load_train_events(train_events_json)
     if not events:
         return {
             "final_memory_long_effective_rank": 0.0,
@@ -2666,6 +2641,112 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
         ),
         "final_fuser_output_effective_rank": float(
             event.get("fuser_output_effective_rank", 0.0)
+        ),
+    }
+
+
+def _load_train_events(train_events_json: str | None) -> list[dict[str, Any]]:
+    if not train_events_json:
+        return []
+    path = Path(train_events_json)
+    if path.is_dir():
+        candidate = path / "train_events.json"
+        if not candidate.exists():
+            return []
+        path = candidate
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text())
+    if isinstance(payload, dict):
+        events = payload.get("events", [])
+    else:
+        events = payload
+    if not isinstance(events, list):
+        return []
+    return [event for event in events if isinstance(event, dict)]
+
+
+def _rg2_geometry_gate_summary(
+    *,
+    summary_json: str,
+    train_events_json: str | None = None,
+) -> dict[str, float | bool | int | None]:
+    summary = json.loads(Path(summary_json).read_text())
+    events = _load_train_events(train_events_json)
+    if not events:
+        return {
+            "selection_passed": bool(summary.get("selection_passed", False)),
+            "selected_step": summary.get("selected_step"),
+            "dominant_label_collapse_onset_step": summary.get("dominant_label_collapse_onset_step"),
+            "g1_query_specialization": False,
+            "g2_noncollapsed_memory_short": False,
+            "g3_no_early_label_collapse": False,
+            "geometry_alive": False,
+            "geometry_alive_step": None,
+            "best_reader_attention_pairwise_cosine_mean": 0.0,
+            "best_reader_attention_entropy_mean": 0.0,
+            "best_memory_short_effective_rank": 0.0,
+            "best_memory_short_pairwise_cosine_mean": 0.0,
+            "best_reader_readout_effective_rank": 0.0,
+            "best_fuser_output_effective_rank": 0.0,
+        }
+    dominant_label_collapse_onset_step = summary.get("dominant_label_collapse_onset_step")
+    g3_no_early_label_collapse = (
+        dominant_label_collapse_onset_step is None
+        or int(dominant_label_collapse_onset_step) >= 8
+    )
+    best_event = min(
+        events,
+        key=lambda event: (
+            float(event.get("reader_attention_pairwise_cosine_mean", 1.0)),
+            float(event.get("reader_attention_entropy_mean", 999.0)),
+            -float(event.get("memory_short_effective_rank", 0.0)),
+        ),
+    )
+    g1_query_specialization = False
+    g2_noncollapsed_memory_short = False
+    geometry_alive = False
+    geometry_alive_step: int | None = None
+    best_memory_short_slots = max(1, int(best_event.get("memory_short_slots", 4) or 4))
+    rank_threshold = 1.8 if best_memory_short_slots <= 4 else 2.0
+    for event in events:
+        pairwise = float(event.get("reader_attention_pairwise_cosine_mean", 1.0))
+        entropy = float(event.get("reader_attention_entropy_mean", 999.0))
+        short_rank = float(event.get("memory_short_effective_rank", 0.0))
+        short_pairwise = float(event.get("memory_short_pairwise_cosine_mean", 1.0))
+        event_g1 = pairwise <= 0.90 and entropy <= 1.95
+        event_g2 = short_rank >= rank_threshold and short_pairwise <= 0.98
+        g1_query_specialization = g1_query_specialization or event_g1
+        g2_noncollapsed_memory_short = g2_noncollapsed_memory_short or event_g2
+        if event_g1 and event_g2 and g3_no_early_label_collapse:
+            geometry_alive = True
+            geometry_alive_step = int(event.get("step", 0))
+            best_event = event
+            break
+    return {
+        "selection_passed": bool(summary.get("selection_passed", False)),
+        "selected_step": summary.get("selected_step"),
+        "dominant_label_collapse_onset_step": dominant_label_collapse_onset_step,
+        "g1_query_specialization": g1_query_specialization,
+        "g2_noncollapsed_memory_short": g2_noncollapsed_memory_short,
+        "g3_no_early_label_collapse": g3_no_early_label_collapse,
+        "geometry_alive": geometry_alive,
+        "geometry_alive_step": geometry_alive_step,
+        "best_reader_attention_pairwise_cosine_mean": float(
+            best_event.get("reader_attention_pairwise_cosine_mean", 0.0)
+        ),
+        "best_reader_attention_entropy_mean": float(
+            best_event.get("reader_attention_entropy_mean", 0.0)
+        ),
+        "best_memory_short_effective_rank": float(best_event.get("memory_short_effective_rank", 0.0)),
+        "best_memory_short_pairwise_cosine_mean": float(
+            best_event.get("memory_short_pairwise_cosine_mean", 0.0)
+        ),
+        "best_reader_readout_effective_rank": float(
+            best_event.get("reader_readout_effective_rank", 0.0)
+        ),
+        "best_fuser_output_effective_rank": float(
+            best_event.get("fuser_output_effective_rank", 0.0)
         ),
     }
 
@@ -3266,5 +3347,188 @@ def compare_tl_reader_geometry_runs(
         "recommended_control_arm": recommended_control_arm,
         "move_to_rg2": not bool(meaningful_arms),
         "comparison_conclusion": comparison_conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def _rg2_arm_delta(
+    control: dict[str, float | bool | int | None],
+    arm: dict[str, float | bool | int | None],
+) -> dict[str, float | bool]:
+    entropy_delta = float(arm["best_reader_attention_entropy_mean"]) - float(
+        control["best_reader_attention_entropy_mean"]
+    )
+    pairwise_delta = float(arm["best_reader_attention_pairwise_cosine_mean"]) - float(
+        control["best_reader_attention_pairwise_cosine_mean"]
+    )
+    short_rank_delta = float(arm["best_memory_short_effective_rank"]) - float(
+        control["best_memory_short_effective_rank"]
+    )
+    selection_alive = bool(arm["selection_passed"]) and not bool(control["selection_passed"])
+    partial_gain = bool(
+        bool(arm["geometry_alive"])
+        or entropy_delta <= -0.05
+        or pairwise_delta <= -0.05
+        or short_rank_delta >= 0.30
+        or selection_alive
+    )
+    return {
+        "entropy_delta": entropy_delta,
+        "pairwise_delta": pairwise_delta,
+        "short_rank_delta": short_rank_delta,
+        "selection_alive": selection_alive,
+        "partial_gain": partial_gain,
+    }
+
+
+def compare_tl_reader_rg2_runs(
+    *,
+    control_summary_json: str,
+    competitive_summary_json: str,
+    partition_summary_json: str,
+    control_train_events_json: str | None = None,
+    competitive_train_events_json: str | None = None,
+    partition_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _rg2_geometry_gate_summary(
+        summary_json=control_summary_json,
+        train_events_json=control_train_events_json,
+    )
+    competitive = _rg2_geometry_gate_summary(
+        summary_json=competitive_summary_json,
+        train_events_json=competitive_train_events_json,
+    )
+    partition = _rg2_geometry_gate_summary(
+        summary_json=partition_summary_json,
+        train_events_json=partition_train_events_json,
+    )
+    competitive_delta = _rg2_arm_delta(control, competitive)
+    partition_delta = _rg2_arm_delta(control, partition)
+    competitive_reader_supported = bool(
+        bool(competitive["geometry_alive"]) or bool(competitive_delta["partial_gain"])
+    )
+    partition_reader_supported = bool(
+        bool(partition["geometry_alive"]) or bool(partition_delta["partial_gain"])
+    )
+    geometry_alive = bool(
+        bool(control["geometry_alive"])
+        or bool(competitive["geometry_alive"])
+        or bool(partition["geometry_alive"])
+    )
+
+    if bool(competitive["geometry_alive"]):
+        primary_interpretation = "rg2_competitive_geometry_alive"
+        comparison_conclusion = "success"
+        recommended_arm = "competitive_slots"
+        move_to_rg3 = False
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    elif bool(partition["geometry_alive"]):
+        primary_interpretation = "rg2_partition_geometry_alive"
+        comparison_conclusion = (
+            "success" if bool(partition["selection_passed"]) else "diagnostic_success"
+        )
+        recommended_arm = "masked_partition"
+        move_to_rg3 = False
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    elif bool(partition_delta["partial_gain"]) and not bool(competitive_delta["partial_gain"]):
+        primary_interpretation = "rg2_partition_only_partial_gain"
+        comparison_conclusion = "informative"
+        recommended_arm = "masked_partition"
+        move_to_rg3 = True
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    elif bool(competitive_delta["partial_gain"]) or bool(partition_delta["partial_gain"]):
+        primary_interpretation = "rg2_partial_gain_move_to_rg3"
+        comparison_conclusion = "informative"
+        recommended_arm = "competitive_slots" if bool(competitive_delta["partial_gain"]) else "masked_partition"
+        move_to_rg3 = True
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    else:
+        primary_interpretation = "rg2_no_geometry_gain"
+        comparison_conclusion = "failure"
+        recommended_arm = "control"
+        move_to_rg3 = False
+        failure_reason = "no_partial_geometry_gain"
+        bridge_failure_submode = "B-1d_residual_write_side_insufficiency"
+
+    return {
+        "control_selection_passed": bool(control["selection_passed"]),
+        "control_geometry_alive": bool(control["geometry_alive"]),
+        "control_geometry_alive_step": control["geometry_alive_step"],
+        "control_best_reader_attention_pairwise_cosine_mean": control[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "control_best_reader_attention_entropy_mean": control["best_reader_attention_entropy_mean"],
+        "control_best_memory_short_effective_rank": control["best_memory_short_effective_rank"],
+        "control_best_memory_short_pairwise_cosine_mean": control[
+            "best_memory_short_pairwise_cosine_mean"
+        ],
+        "control_best_reader_readout_effective_rank": control["best_reader_readout_effective_rank"],
+        "control_best_fuser_output_effective_rank": control["best_fuser_output_effective_rank"],
+        "competitive_selection_passed": bool(competitive["selection_passed"]),
+        "competitive_geometry_alive": bool(competitive["geometry_alive"]),
+        "competitive_geometry_alive_step": competitive["geometry_alive_step"],
+        "competitive_g1_query_specialization": bool(competitive["g1_query_specialization"]),
+        "competitive_g2_noncollapsed_memory_short": bool(competitive["g2_noncollapsed_memory_short"]),
+        "competitive_g3_no_early_label_collapse": bool(competitive["g3_no_early_label_collapse"]),
+        "competitive_best_reader_attention_pairwise_cosine_mean": competitive[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "competitive_best_reader_attention_entropy_mean": competitive[
+            "best_reader_attention_entropy_mean"
+        ],
+        "competitive_best_memory_short_effective_rank": competitive["best_memory_short_effective_rank"],
+        "competitive_best_memory_short_pairwise_cosine_mean": competitive[
+            "best_memory_short_pairwise_cosine_mean"
+        ],
+        "competitive_best_reader_readout_effective_rank": competitive[
+            "best_reader_readout_effective_rank"
+        ],
+        "competitive_best_fuser_output_effective_rank": competitive[
+            "best_fuser_output_effective_rank"
+        ],
+        "competitive_entropy_delta": competitive_delta["entropy_delta"],
+        "competitive_pairwise_delta": competitive_delta["pairwise_delta"],
+        "competitive_short_rank_delta": competitive_delta["short_rank_delta"],
+        "competitive_selection_alive": competitive_delta["selection_alive"],
+        "competitive_partial_gain": competitive_delta["partial_gain"],
+        "partition_selection_passed": bool(partition["selection_passed"]),
+        "partition_geometry_alive": bool(partition["geometry_alive"]),
+        "partition_geometry_alive_step": partition["geometry_alive_step"],
+        "partition_g1_query_specialization": bool(partition["g1_query_specialization"]),
+        "partition_g2_noncollapsed_memory_short": bool(partition["g2_noncollapsed_memory_short"]),
+        "partition_g3_no_early_label_collapse": bool(partition["g3_no_early_label_collapse"]),
+        "partition_best_reader_attention_pairwise_cosine_mean": partition[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "partition_best_reader_attention_entropy_mean": partition[
+            "best_reader_attention_entropy_mean"
+        ],
+        "partition_best_memory_short_effective_rank": partition["best_memory_short_effective_rank"],
+        "partition_best_memory_short_pairwise_cosine_mean": partition[
+            "best_memory_short_pairwise_cosine_mean"
+        ],
+        "partition_best_reader_readout_effective_rank": partition[
+            "best_reader_readout_effective_rank"
+        ],
+        "partition_best_fuser_output_effective_rank": partition[
+            "best_fuser_output_effective_rank"
+        ],
+        "partition_entropy_delta": partition_delta["entropy_delta"],
+        "partition_pairwise_delta": partition_delta["pairwise_delta"],
+        "partition_short_rank_delta": partition_delta["short_rank_delta"],
+        "partition_selection_alive": partition_delta["selection_alive"],
+        "partition_partial_gain": partition_delta["partial_gain"],
+        "competitive_reader_supported": competitive_reader_supported,
+        "partition_reader_supported": partition_reader_supported,
+        "geometry_alive": geometry_alive,
+        "bridge_failure_submode": bridge_failure_submode,
+        "primary_interpretation": primary_interpretation,
+        "comparison_conclusion": comparison_conclusion,
+        "recommended_arm": recommended_arm,
+        "move_to_rg3": move_to_rg3,
         "failure_reason": failure_reason,
     }
