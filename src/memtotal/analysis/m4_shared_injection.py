@@ -2282,3 +2282,97 @@ def compare_m5_objective_runs(
         "comparison_conclusion": conclusion,
         "failure_reason": failure_reason,
     }
+
+
+def compare_m5_dense_teacher_runs(
+    *,
+    canonical_summary_json: str,
+    control_summary_json: str,
+    hinge_off_audit_summary_json: str | None = None,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    control = json.loads(Path(control_summary_json).read_text())
+    hinge_off_audit = (
+        None if not hinge_off_audit_summary_json else json.loads(Path(hinge_off_audit_summary_json).read_text())
+    )
+
+    canonical_selection = bool(canonical.get("selection_passed", False))
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_brittle = bool(canonical.get("support_bank_brittle", False))
+    control_selection = bool(control.get("selection_passed", False))
+    control_primary = bool(control.get("screen248_test_gate_passed", False))
+    control_brittle = bool(control.get("support_bank_brittle", False))
+    canonical_collapse = canonical.get("dominant_label_collapse_onset_step")
+    control_collapse = control.get("dominant_label_collapse_onset_step")
+    canonical_cap = canonical.get("cap_saturation_onset_step")
+    control_cap = control.get("cap_saturation_onset_step")
+    canonical_less_collapsed = bool(
+        (canonical_collapse is None and control_collapse is not None)
+        or (
+            canonical_collapse is not None
+            and control_collapse is not None
+            and int(canonical_collapse) > int(control_collapse)
+        )
+    )
+    canonical_less_saturated = bool(
+        (canonical_cap is None and control_cap is not None)
+        or (
+            canonical_cap is not None
+            and control_cap is not None
+            and int(canonical_cap) > int(control_cap)
+        )
+    )
+    informative_success = bool(
+        not canonical_primary
+        and not control_primary
+        and (canonical_less_collapsed or canonical_less_saturated or (canonical_selection and not control_selection))
+    )
+    hinge_off_primary = bool(hinge_off_audit.get("screen248_test_gate_passed", False)) if hinge_off_audit else False
+    hinge_off_selection = bool(hinge_off_audit.get("selection_passed", False)) if hinge_off_audit else False
+
+    if canonical_primary and not control_primary:
+        conclusion = "success"
+        failure_reason = ""
+    elif hinge_off_audit and hinge_off_primary and not canonical_primary and not control_primary:
+        conclusion = "hinge_off_better"
+        failure_reason = ""
+    elif informative_success:
+        conclusion = "informative_success"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not canonical_selection:
+            failure_reason = "canonical_failed_selection"
+        elif not canonical_primary:
+            failure_reason = "canonical_selected_but_primary_gate_failed"
+        elif canonical_brittle:
+            failure_reason = "canonical_support_bank_brittle"
+        elif control_primary:
+            failure_reason = "control_also_passed"
+        else:
+            failure_reason = "dense_teacher_did_not_help"
+
+    return {
+        "canonical_selection_passed": canonical_selection,
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": canonical_brittle,
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "canonical_cap_saturation_onset_step": canonical_cap,
+        "canonical_dominant_label_collapse_onset_step": canonical_collapse,
+        "control_selection_passed": control_selection,
+        "control_selected_step": control.get("selected_step"),
+        "control_primary_gate_passed": control_primary,
+        "control_support_bank_brittle": control_brittle,
+        "control_cap_saturation_onset_step": control_cap,
+        "control_dominant_label_collapse_onset_step": control_collapse,
+        "canonical_less_collapsed": canonical_less_collapsed,
+        "canonical_less_saturated": canonical_less_saturated,
+        "informative_success": informative_success,
+        "hinge_off_audit_present": hinge_off_audit is not None,
+        "hinge_off_audit_selection_passed": hinge_off_selection,
+        "hinge_off_audit_primary_gate_passed": hinge_off_primary,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }

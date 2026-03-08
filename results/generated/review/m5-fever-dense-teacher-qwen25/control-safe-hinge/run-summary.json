@@ -1,0 +1,19 @@
+{
+  "cap_saturation_onset_step": null,
+  "dominant_label_collapse_onset_step": 24,
+  "fixed64_gate_passed": false,
+  "fixed64_metrics_path": "",
+  "fixed64_report_generated": false,
+  "heldout_results": {},
+  "heldout_sane_bank_count": 0,
+  "milestone_gate_passed": false,
+  "pilot_prefix_total_max_norm": 192.0,
+  "screen248_test_gate_passed": false,
+  "screen248_test_metrics_path": "",
+  "selected_prompt_variant": null,
+  "selected_step": null,
+  "selected_suite": null,
+  "selected_support_serialization": null,
+  "selection_passed": false,
+  "support_bank_brittle": false
+}

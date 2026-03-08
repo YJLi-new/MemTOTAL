@@ -21,6 +21,7 @@
 - `Phase 2` 不论 shallow 还是 deep path，都已经出现过非零 main-chain consumption 与局部 `I_real > I_shuffle / I_zero` 信号
 - `M4.7` 的 structured support-set alignment 已真实跑完：`canonical / freeze-writer / pooled-block` 三臂都没有通过 selection，但 canonical structured path 的最佳点明显强于两个 ablation
 - `M5.1` 的 same-schema warm-start + task-first `CE + delayed hinge` 已真实跑完；随后 `M5.2` 的 `task-only / anchor-only / anchor+teacher_margin` objective rewrite 也已真实跑完：`latent anchor` 能保住 warm-start 流形，但 current `teacher_margin` hook 在 canonical 中全程 dormant
+- `M5.3` 的 `control-safe-hinge / canonical-dense-teacher(choice-space KL)` 已真实跑完：dense teacher signal 这次不再 dormant，canonical 的 `alignment_aux_active_steps=18/32`，但仍没有通过 `screen248-val`，而且 `step8` 明显弱于 safe-hinge control
 
 所以当前 blocker 不再是：
 - `Qwen` 会不会读 prefix
@@ -32,8 +33,9 @@
 - shared injection 仍然没有在预注册 `screen248-val` 规则下稳定过 selection gate
 - shallow prefix 会失稳，stabilized shallow prefix 会把有效学习压平
 - sparse deep prompt 虽然提供了更强主链路带宽，但当前会很快塌成强标签偏置
-- `M5.1/M5.2` 都还没有把 warm-start 的局部正信号稳定固化成 `I_real > I_shuffle` 的可泛化能力信号
-- 当前更像是 `support representation -> writer -> projector -> frozen reasoner` 的对齐与目标错配，而不只是 static support memorization、projector 容量或初始化随机性
+- `M5.1/M5.2/M5.3` 都还没有把 warm-start 的局部正信号稳定固化成 `I_real > I_shuffle` 的可泛化能力信号
+- 当前更像是 `support representation -> writer -> projector -> frozen reasoner` 的单层路径已经接近 objective-side 上限，而不只是 static support memorization、projector 容量或初始化随机性
+- 按 [PLAN.md](/root/mydir/MemTOTAL/PLAN.md) 的 Workstream A 判定表，下一步应转入 `Workstream B / TL-PoC`，而不是继续在 FEVER single-level objective 上做更多小修补
 
 ## 当前最可信的结论
 
@@ -54,6 +56,8 @@
 - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/`
 - `runs/review/m5-fever-writer-objective-rewrite-qwen25/`
 - `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`
+- `runs/review/m5-fever-dense-teacher-qwen25/`
+- `results/generated/review/m5-fever-dense-teacher-qwen25/`
 
 关键结果：
 - [selection.json](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json)
@@ -189,10 +193,33 @@
   - 当前 `teacher_margin` hook 太 dormant，这轮并没有真正把 teacher-facing alignment 信号写进训练
   - 下一步不应直接跳 receptor adaptation，而应进入“更强但仍 lightweight 的 engaged teacher-aided objective”
 
+`M5.3 dense teacher under shared injection` 的最新结论是：
+- 只跑了 `PLAN.md` 要求的 required pair：
+  - `control-safe-hinge`
+  - `canonical-dense-teacher(choice-space KL)`
+- 顶层结果位于：
+  - [dense-teacher-summary.json](/root/mydir/MemTOTAL/results/generated/review/m5-fever-dense-teacher-qwen25/dense-teacher-summary.json)
+  - [dense-teacher-summary.md](/root/mydir/MemTOTAL/results/generated/review/m5-fever-dense-teacher-qwen25/dense-teacher-summary.md)
+  - [warm_start_manifest.json](/root/mydir/MemTOTAL/results/generated/review/m5-fever-dense-teacher-qwen25/warm_start_manifest.json)
+- 这轮把上一个 blocker 又缩了一步：
+  - dense teacher signal 这次已经不再 dormant
+  - canonical `alignment_aux_active_steps = 18 / 32`
+  - `max_align_loss ≈ 0.0156`
+  - 所以“teacher hook 根本没有被激活”这条解释现在已经被排除了
+- 但 canonical 仍然没有通过 `screen248-val`，而且比 safe-hinge control 更弱：
+  - control `step8`: `macro_f1=0.3216`、`flip_gain_vs_shuffle=4`、`flip_gain_vs_zero=7`、`regressions_vs_base=7`
+  - canonical `step8`: `macro_f1=0.2879`、`flip_gain_vs_shuffle=0`、`flip_gain_vs_zero=5`、`regressions_vs_base=8`
+  - 两臂最终都没有打开 `screen248-test`
+  - collapse onset 也没有改善：canonical `step16`，control `step24`
+- 这说明：
+  - 这次失败不再是“teacher signal 太 sparse / 太 dormant”
+  - 而是：即便 choice-space dense teacher KL 真正介入，single-level `writer -> projector -> frozen Qwen` 路径仍然不够稳
+  - 按 [PLAN.md](/root/mydir/MemTOTAL/PLAN.md) 的 Workstream A 决策表，当前应停止继续修 single-level FEVER objective，改为进入 `Workstream B / TL-PoC`
+
 因此，最新最稳妥的判断是：
 
 > shared injection 这条路已经出现了正信号，但这个正信号目前仍是“可训练、可消费、但不稳健”。  
-> `M5.2` 进一步说明：单靠 task-first continuation 或 latent anchor 都还不够，而 current `teacher_margin` hook 又在 canonical 中完全 dormant。当前最该修的不是 receiver，而是“怎样让 teacher-aided objective 真正以可控方式介入 writer-side alignment”。
+> `M5.3` 进一步说明：teacher-facing objective 这次已经真实介入，但 dense teacher 仍没把 single-level substrate 拉过预注册 gate。当前最该做的不是继续在 FEVER 单层 objective 上打转，也不是立刻动 receiver，而是激活 repo 已有的 `Writer -> Reader -> Fuser -> Injector` 两层路径。
 
 ## 现在不该做什么
 
@@ -200,25 +227,35 @@
 - 不再做 router / sign selection / 全局 alpha / 更多 seed sweep
 - 不直接上 `Story Cloze`
 - 不直接上 `Qwen3-8B`
-- 不直接上 KL 蒸馏
+- 不继续在 single-level FEVER 路径上做 `M5.4 / M5.5` 式的 objective 小修补
+- 不直接上 full token-level KL 或 receptor adaptation
 
 ## 现在最该做什么
 
-继续留在 `shared injection` 主线，但下一步不再只是重复 `M4` 层面的 support protocol 微调。当前优先级应改成：
-- 保持 `sparse deep prompt` 这条主链路，不回旧 residual family
+继续留在 `shared injection` 主线，但下一步已经不再是 `M5.3` 风格的 objective 微调，而是 `PLAN.md` 里的 `Workstream B / TL-PoC`。当前优先级应改成：
+- 保持 `frozen Qwen + structured support-set encoder + sparse deep prefix` 这一 substrate，不回旧 residual family
 - 把 `screen248-test` 固定为 primary capability gate，`fixed64` 只保留为 legacy report
-- 把 `episode bank vs static triad6` 这类 support-side 对照降级为辅线，因为 `M4.6` 已经证明它不是当前第一主因
-- 进入 `M5.3 engaged teacher-aided objective under shared injection`
+- 把 `control-safe-hinge` 作为当前 least-collapsed single-level substrate objective，带入两层 PoC
+- 激活 repo 里已经存在但尚未进入 active FEVER harness 的：
+  - `MemoryReader`
+  - `MemoryFuser`
+  - 显式 `M_long -> M_short`
 
 更具体地说，下一步应优先做：
-- 不把“更多步数”当主药；`M5.1/M5.2` 已经说明 same-schema warm-start 和 latent anchor 单独都不够
-- canonical 继续保持 shared injection 与 frozen Qwen，不立刻做 receptor adaptation
-- 下一轮先改 writer objective：
-  - 仍以 `task-first` 为主
-  - teacher signal 若要引入，也只做 lightweight teacher-aided alignment，而不是 full KL
-- `screen248-test` 继续作为 primary capability gate，`fixed64` 继续只做 legacy report
-- 继续保留现有 layer-wise attention / grad ratio / collapse observability，用来判断 shortcut 是谁先学出来的
-- 只有当 `screen248-test` 真正稳定通过后，才打开：
+- `pilot_memory_path_variant: single_level | two_level`
+- 先跑桥接子阶段：
+  - `TL-H4-K8` 对比 `SL-8`
+- 再做 bottleneck：
+  - `TL-H4-K4`
+- 再做 specialization：
+  - `TL-H1-K4` vs `TL-H4-K4`
+- 继续保留现有 layer-wise attention / grad ratio / collapse observability，并新增：
+  - `memory_long_effective_rank`
+  - `memory_short_effective_rank`
+  - per-query attention entropy / specialization
+  - short-slot collapse diagnostics
+- 只有当 two-level FEVER PoC 真正稳定下来后，才打开：
+  - `Stage B/C` transfer refresh
   - `fixed64` legacy report
   - `Story Cloze` stress test
   - candidate-conditioned / pair-conditioned injection
@@ -233,6 +270,8 @@
 - [m4-fever-anti-shortcut-recovery-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-anti-shortcut-recovery-qwen25)
 - [m4-fever-shared-injection-alignment-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-shared-injection-alignment-qwen25)
 - [m5-fever-writer-reasoner-alignment-qwen25](/root/mydir/MemTOTAL/results/generated/review/m5-fever-writer-reasoner-alignment-qwen25)
+- [m5-fever-writer-objective-rewrite-qwen25](/root/mydir/MemTOTAL/results/generated/review/m5-fever-writer-objective-rewrite-qwen25)
+- [m5-fever-dense-teacher-qwen25](/root/mydir/MemTOTAL/results/generated/review/m5-fever-dense-teacher-qwen25)
 - [20260307-m4-shared-injection-brief.md](/root/mydir/MemTOTAL/docs/briefs/20260307-m4-shared-injection-brief.md)
 
 ### 已判死的旧分支

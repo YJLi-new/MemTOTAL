@@ -1,0 +1,24 @@
+# M5.3 Dense Teacher Summary
+
+- comparison_conclusion: failure
+- failure_reason: canonical_failed_selection
+- informative_success: False
+- canonical_selection_passed: False
+- canonical_selected_step: None
+- canonical_primary_gate_passed: False
+- canonical_support_bank_brittle: False
+- canonical_fixed64_report_generated: False
+- canonical_fixed64_gate_passed: False
+- canonical_cap_saturation_onset_step: None
+- canonical_dominant_label_collapse_onset_step: 16
+- control_selection_passed: False
+- control_selected_step: None
+- control_primary_gate_passed: False
+- control_support_bank_brittle: False
+- control_cap_saturation_onset_step: None
+- control_dominant_label_collapse_onset_step: 24
+- canonical_less_collapsed: False
+- canonical_less_saturated: False
+- hinge_off_audit_present: False
+- hinge_off_audit_selection_passed: False
+- hinge_off_audit_primary_gate_passed: False

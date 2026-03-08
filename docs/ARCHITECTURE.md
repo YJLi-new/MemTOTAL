@@ -18,6 +18,7 @@
 - `scripts/run_m4_fever_alignment_qwen25.sh`: `M4.7` 的 structured support-set alignment 入口，会并排跑 `canonical / freeze-writer / pooled-block` 三臂，并生成 top-level alignment summary
 - `scripts/run_m5_fever_alignment_qwen25.sh`: `M5.1` 的 same-schema warm-start alignment 入口，会写出 `warm_start_manifest.json`，再并排跑 `canonical / freeze-writer / pooled-block` 三臂 continuation，并生成 top-level `success / ambiguous_pass / failure` summary
 - `scripts/run_m5_fever_objective_rewrite_qwen25.sh`: `M5.2` 的 writer objective rewrite 入口，会写出 `warm_start_manifest.json`，再并排跑 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂 continuation，并生成 top-level objective summary
+- `scripts/run_m5_fever_dense_teacher_qwen25.sh`: `M5.3` 的 dense teacher 入口，会写出 `warm_start_manifest.json`，再并排跑 `control-safe-hinge / canonical-dense-teacher` required pair，并生成 top-level dense-teacher summary
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -43,6 +44,7 @@
 - `scripts/update_m4_alignment_summary.py`: 汇总 `canonical / freeze-writer / pooled-block` 三臂 alignment 结果，并生成 `alignment-summary.{json,md}`
 - `scripts/update_m5_alignment_summary.py`: 汇总 `M5.1` 三臂 continuation 结果，并生成 `alignment-summary.{json,md}`
 - `scripts/update_m5_objective_summary.py`: 汇总 `M5.2` 三臂 objective rewrite 结果，并生成 `objective-summary.{json,md}`
+- `scripts/update_m5_dense_teacher_summary.py`: 汇总 `M5.3` control/canonical 对照结果，并生成 `dense-teacher-summary.{json,md}`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -393,6 +395,33 @@
     - 当前并不是“teacher signal 已尝试且无效”
     - 而是“current teacher hook 太 dormant，还没有真正介入 writer-side alignment”
     - 下一步应进入 `M5.3 engaged teacher-aided objective under shared injection`
+- `M5.3` 当前又把主线推进到 dense teacher objective：
+  - required pair 固定为：
+    - `control-safe-hinge`
+    - `canonical-dense-teacher(choice-space KL)`
+  - 训练侧新增：
+    - `runtime.pilot_alignment_aux_mode in {off, teacher_margin, teacher_choice_kl, teacher_choice_js}`
+    - `runtime.pilot_alignment_aux_temperature`
+    - `runtime.pilot_alignment_aux_advantage_center`
+    - `runtime.pilot_alignment_aux_advantage_scale`
+  - per-step diagnostics 现已补齐：
+    - `teacher_choice_kl / teacher_choice_js`
+    - `teacher_advantage_weight_mean/max`
+    - `teacher_margin_minus_base_margin`
+    - `teacher_margin_minus_active_margin`
+    - `active/teacher/base_class_entropy`
+    - `memory_slot_effective_rank`
+    - `support_state_effective_rank`
+    - `grad_norm_support_encoder / grad_norm_writer / grad_norm_prefix_projector`
+  - latest real run 说明：
+    - dense teacher 这次已经不再 dormant，canonical `alignment_aux_active_steps=18/32`
+    - 但 canonical 仍然 `selection_passed=false`
+    - canonical `step8` 明显弱于 `control-safe-hinge step8`
+    - top-level comparison 位于 `results/generated/review/m5-fever-dense-teacher-qwen25/dense-teacher-summary.{json,md}`
+  - 因而：
+    - 当前 single-level objective side 已经有一轮 decisive dense-teacher test
+    - next step 不应再是 `M5.4/M5.5`
+    - 应转入 `Workstream B / TL-PoC`，把现有 `MemoryReader / MemoryFuser` 真正接进 active FEVER harness
 
 ## M3 Failure Checks
 

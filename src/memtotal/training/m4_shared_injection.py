@@ -373,10 +373,10 @@ def _resolve_alignment_aux_mode(config: dict[str, Any]) -> str:
         mode = "off"
     else:
         mode = str(raw_mode)
-    if mode not in {"off", "teacher_margin"}:
+    if mode not in {"off", "teacher_margin", "teacher_choice_kl", "teacher_choice_js"}:
         raise ValueError(
             f"Unsupported runtime.pilot_alignment_aux_mode={mode}. "
-            "Expected one of off, teacher_margin."
+            "Expected one of off, teacher_margin, teacher_choice_kl, teacher_choice_js."
         )
     return mode
 
@@ -397,6 +397,18 @@ def _resolve_alignment_aux_ramp_steps(config: dict[str, Any]) -> int:
 
 def _resolve_alignment_aux_apply_only_to_real_memory(config: dict[str, Any]) -> bool:
     return bool(config["runtime"].get("pilot_alignment_aux_apply_only_to_real_memory", False))
+
+
+def _resolve_alignment_aux_temperature(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_alignment_aux_temperature", 1.0))
+
+
+def _resolve_alignment_aux_advantage_center(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_alignment_aux_advantage_center", 0.0))
+
+
+def _resolve_alignment_aux_advantage_scale(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_alignment_aux_advantage_scale", 0.25))
 
 
 def _resolve_init_checkpoint_path(config: dict[str, Any]) -> str:
@@ -1108,6 +1120,9 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.trainable_variant = _resolve_trainable_variant(config)
         self.alignment_aux_mode = _resolve_alignment_aux_mode(config)
         self.alignment_aux_weight_max = _resolve_alignment_aux_weight_max(config)
+        self.alignment_aux_temperature = _resolve_alignment_aux_temperature(config)
+        self.alignment_aux_advantage_center = _resolve_alignment_aux_advantage_center(config)
+        self.alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
         self.support_serialization_variant = _resolve_support_serialization_variant(config)
         self.support_encoder: StructuredSupportSetEncoder | None = None
@@ -1408,6 +1423,76 @@ def _score_margin_tensor(scores: torch.Tensor, gold_index: int) -> torch.Tensor:
     return scores[gold_index] - scores[competitor_index]
 
 
+def _teacher_advantage_weight(
+    teacher_margin: torch.Tensor,
+    base_margin: torch.Tensor,
+    *,
+    center: float,
+    scale: float,
+) -> torch.Tensor:
+    safe_scale = max(float(scale), 1e-6)
+    return torch.sigmoid(((teacher_margin - base_margin) - float(center)) / safe_scale)
+
+
+def _choice_distribution(scores: torch.Tensor, *, temperature: float) -> torch.Tensor:
+    safe_temperature = max(float(temperature), 1e-6)
+    return torch.softmax(scores.to(dtype=torch.float32) / safe_temperature, dim=-1)
+
+
+def _alignment_aux_choice_loss(
+    *,
+    mode: str,
+    active_scores: torch.Tensor,
+    teacher_scores: torch.Tensor,
+    temperature: float,
+) -> torch.Tensor:
+    safe_temperature = max(float(temperature), 1e-6)
+    active_scores_fp32 = active_scores.to(dtype=torch.float32)
+    teacher_scores_fp32 = teacher_scores.to(dtype=torch.float32).detach()
+    teacher_probs = _choice_distribution(teacher_scores_fp32, temperature=safe_temperature).unsqueeze(0)
+    student_log_probs = F.log_softmax(active_scores_fp32 / safe_temperature, dim=-1).unsqueeze(0)
+    tau_sq = safe_temperature * safe_temperature
+    if mode == "teacher_choice_kl":
+        return tau_sq * F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+    if mode != "teacher_choice_js":
+        raise ValueError(f"Unsupported choice-space alignment aux mode: {mode}.")
+    student_probs = _choice_distribution(active_scores_fp32, temperature=safe_temperature)
+    mixture = 0.5 * (teacher_probs.squeeze(0) + student_probs.detach())
+    mixture = mixture.clamp_min(1e-8)
+    student_kl = F.kl_div(student_log_probs, mixture.unsqueeze(0), reduction="batchmean")
+    teacher_kl = F.kl_div(
+        torch.log(mixture).unsqueeze(0),
+        teacher_probs,
+        reduction="batchmean",
+    )
+    return tau_sq * 0.5 * (student_kl + teacher_kl)
+
+
+def _effective_rank(tensor: torch.Tensor | None) -> float:
+    if tensor is None or tensor.numel() == 0:
+        return 0.0
+    matrix = tensor.to(dtype=torch.float32)
+    if matrix.ndim == 2:
+        matrix = matrix.unsqueeze(0)
+    elif matrix.ndim != 3:
+        raise ValueError(f"Expected rank-2 or rank-3 tensor for effective rank, got shape={tuple(matrix.shape)}.")
+    singular_values = torch.linalg.svdvals(matrix)
+    totals = singular_values.sum(dim=-1, keepdim=True)
+    nonzero = totals.squeeze(-1) > 0.0
+    probs = singular_values / totals.clamp_min(1e-8)
+    probs = probs.clamp_min(1e-8)
+    entropy = -(probs * probs.log()).sum(dim=-1)
+    effective_rank = torch.exp(entropy)
+    effective_rank = torch.where(nonzero, effective_rank, torch.zeros_like(effective_rank))
+    return float(effective_rank.mean().item())
+
+
+def _class_entropy(scores: torch.Tensor, *, temperature: float = 1.0) -> float:
+    probs = _choice_distribution(scores, temperature=temperature).clamp_min(1e-8)
+    entropy = -(probs * probs.log()).sum()
+    return float(entropy.item())
+
+
 def _alignment_aux_loss(
     *,
     mode: str,
@@ -1415,18 +1500,60 @@ def _alignment_aux_loss(
     base_scores: torch.Tensor,
     teacher_scores: torch.Tensor,
     gold_index: int,
-) -> tuple[torch.Tensor | None, bool]:
+    temperature: float = 1.0,
+    advantage_center: float = 0.0,
+    advantage_scale: float = 0.25,
+) -> tuple[torch.Tensor | None, bool, dict[str, float]]:
+    active_scores_fp32 = active_scores.to(dtype=torch.float32)
+    base_scores_fp32 = base_scores.to(dtype=torch.float32)
+    teacher_scores_fp32 = teacher_scores.to(dtype=torch.float32)
+    active_margin = _score_margin_tensor(active_scores_fp32, gold_index)
+    base_margin = _score_margin_tensor(base_scores_fp32, gold_index).detach()
+    teacher_margin = _score_margin_tensor(teacher_scores_fp32, gold_index).detach()
+    advantage_weight = _teacher_advantage_weight(
+        teacher_margin,
+        base_margin,
+        center=advantage_center,
+        scale=advantage_scale,
+    ).detach()
+    teacher_choice_kl = _alignment_aux_choice_loss(
+        mode="teacher_choice_kl",
+        active_scores=active_scores_fp32,
+        teacher_scores=teacher_scores_fp32,
+        temperature=temperature,
+    )
+    teacher_choice_js = _alignment_aux_choice_loss(
+        mode="teacher_choice_js",
+        active_scores=active_scores_fp32,
+        teacher_scores=teacher_scores_fp32,
+        temperature=temperature,
+    )
+    diagnostics = {
+        "teacher_choice_kl": float(teacher_choice_kl.detach().item()),
+        "teacher_choice_js": float(teacher_choice_js.detach().item()),
+        "teacher_advantage_weight_mean": float(advantage_weight.item()),
+        "teacher_advantage_weight_max": float(advantage_weight.item()),
+        "teacher_margin_minus_base_margin": float((teacher_margin - base_margin).item()),
+        "teacher_margin_minus_active_margin": float((teacher_margin - active_margin.detach()).item()),
+        "active_class_entropy": _class_entropy(active_scores_fp32),
+        "teacher_class_entropy": _class_entropy(teacher_scores_fp32),
+        "base_class_entropy": _class_entropy(base_scores_fp32),
+    }
     if mode == "off":
-        return None, False
-    if mode != "teacher_margin":
-        raise ValueError(f"Unsupported alignment aux mode: {mode}.")
-    base_margin = float(_score_margin_tensor(base_scores, gold_index).detach().item())
-    teacher_margin = float(_score_margin_tensor(teacher_scores, gold_index).detach().item())
-    if teacher_margin <= base_margin:
-        return None, False
-    target = torch.tensor(teacher_margin, dtype=torch.float32, device=active_scores.device)
-    aux_loss = F.smooth_l1_loss(_score_margin_tensor(active_scores, gold_index), target)
-    return aux_loss, True
+        return None, False, diagnostics
+    if mode == "teacher_margin":
+        if float(teacher_margin.item()) <= float(base_margin.item()):
+            return None, False, diagnostics
+        target = teacher_margin.to(device=active_scores_fp32.device, dtype=torch.float32)
+        aux_loss = F.smooth_l1_loss(active_margin, target)
+        return aux_loss, True, diagnostics
+    if mode == "teacher_choice_kl":
+        aux_loss = advantage_weight.to(device=active_scores_fp32.device, dtype=torch.float32) * teacher_choice_kl
+        return aux_loss, bool(float(advantage_weight.item()) > 1e-6), diagnostics
+    if mode == "teacher_choice_js":
+        aux_loss = advantage_weight.to(device=active_scores_fp32.device, dtype=torch.float32) * teacher_choice_js
+        return aux_loss, bool(float(advantage_weight.item()) > 1e-6), diagnostics
+    raise ValueError(f"Unsupported alignment aux mode: {mode}.")
 
 
 def _cosine_anchor_loss(
@@ -1620,6 +1747,9 @@ def run_shared_injection_pilot(
     alignment_aux_start_step = _resolve_alignment_aux_start_step(config)
     alignment_aux_ramp_steps = _resolve_alignment_aux_ramp_steps(config)
     alignment_aux_apply_only_to_real_memory = _resolve_alignment_aux_apply_only_to_real_memory(config)
+    alignment_aux_temperature = _resolve_alignment_aux_temperature(config)
+    alignment_aux_advantage_center = _resolve_alignment_aux_advantage_center(config)
+    alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
     init_checkpoint_path = _resolve_init_checkpoint_path(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
@@ -1949,6 +2079,8 @@ def run_shared_injection_pilot(
                 masked_support_text_block,
                 support_rows=masked_support_rows_for_prefix,
             )
+            memory_slot_effective_rank = _effective_rank(prefix_artifacts.memory_slots)
+            support_state_effective_rank = _effective_rank(prefix_artifacts.support_item_states)
             scores = runtime.score_example(
                 train_example,
                 support_text_block=teacher_support_text_block,
@@ -2004,40 +2136,55 @@ def run_shared_injection_pilot(
                     reference_memory_slots=reference_memory_slots,
                 )
                 loss = loss + (active_latent_anchor_weight * latent_anchor_loss)
-            teacher_margin_aux_loss = None
-            teacher_margin_aux_active = False
             active_alignment_aux_weight = _active_competitor_hinge_weight(
                 current_step=step + 1,
                 max_weight=alignment_aux_weight_max,
                 start_step=alignment_aux_start_step,
                 ramp_steps=alignment_aux_ramp_steps,
             )
+            with torch.no_grad():
+                base_scores = runtime.backbone.score_continuations(
+                    train_example.prompt_text,
+                    train_example.candidate_texts,
+                )
+                teacher_scores = runtime.backbone.score_continuations(
+                    _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
+                    train_example.candidate_texts,
+                )
+            alignment_aux_loss = None
+            alignment_aux_active = False
+            alignment_aux_diagnostics = {
+                "teacher_choice_kl": 0.0,
+                "teacher_choice_js": 0.0,
+                "teacher_advantage_weight_mean": 0.0,
+                "teacher_advantage_weight_max": 0.0,
+                "teacher_margin_minus_base_margin": 0.0,
+                "teacher_margin_minus_active_margin": 0.0,
+                "active_class_entropy": 0.0,
+                "teacher_class_entropy": 0.0,
+                "base_class_entropy": 0.0,
+            }
             alignment_aux_allowed = not (
                 alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
+            )
+            requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
+            alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
+                mode=requested_alignment_mode,
+                active_scores=scores,
+                base_scores=base_scores,
+                teacher_scores=teacher_scores,
+                gold_index=train_example.gold_index,
+                temperature=alignment_aux_temperature,
+                advantage_center=alignment_aux_advantage_center,
+                advantage_scale=alignment_aux_advantage_scale,
             )
             if (
                 alignment_aux_mode != "off"
                 and alignment_aux_allowed
                 and active_alignment_aux_weight > 0.0
+                and alignment_aux_loss is not None
             ):
-                with torch.no_grad():
-                    base_scores = runtime.backbone.score_continuations(
-                        train_example.prompt_text,
-                        train_example.candidate_texts,
-                    )
-                    teacher_scores = runtime.backbone.score_continuations(
-                        _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
-                        train_example.candidate_texts,
-                    )
-                teacher_margin_aux_loss, teacher_margin_aux_active = _alignment_aux_loss(
-                    mode=alignment_aux_mode,
-                    active_scores=scores,
-                    base_scores=base_scores,
-                    teacher_scores=teacher_scores,
-                    gold_index=train_example.gold_index,
-                )
-                if teacher_margin_aux_loss is not None:
-                    loss = loss + (active_alignment_aux_weight * teacher_margin_aux_loss)
+                loss = loss + (active_alignment_aux_weight * alignment_aux_loss)
             loss.backward()
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
@@ -2098,18 +2245,40 @@ def run_shared_injection_pilot(
                     "pilot_support_encoder_mode": support_encoder_mode,
                     "pilot_trainable_variant": trainable_variant,
                     "alignment_aux_mode": alignment_aux_mode,
-                    "alignment_aux_active": bool(teacher_margin_aux_active),
+                    "alignment_aux_active": bool(alignment_aux_active),
                     "alignment_aux_loss": (
-                        0.0 if teacher_margin_aux_loss is None else float(teacher_margin_aux_loss.item())
+                        0.0 if alignment_aux_loss is None else float(alignment_aux_loss.item())
                     ),
                     "teacher_margin_aux_loss": (
-                        0.0 if teacher_margin_aux_loss is None else float(teacher_margin_aux_loss.item())
+                        0.0 if alignment_aux_loss is None else float(alignment_aux_loss.item())
                     ),
                     "teacher_margin_aux_weight": float(active_alignment_aux_weight),
-                    "teacher_margin_aux_active": bool(teacher_margin_aux_active),
+                    "teacher_margin_aux_active": bool(alignment_aux_active),
+                    "teacher_choice_kl": float(alignment_aux_diagnostics["teacher_choice_kl"]),
+                    "teacher_choice_js": float(alignment_aux_diagnostics["teacher_choice_js"]),
+                    "teacher_advantage_weight_mean": float(
+                        alignment_aux_diagnostics["teacher_advantage_weight_mean"]
+                    ),
+                    "teacher_advantage_weight_max": float(
+                        alignment_aux_diagnostics["teacher_advantage_weight_max"]
+                    ),
+                    "teacher_margin_minus_base_margin": float(
+                        alignment_aux_diagnostics["teacher_margin_minus_base_margin"]
+                    ),
+                    "teacher_margin_minus_active_margin": float(
+                        alignment_aux_diagnostics["teacher_margin_minus_active_margin"]
+                    ),
+                    "active_class_entropy": float(alignment_aux_diagnostics["active_class_entropy"]),
+                    "teacher_class_entropy": float(alignment_aux_diagnostics["teacher_class_entropy"]),
+                    "base_class_entropy": float(alignment_aux_diagnostics["base_class_entropy"]),
+                    "memory_slot_effective_rank": float(memory_slot_effective_rank),
+                    "support_state_effective_rank": float(support_state_effective_rank),
                     "support_encoder_grad_norm": support_encoder_grad_norm,
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
                     "writer_grad_norm": writer_grad_norm,
+                    "grad_norm_support_encoder": support_encoder_grad_norm,
+                    "grad_norm_prefix_projector": prefix_projector_grad_norm,
+                    "grad_norm_writer": writer_grad_norm,
                     "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
                     "total_grad_norm_pre_clip": total_grad_norm,
                     "prefix_artifact_stats": prefix_artifacts.prefix_stats,
@@ -2196,6 +2365,9 @@ def run_shared_injection_pilot(
         "pilot_alignment_aux_start_step": alignment_aux_start_step,
         "pilot_alignment_aux_ramp_steps": alignment_aux_ramp_steps,
         "pilot_alignment_aux_apply_only_to_real_memory": alignment_aux_apply_only_to_real_memory,
+        "pilot_alignment_aux_temperature": alignment_aux_temperature,
+        "pilot_alignment_aux_advantage_center": alignment_aux_advantage_center,
+        "pilot_alignment_aux_advantage_scale": alignment_aux_advantage_scale,
         "pilot_init_checkpoint_path": "" if not init_checkpoint_path else str(Path(init_checkpoint_path).resolve()),
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
@@ -2273,6 +2445,29 @@ def run_shared_injection_pilot(
         ),
         "train_final_teacher_margin_aux_weight": (
             train_events[-1]["teacher_margin_aux_weight"] if train_events else None
+        ),
+        "train_final_teacher_choice_kl": train_events[-1]["teacher_choice_kl"] if train_events else None,
+        "train_final_teacher_choice_js": train_events[-1]["teacher_choice_js"] if train_events else None,
+        "train_final_teacher_advantage_weight_mean": (
+            train_events[-1]["teacher_advantage_weight_mean"] if train_events else None
+        ),
+        "train_final_teacher_advantage_weight_max": (
+            train_events[-1]["teacher_advantage_weight_max"] if train_events else None
+        ),
+        "train_final_teacher_margin_minus_base_margin": (
+            train_events[-1]["teacher_margin_minus_base_margin"] if train_events else None
+        ),
+        "train_final_teacher_margin_minus_active_margin": (
+            train_events[-1]["teacher_margin_minus_active_margin"] if train_events else None
+        ),
+        "train_final_active_class_entropy": train_events[-1]["active_class_entropy"] if train_events else None,
+        "train_final_teacher_class_entropy": train_events[-1]["teacher_class_entropy"] if train_events else None,
+        "train_final_base_class_entropy": train_events[-1]["base_class_entropy"] if train_events else None,
+        "train_final_memory_slot_effective_rank": (
+            train_events[-1]["memory_slot_effective_rank"] if train_events else None
+        ),
+        "train_final_support_state_effective_rank": (
+            train_events[-1]["support_state_effective_rank"] if train_events else None
         ),
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         "pilot_checkpoint_path": "" if not injection_checkpoint_path else str(Path(injection_checkpoint_path).resolve()),

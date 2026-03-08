@@ -1,0 +1,104 @@
+{
+  "best_adapt_macro_f1": 0.1518987341772152,
+  "best_adapt_task_margin": -1.7323467692390817,
+  "best_adapt_task_score": 0.29508196721311475,
+  "checkpoint_path": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/canonical-dense-teacher/phase2-selected/pilot-I-real/snapshot_evals/step_0016/checkpoint.pt",
+  "dominant_label_fraction": 1.0,
+  "label_recall_by_class": {
+    "NOT_ENOUGH_INFO": 0.0,
+    "REFUTES": 0.0,
+    "SUPPORTS": 1.0
+  },
+  "pilot_arm_alias": "I_real",
+  "pilot_support_encoder_mode": "structured_support_set",
+  "prefix_artifact_stats": {
+    "active_prefix_layers": [
+      0,
+      7,
+      14,
+      21,
+      27
+    ],
+    "layer_hidden_l2_by_layer": {
+      "0": 29.531518936157227,
+      "14": 28.5123348236084,
+      "21": 29.272424697875977,
+      "27": 29.00522804260254,
+      "7": 28.106189727783203
+    },
+    "layer_key_l2_by_layer": {
+      "0": 3116.97998046875,
+      "14": 91.22867584228516,
+      "21": 59.17694854736328,
+      "27": 77.11166381835938,
+      "7": 151.34994506835938
+    },
+    "layer_slot_norm_max_by_layer": {
+      "0": 10.44056224822998,
+      "14": 10.080402374267578,
+      "21": 10.350014686584473,
+      "27": 10.254581451416016,
+      "7": 9.93847942352295
+    },
+    "layer_slot_norm_mean_by_layer": {
+      "0": 10.44056224822998,
+      "14": 10.080402374267578,
+      "21": 10.350014686584473,
+      "27": 10.254581451416016,
+      "7": 9.93847942352295
+    },
+    "layer_slot_norm_std_by_layer": {
+      "0": 0.0,
+      "14": 3.3717478231665154e-07,
+      "21": 4.76837158203125e-07,
+      "27": 0.0,
+      "7": 0.0
+    },
+    "layer_value_l2_by_layer": {
+      "0": 21.339662551879883,
+      "14": 74.82197570800781,
+      "21": 76.30713653564453,
+      "27": 220.8782501220703,
+      "7": 41.36526870727539
+    },
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "pilot_support_encoder_mode": "structured_support_set",
+    "prefix_l2": 64.60163116455078,
+    "prefix_slot_norm_max": 10.44056224822998,
+    "prefix_slot_norm_mean": 10.212808609008789,
+    "prefix_slot_norm_std": 0.18178562819957733,
+    "prefix_tokens": 8.0,
+    "support_item_count": 6.0,
+    "support_item_hidden_l2": 96.09796142578125,
+    "support_item_hidden_norm_max": 39.233524322509766,
+    "support_item_hidden_norm_mean": 39.23183059692383,
+    "support_item_hidden_norm_std": 0.0013188833836466074,
+    "writer_memory_l2": 117.7289810180664,
+    "writer_slot_norm_max": 41.623477935791016,
+    "writer_slot_norm_mean": 41.623477935791016,
+    "writer_slot_norm_std": 0.0
+  },
+  "prefix_l2": 64.60163116455078,
+  "prefix_slot_norm_max": 10.44056224822998,
+  "prefix_slot_norm_mean": 10.212808609008789,
+  "prefix_slot_norm_std": 0.18178562819957733,
+  "prefix_tokens": 8,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "injected",
+  "step": 16,
+  "support_item_count": 6.0,
+  "support_item_hidden_l2": 96.09796142578125,
+  "support_item_hidden_norm_max": 39.233524322509766,
+  "support_item_hidden_norm_mean": 39.23183059692383,
+  "support_item_hidden_norm_std": 0.0013188833836466074,
+  "support_serialization_variant": "triad_curated6",
+  "support_text_block_chars": 1301,
+  "task_case_dump_path": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/canonical-dense-teacher/phase2-selected/pilot-I-real/snapshot_evals/step_0016/task_case_dump.jsonl",
+  "task_case_dump_rows": 61,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "real",
+  "writer_memory_l2": 117.7289810180664,
+  "writer_slot_norm_max": 41.623477935791016,
+  "writer_slot_norm_mean": 41.623477935791016,
+  "writer_slot_norm_std": 0.0
+}

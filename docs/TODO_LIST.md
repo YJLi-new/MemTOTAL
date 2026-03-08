@@ -24,13 +24,14 @@
 > 任何任务若无法服务于这六类产物，应降低优先级。
 
 ### Current Active Blocker
-- `M5.2` 的 writer objective rewrite 已真实跑完，但 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂仍都没有通过 `screen248-val` selection。
-- 当前结果位于 `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`。
-- 当前最优先问题已经不是“same-schema warm-start 是否还不够”或“latent anchor 是否完全无效”，而是：
-  - 为什么 `anchor-only` 已能把 warm-start 流形稳定保在高 cosine，却仍然过不了 selection
-  - 为什么 canonical 的 `teacher_margin` hook 在 `32` 个训练 step 中 `teacher_margin_aux_active=0`
-  - 为什么 `task-only-control` 反而在 `step8` 拿到最强的 `flip_gain_vs_shuffle=6`，但仍伴随 `regressions_vs_base=10`
-  - 下一轮 `M5.3` 应如何把 teacher-aided objective 变成“真正会激活的 writer-side alignment signal”
+- `M5.3` 的 dense teacher pair 已真实跑完，但 `control-safe-hinge / canonical-dense-teacher(choice-space KL)` 两臂仍都没有通过 `screen248-val` selection。
+- 当前结果位于 `results/generated/review/m5-fever-dense-teacher-qwen25/`。
+- 当前最优先问题已经不再是“teacher signal 有没有真正激活”，因为 canonical 这次已经有 `alignment_aux_active_steps=18/32`。
+- 当前新的第一主因已经上移到架构层：
+  - 为什么 dense teacher choice-space KL 真正介入后，single-level `writer -> projector -> frozen Qwen` 仍然稳不住 `real > shuffle`
+  - 为什么 `control-safe-hinge step8` 能拿到 `flip_gain_vs_shuffle=4`、`flip_gain_vs_zero=7`，而 canonical 反而回落到 `flip_gain_vs_shuffle=0`
+  - 为什么 canonical 的 collapse onset 反而早于 control（`step16` vs `step24`）
+  - 下一轮应按 `PLAN.md` 转入 `Workstream B / TL-PoC`，把 repo 现有 `Reader/Fuser` 真正接进 active FEVER harness
 
 ---
 

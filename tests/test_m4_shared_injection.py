@@ -11,6 +11,7 @@ import torch
 from memtotal.analysis.m4_shared_injection import (
     compare_m4_alignment_runs,
     compare_m5_alignment_runs,
+    compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
@@ -29,11 +30,15 @@ from memtotal.training.m4_shared_injection import (
     StructuredSupportSetEncoder,
     _active_competitor_hinge_weight,
     _alignment_aux_loss,
+    _alignment_aux_choice_loss,
     _build_support_text_block,
+    _class_entropy,
     _choice_task_loss,
+    _effective_rank,
     _latent_anchor_loss,
     _scheduled_linear_decay_weight,
     _sample_support_examples_for_training,
+    _teacher_advantage_weight,
     run_shared_injection_pilot,
 )
 
@@ -211,6 +216,48 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             places=6,
         )
 
+    def test_teacher_advantage_weight_is_monotonic(self) -> None:
+        low = _teacher_advantage_weight(
+            torch.tensor(0.1),
+            torch.tensor(0.2),
+            center=0.0,
+            scale=0.25,
+        )
+        high = _teacher_advantage_weight(
+            torch.tensor(0.8),
+            torch.tensor(0.2),
+            center=0.0,
+            scale=0.25,
+        )
+        self.assertLess(float(low.item()), float(high.item()))
+
+    def test_alignment_aux_choice_loss_is_finite_for_kl_and_js(self) -> None:
+        active = torch.tensor([0.2, -0.1, 0.4], dtype=torch.float32, requires_grad=True)
+        teacher = torch.tensor([0.8, -0.3, 0.1], dtype=torch.float32)
+        kl = _alignment_aux_choice_loss(
+            mode="teacher_choice_kl",
+            active_scores=active,
+            teacher_scores=teacher,
+            temperature=2.0,
+        )
+        js = _alignment_aux_choice_loss(
+            mode="teacher_choice_js",
+            active_scores=active,
+            teacher_scores=teacher,
+            temperature=2.0,
+        )
+        total = kl + js
+        total.backward()
+        self.assertTrue(torch.isfinite(kl).item())
+        self.assertTrue(torch.isfinite(js).item())
+        self.assertIsNotNone(active.grad)
+
+    def test_effective_rank_and_class_entropy_are_finite(self) -> None:
+        memory = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        self.assertGreater(_effective_rank(memory), 1.0)
+        entropy = _class_entropy(torch.tensor([1.0, 0.5, -0.2], dtype=torch.float32))
+        self.assertGreaterEqual(entropy, 0.0)
+
     def test_latent_anchor_loss_combines_support_and_writer_cosines(self) -> None:
         current_support = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
         current_writer = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
@@ -348,7 +395,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         active = torch.tensor([0.3, 0.2, 0.1], dtype=torch.float32)
         base = torch.tensor([0.4, 0.2, 0.1], dtype=torch.float32)
         teacher = torch.tensor([0.35, 0.2, 0.1], dtype=torch.float32)
-        aux_loss, active_flag = _alignment_aux_loss(
+        aux_loss, active_flag, diagnostics = _alignment_aux_loss(
             mode="teacher_margin",
             active_scores=active,
             base_scores=base,
@@ -357,12 +404,13 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         )
         self.assertIsNone(aux_loss)
         self.assertFalse(active_flag)
+        self.assertIn("teacher_choice_kl", diagnostics)
 
     def test_alignment_aux_loss_teacher_margin_activates_when_teacher_improves_margin(self) -> None:
         active = torch.tensor([0.3, 0.2, 0.1], dtype=torch.float32)
         base = torch.tensor([0.2, 0.25, 0.1], dtype=torch.float32)
         teacher = torch.tensor([0.6, 0.1, 0.0], dtype=torch.float32)
-        aux_loss, active_flag = _alignment_aux_loss(
+        aux_loss, active_flag, diagnostics = _alignment_aux_loss(
             mode="teacher_margin",
             active_scores=active,
             base_scores=base,
@@ -372,6 +420,26 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertIsNotNone(aux_loss)
         self.assertTrue(active_flag)
         self.assertGreater(float(aux_loss.item()), 0.0)
+        self.assertGreater(diagnostics["teacher_margin_minus_base_margin"], 0.0)
+
+    def test_alignment_aux_loss_teacher_choice_kl_uses_dense_weight(self) -> None:
+        active = torch.tensor([0.25, 0.2, 0.1], dtype=torch.float32)
+        base = torch.tensor([0.2, 0.25, 0.1], dtype=torch.float32)
+        teacher = torch.tensor([0.8, 0.0, -0.2], dtype=torch.float32)
+        aux_loss, active_flag, diagnostics = _alignment_aux_loss(
+            mode="teacher_choice_kl",
+            active_scores=active,
+            base_scores=base,
+            teacher_scores=teacher,
+            gold_index=0,
+            temperature=2.0,
+            advantage_center=0.0,
+            advantage_scale=0.25,
+        )
+        self.assertIsNotNone(aux_loss)
+        self.assertTrue(active_flag)
+        self.assertGreater(float(aux_loss.item()), 0.0)
+        self.assertGreater(diagnostics["teacher_advantage_weight_mean"], 0.0)
 
 
 class SharedInjectionAnalysisTest(unittest.TestCase):
@@ -1187,6 +1255,107 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             )
             self.assertEqual(failure["comparison_conclusion"], "failure")
             self.assertEqual(failure["failure_reason"], "canonical_failed_selection")
+
+    def test_compare_m5_dense_teacher_runs_reports_success_informative_and_hinge_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            success = compare_m5_dense_teacher_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_success.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 12,
+                            "screen248_test_gate_passed": True,
+                            "support_bank_brittle": False,
+                            "fixed64_report_generated": True,
+                            "fixed64_gate_passed": False,
+                        },
+                    )
+                ),
+                control_summary_json=str(
+                    write_payload(
+                        "control_failure.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 8,
+                        },
+                    )
+                ),
+            )
+            self.assertEqual(success["comparison_conclusion"], "success")
+
+            informative = compare_m5_dense_teacher_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_informative.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 16,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                control_summary_json=str(
+                    write_payload(
+                        "control_informative.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 8,
+                            "cap_saturation_onset_step": 12,
+                        },
+                    )
+                ),
+            )
+            self.assertEqual(informative["comparison_conclusion"], "informative_success")
+            self.assertTrue(informative["informative_success"])
+
+            hinge_off = compare_m5_dense_teacher_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_hinge_off.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 16,
+                            "screen248_test_gate_passed": False,
+                            "support_bank_brittle": False,
+                        },
+                    )
+                ),
+                control_summary_json=str(
+                    write_payload(
+                        "control_hinge_off.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 16,
+                            "screen248_test_gate_passed": False,
+                        },
+                    )
+                ),
+                hinge_off_audit_summary_json=str(
+                    write_payload(
+                        "hinge_off.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 16,
+                            "screen248_test_gate_passed": True,
+                        },
+                    )
+                ),
+            )
+            self.assertEqual(hinge_off["comparison_conclusion"], "hinge_off_better")
 
 
 if __name__ == "__main__":

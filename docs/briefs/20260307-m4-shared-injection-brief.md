@@ -2,10 +2,10 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不是“完全没信号”，但截至 `M5.2` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 objective-rewrite 实验说明：same-schema warm-start、task-first continuation、latent anchor 都已被单独测过；当前真正没有被有效写进训练的是一个“会实际激活的 teacher-aided objective”。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
+`shared injection` 已经不是“完全没信号”，但截至 `M5.3` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 dense-teacher 实验说明：same-schema warm-start、task-first continuation、latent anchor，以及真正会激活的 choice-space teacher KL 都已经被单独测过。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
 
 > main-chain consumption 已成立，deep prompt 也已成立；structured support set、trainable writer、same-schema warm-start、latent anchor 也都已显示出方向性增量。  
-> 但当前系统仍不能把这条增量稳定固化成 `I_real > I_shuffle` 的可泛化能力信号，而且 current `teacher_margin` hook 在 canonical 中全程 dormant。所以下一步应进入更强但仍 lightweight 的 engaged teacher-aided objective，而不是立刻做 receptor adaptation。
+> 但 current single-level `writer -> projector -> frozen Qwen` 路径，即使在 engaged dense teacher KL 下，仍不能把这条增量稳定固化成 `I_real > I_shuffle` 的可泛化能力信号。所以下一步应从 Workstream A 转入 `Workstream B / TL-PoC`，而不是继续做 `M5.4/M5.5` 式 objective 小修补或立刻做 receptor adaptation。
 
 ## 已经坐实的前提
 
@@ -38,6 +38,8 @@ review 路径：
 - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/`
 - `runs/review/m5-fever-writer-objective-rewrite-qwen25/`
 - `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`
+- `runs/review/m5-fever-dense-teacher-qwen25/`
+- `results/generated/review/m5-fever-dense-teacher-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -255,6 +257,34 @@ canonical 设计：
   - 继续 frozen Qwen
   - 仍不立刻做 receptor adaptation
 
+### M5.3 dense teacher under shared injection
+
+- 只跑了 `PLAN.md` 要求的 required pair：
+  - `control-safe-hinge`
+  - `canonical-dense-teacher(choice-space KL)`
+- 顶层结果位于：
+  - `results/generated/review/m5-fever-dense-teacher-qwen25/dense-teacher-summary.json`
+  - `results/generated/review/m5-fever-dense-teacher-qwen25/dense-teacher-summary.md`
+  - `results/generated/review/m5-fever-dense-teacher-qwen25/warm_start_manifest.json`
+- canonical 的 dense teacher signal 这次已经不再 dormant：
+  - `alignment_aux_active_steps = 18 / 32`
+  - `max_align_loss ≈ 0.0156`
+- 但 canonical 仍然没有通过 `screen248-val`，而且在关键 `step8` 上比 control 更弱：
+  - control `step8`: `macro_f1=0.3216`、`flip_gain_vs_shuffle=4`、`flip_gain_vs_zero=7`、`regressions_vs_base=7`
+  - canonical `step8`: `macro_f1=0.2879`、`flip_gain_vs_shuffle=0`、`flip_gain_vs_zero=5`、`regressions_vs_base=8`
+- 两臂最终都没有打开 `screen248-test`
+- collapse onset 也没有改善：
+  - control `step24`
+  - canonical `step16`
+
+含义：
+- 现在已经可以排除“teacher hook 根本没有真正介入训练”
+- 但即便 choice-space dense teacher KL 真正介入，single-level `writer -> projector -> frozen Qwen` 路径仍然不够稳
+- 按 `PLAN.md` 的 Workstream A 判定表，这轮应视为：
+  - dense teacher 没有成为 load-bearing fix
+  - stop iterating single-level FEVER objective design
+  - move to `Workstream B / TL-PoC`
+
 ## 当前最稳妥的解释
 
 当前已经可以排除：
@@ -266,7 +296,7 @@ canonical 设计：
 当前更合理的解释是：
 
 > shared injection 这条路已经证明了 main-chain access 和局部内容效应都存在。  
-> 但无论 shallow、deep、episode bank、structured support-set alignment，还是 same-schema warm-start continuation，当前训练动力学与目标函数都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
+> 但无论 shallow、deep、episode bank、structured support-set alignment、same-schema warm-start continuation，还是 engaged dense teacher KL，当前单层 shared-injection 路径都还不能把这种内容效应稳定固化成通过预注册 validation 的能力信号。
 
 ## 现在不该做什么
 
@@ -274,7 +304,8 @@ canonical 设计：
 - 不把问题表述成“再挑一个更好的 checkpoint”
 - 不把 `fixed64` 当隐式 selection set
 - 不直接上 `Story Cloze` 或 `Qwen3-8B`
-- 不先上 KL / teacher matching
+- 不继续在 FEVER single-level 路径上做更多 objective 小修补
+- 不直接上 full token-level KL / receptor adaptation
 - 不再把 `episode bank vs static triad6` 当作当前第一主线
 - 不把“简单拉长训练步数”当成下一轮主药
 
@@ -282,13 +313,15 @@ canonical 设计：
 
 - 继续留在 `shared injection` 主线
 - 把 `screen248-test` 固定为 primary capability gate，`fixed64` 只保留为 legacy report
+- 把 `control-safe-hinge` 固定为当前 least-collapsed single-level substrate objective
+- 下一轮优先进入 `Workstream B / TL-PoC`：
+  - `pilot_memory_path_variant: single_level | two_level`
+  - 先跑 `TL-H4-K8` bridge，对比 `SL-8`
+  - 再跑 `TL-H4-K4` bottleneck
+  - 最后跑 `TL-H1-K4` vs `TL-H4-K4` specialization
 - 继续增强 observability，重点盯：
-  - cap saturation
+  - `memory_long_effective_rank`
+  - `memory_short_effective_rank`
+  - per-query attention entropy / specialization
   - writer/projector grad ratio
-  - real-vs-shuffle 的层内分离
   - label-bias collapse
-- 下一轮优先进入：
-  - `M5.3 engaged teacher-aided objective under shared injection`
-  - 继续保持 `frozen Qwen + shared injection + structured support-set canonical`
-  - 先让 teacher-facing objective 真正激活，而不是立刻动 receiver
-  - 仍不把 full KL 放进 canonical

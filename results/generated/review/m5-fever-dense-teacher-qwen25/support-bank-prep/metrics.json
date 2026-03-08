@@ -1,0 +1,87 @@
+{
+  "analysis_mode": "m4_prepare_fever_support_banks",
+  "manifest_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/m46-support-bank-manifest.json",
+  "screen248_test_canonical_bank_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/m46-screen248-test-canonical-support6.jsonl",
+  "screen248_test_canonical_ids": [
+    "135212",
+    "224137",
+    "131105",
+    "39150",
+    "176630",
+    "86043"
+  ],
+  "screen248_test_heldout_a_bank_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/m46-screen248-test-heldout-a-support6.jsonl",
+  "screen248_test_heldout_a_ids": [
+    "150751",
+    "59890",
+    "209109",
+    "204560",
+    "201605",
+    "8317"
+  ],
+  "screen248_test_heldout_b_bank_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/m46-screen248-test-heldout-b-support6.jsonl",
+  "screen248_test_heldout_b_ids": [
+    "11656",
+    "132874",
+    "223294",
+    "3588",
+    "86670",
+    "7581"
+  ],
+  "screen_val_canonical_bank_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/m46-screen-val-canonical-support6.jsonl",
+  "screen_val_canonical_ids": [
+    "27702",
+    "146837",
+    "60241",
+    "3371",
+    "86043",
+    "27273"
+  ],
+  "source_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-train.jsonl",
+  "train_episode_bank_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/m46-train-triad-episode-bank32.json",
+  "train_episode_count": 32,
+  "train_episode_ids": [
+    "train_ep_000",
+    "train_ep_001",
+    "train_ep_002",
+    "train_ep_003",
+    "train_ep_004",
+    "train_ep_005",
+    "train_ep_006",
+    "train_ep_007",
+    "train_ep_008",
+    "train_ep_009",
+    "train_ep_010",
+    "train_ep_011",
+    "train_ep_012",
+    "train_ep_013",
+    "train_ep_014",
+    "train_ep_015",
+    "train_ep_016",
+    "train_ep_017",
+    "train_ep_018",
+    "train_ep_019",
+    "train_ep_020",
+    "train_ep_021",
+    "train_ep_022",
+    "train_ep_023",
+    "train_ep_024",
+    "train_ep_025",
+    "train_ep_026",
+    "train_ep_027",
+    "train_ep_028",
+    "train_ep_029",
+    "train_ep_030",
+    "train_ep_031"
+  ],
+  "train_episode_label_counts": {
+    "NOT_ENOUGH_INFO": 2,
+    "REFUTES": 2,
+    "SUPPORTS": 2
+  },
+  "train_label_distribution": {
+    "NOT_ENOUGH_INFO": 70,
+    "REFUTES": 62,
+    "SUPPORTS": 55
+  }
+}
