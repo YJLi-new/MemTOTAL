@@ -10,7 +10,9 @@ import torch
 
 from memtotal.analysis.m4_shared_injection import (
     run_m4_phase0_gate_sweep,
+    run_m4_prepare_fever_validation_splits,
     run_m4_shared_injection_compare,
+    run_m4_shared_injection_dynamics_recovery,
     run_m4_shared_injection_dynamics_audit,
     run_m4_writer_information_audit,
 )
@@ -18,6 +20,7 @@ from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     _build_support_text_block,
     _choice_task_loss,
+    _sample_support_examples_for_training,
 )
 
 
@@ -162,6 +165,8 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
         *,
         step: int,
         case_rows: list[dict[str, object]],
+        checkpoint_path: str = "",
+        prefix_l2: float = 1.0,
     ) -> None:
         snapshot_dir = run_dir / "snapshot_evals" / f"step_{step:04d}"
         snapshot_dir.mkdir(parents=True)
@@ -174,12 +179,62 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
                     "best_adapt_task_score": accuracy,
                     "best_adapt_macro_f1": accuracy,
                     "best_adapt_task_margin": sum(float(row["final_margin"]) for row in case_rows) / len(case_rows),
+                    "checkpoint_path": checkpoint_path,
+                    "prefix_tokens": 2,
+                    "prefix_l2": prefix_l2,
+                    "prefix_slot_norm_mean": prefix_l2 / 2.0,
+                    "prefix_slot_norm_std": 0.1,
+                    "prefix_slot_norm_max": prefix_l2 / 1.5,
                 }
             )
         )
         (snapshot_dir / "task_case_dump.jsonl").write_text(
             "\n".join(json.dumps(row) for row in case_rows) + "\n"
         )
+
+    @mock.patch("memtotal.analysis.m4_shared_injection._load_task_dataset_with_path")
+    def test_prepare_fever_validation_splits_is_stable_and_balanced(self, mock_load_dataset) -> None:
+        rows = []
+        for label in ("SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"):
+            for index in range(16):
+                rows.append({"id": f"{label}-{index:02d}", "label": label})
+        mock_load_dataset.return_value = rows
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {
+                "runtime": {"split_output_root": f"{tmpdir}/splits"},
+                "task": {"dataset_path": "unused"},
+            }
+            output_dir = Path(tmpdir) / "analysis"
+            run_m4_prepare_fever_validation_splits(config=config, output_dir=output_dir, dry_run=False)
+            metrics = json.loads((output_dir / "metrics.json").read_text())
+            self.assertEqual(metrics["train_label_distribution"], {"SUPPORTS": 12, "REFUTES": 12, "NOT_ENOUGH_INFO": 12})
+            self.assertEqual(metrics["val_label_distribution"], {"SUPPORTS": 4, "REFUTES": 4, "NOT_ENOUGH_INFO": 4})
+            self.assertEqual(metrics["audit_label_distribution"], {"SUPPORTS": 4, "REFUTES": 4, "NOT_ENOUGH_INFO": 4})
+            audit_rows = [
+                json.loads(line)
+                for line in Path(metrics["audit_dataset_path"]).read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(audit_rows), 12)
+
+    def test_support_masking_preserves_all_three_labels(self) -> None:
+        support_rows = [
+            {"id": "s1", "label": "SUPPORTS", "shuffled_memory_example_id": "s2"},
+            {"id": "s2", "label": "SUPPORTS", "shuffled_memory_example_id": "s3"},
+            {"id": "r1", "label": "REFUTES", "shuffled_memory_example_id": "r2"},
+            {"id": "r2", "label": "REFUTES", "shuffled_memory_example_id": "n1"},
+            {"id": "n1", "label": "NOT_ENOUGH_INFO", "shuffled_memory_example_id": "n2"},
+            {"id": "n2", "label": "NOT_ENOUGH_INFO", "shuffled_memory_example_id": "s1"},
+        ]
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(11)
+        sampled = _sample_support_examples_for_training(
+            support_examples=support_rows,
+            support_serialization_variant="triad_curated6",
+            generator=generator,
+        )
+        self.assertEqual(len(sampled), 4)
+        self.assertEqual({row["label"] for row in sampled}, {"SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"})
 
     @mock.patch("memtotal.analysis.m4_shared_injection._build_support_text_block")
     @mock.patch("memtotal.analysis.m4_shared_injection._evaluate_examples")
@@ -403,6 +458,69 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             suite_metrics = metrics["suite_best_metrics"]["raw8"]
             self.assertTrue(suite_metrics["overshoot_detected"])
             self.assertEqual(suite_metrics["best_step"], 16)
+
+    def test_dynamics_recovery_selects_earliest_passing_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "runs"
+            suite_root = root / "triad6" / "phase2-selected"
+            gold = ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"]
+            a_rows = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            t_rows = _classification_rows(gold, ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"])
+            zero_rows = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            real_step0 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            real_step16 = _classification_rows(gold, ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS", "REFUTES", "SUPPORTS"])
+            real_step32 = _classification_rows(gold, ["SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO", "SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"])
+            shuffle_step0 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            shuffle_step16 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "REFUTES", "SUPPORTS"])
+            shuffle_step32 = _classification_rows(gold, ["SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS", "SUPPORTS"])
+            rows = {
+                "A": a_rows,
+                "T": t_rows,
+                "I_zero": zero_rows,
+                "I_real": real_step32,
+                "I_shuffle": shuffle_step32,
+            }
+            for alias, case_rows in rows.items():
+                self._write_run(suite_root, alias=alias, case_rows=case_rows)
+            self._write_snapshot(suite_root / "A", step=0, case_rows=a_rows)
+            self._write_snapshot(suite_root / "T", step=0, case_rows=t_rows)
+            self._write_snapshot(suite_root / "I_zero", step=0, case_rows=zero_rows)
+            self._write_snapshot(suite_root / "I_real", step=0, case_rows=real_step0, checkpoint_path="/tmp/i_real_0.pt", prefix_l2=1.0)
+            self._write_snapshot(suite_root / "I_real", step=16, case_rows=real_step16, checkpoint_path="/tmp/i_real_16.pt", prefix_l2=1.5)
+            self._write_snapshot(suite_root / "I_real", step=32, case_rows=real_step32, checkpoint_path="/tmp/i_real_32.pt", prefix_l2=2.0)
+            self._write_snapshot(suite_root / "I_shuffle", step=0, case_rows=shuffle_step0, checkpoint_path="/tmp/i_shuffle_0.pt", prefix_l2=1.0)
+            self._write_snapshot(suite_root / "I_shuffle", step=16, case_rows=shuffle_step16, checkpoint_path="/tmp/i_shuffle_16.pt", prefix_l2=1.2)
+            self._write_snapshot(suite_root / "I_shuffle", step=32, case_rows=shuffle_step32, checkpoint_path="/tmp/i_shuffle_32.pt", prefix_l2=1.8)
+
+            audit_rows = []
+            for index in range(4):
+                audit_rows.append({"id": f"s-{index}", "label": "SUPPORTS", "claim": "c", "evidence": "e", "shuffled_memory_example_id": f"s-{index}"})
+                audit_rows.append({"id": f"r-{index}", "label": "REFUTES", "claim": "c", "evidence": "e", "shuffled_memory_example_id": f"r-{index}"})
+                audit_rows.append({"id": f"n-{index}", "label": "NOT_ENOUGH_INFO", "claim": "c", "evidence": "e", "shuffled_memory_example_id": f"n-{index}"})
+            audit_path = Path(tmpdir) / "audit12.jsonl"
+            audit_path.write_text("\n".join(json.dumps(row) for row in audit_rows) + "\n")
+
+            output_dir = Path(tmpdir) / "recovery"
+            run_m4_shared_injection_dynamics_recovery(
+                config={
+                    "task": {"support_dataset_path": "unused"},
+                    "runtime": {"pilot_val_audit_dataset_path": ""},
+                    "backbone": {
+                        "name": "Qwen2.5-1.5B-Instruct",
+                        "load_mode": "stub",
+                        "stub_hidden_size": 8,
+                    },
+                    "method": {"writer": {"memory_slots": 2, "arch": "mlp"}},
+                },
+                output_dir=output_dir,
+                input_root=str(root),
+                dry_run=False,
+            )
+            selection = json.loads((output_dir / "selection.json").read_text())
+            self.assertTrue(selection["selection_passed"])
+            self.assertEqual(selection["selected_suite"], "triad6")
+            self.assertEqual(selection["selected_step"], 16)
+            self.assertEqual(selection["i_real_checkpoint_path"], "/tmp/i_real_16.pt")
 
 
 if __name__ == "__main__":

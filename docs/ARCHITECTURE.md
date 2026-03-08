@@ -12,7 +12,7 @@
 - `scripts/run_m3_core4_stage_c_probe_suite.sh`: benchmark-native `core4` 的 Stage C probe suite，会在数据盘并排跑 `q_only / w_only / w_plus_q`，再把 `probe_summary.csv/.svg` 与 q-only gradient audit 关联结果写回仓库
 - `scripts/run_m3_story_cloze_real_pilot_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `story_cloze` decision-interface pilot，会按 `screen256 -> fixed100 -> A/B/C/D/E` 顺序跑完整对照，并把 review 产物镜像回仓库
 - `scripts/run_m4_fever_shared_injection_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `FEVER-first` shared generative injection gate，会先跑 `A=base_only`、`T=teacher-text upper bound`、`writer information audit`，只有 gate 通过后才继续 `I-real / I-shuffle / I-zero`
-- `scripts/run_m4_fever_phase2_dynamics_qwen25.sh`: `M4` 的 `Phase 2 dynamics` 诊断入口，会并排跑 `raw8 / triad6` 两条 shared-injection suite，并把 `step0/16/32/64` 的 snapshot case dump 汇总成 `dynamics-audit`
+- `scripts/run_m4_fever_dynamics_recovery_qwen25.sh`: `M4.3` 的 shared-injection dynamics recovery 入口，会并排跑 `raw8 / triad6` 两条 shared-injection suite，并把 `step0/8/16/24/32/48/64` 的 snapshot case dump 汇总成预注册 validation 的 `dynamics-recovery`
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -218,7 +218,7 @@
   - frozen Qwen 是否会从显式 support bank 文本中受益
   - 当前 writer family 产出的 latent 是否已经携带可读的任务信息
   - 当前这两条都已被验证为 `yes`
-  - 最新 blocker 已继续上移到：当前 shared latent prefix injection 的正向 real-memory 信号为什么会被默认 support / checkpoint 口径冲掉
+  - 最新 blocker 已继续上移到：在预注册 validation 口径下，如何把 shared injection 已出现过的正向内容信号稳定下来
 - 这条线当前固定分三段：
   - `A = base_only`
   - `T = teacher-text upper bound`
@@ -240,15 +240,26 @@
   - `choice CE + strongest-competitor hinge`
   - 不上 KL
   - 不做 candidate-conditioned / pair-conditioned injection
-- 当前 fresh `FEVER` 结果已把这条线推进到真正 injection 训练：
-  - `Phase 0` 现在已经通过：`T_winner=answer_slot_labels + example_blocks_raw8` 相对 `A_winner` 带来 `accuracy_gain=0.4274`、`macro_f1_gain=0.5352`
-  - `Phase 1 writer audit` 也已经通过：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_gate_passed=true`
-  - `Phase 2` 真实 injection 已完整跑完，并且不再是零效应：stable compare 当前为 `I-real=0.390625`、`I-shuffle=0.546875`、`I-zero=0.25`
-  - 新增的 `Phase 2 dynamics` 诊断又表明：`raw8` 与 `triad6` 两种 support variant 都会在 `step32` 给出正向 `real > shuffle > zero` 信号，但都在 `step64` 被 `overshoot_detected=true` 标记为过冲
-- 因而，当前 immediate blocker 已经不再是 prompt/support surface、writer 是否有信息，甚至也不再是“frozen qwen 会不会读 prefix”，而是：
-  - 这版 `MemoryWriter + LatentPrefixProjector + shallow input-prefix` 已经让 frozen qwen 开始消费 prefix
-  - 但当前 capability gate 不能再只看单个 final checkpoint；它必须同时选择合适的 `support variant + checkpoint step`
-  - 现阶段最强的正向证据是 `triad6 + step32`
+- 当前 `M4.3` 的状态应按三段理解：
+  - `Phase 0` 已通过：`T_winner` 相对 `A_winner` 依然保持显著提升，说明显式 support 文本确实有用
+  - `Phase 1` 已通过：当前 writer family 的 latent 在 `real > shuffle/zero` 的 probe 口径下仍可读
+  - `Phase 2` 在 `screen248-val` 的预注册规则下尚未通过：`selection_passed=false`
+- 当前 validation 下的真实结果是：
+  - `raw8` 与 `triad6` 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`
+  - 但同一时刻都伴随 `regressions_vs_base=18`
+  - 所以当前并没有一个可直接锁定到 `fixed64` 的稳定 checkpoint
+- 当前真正新增的关键 observability 是：
+  - `prefix_attention_consumption.csv` 已证明 frozen Qwen 确实会消费 prefix，而不是完全忽略
+  - `prefix_norm_drift.csv` 同时显示明显的 prefix norm blow-up：
+    - `raw8 / I-real`: `84.54 -> 7001.36`
+    - `triad6 / I-real`: `86.66 -> 11397.91`
+- 因而，当前 immediate blocker 已经更准确地改写成：
+  - shared injection 不是“完全没用”
+  - shared injection 现在是“可训练但不稳健”
+  - 当前主矛盾是 `dynamics stability`，而不是“Qwen 会不会读 prefix”
+- 当前这条主线的下一步不应回到旧 residual family；更合理的顺序是：
+  - 继续用 `screen248-train / screen248-val / fixed64-test` 的预注册口径稳定训练动力学
+  - 只有当 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero`，才进入 `Story Cloze / candidate-conditioned / Qwen3-8B`
 
 ## M3 Failure Checks
 

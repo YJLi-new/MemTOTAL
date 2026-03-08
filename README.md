@@ -6,211 +6,102 @@
 - `Qwen2.5-1.5B-Instruct`
 - `Qwen3-8B`
 
-## 最新进展
+根目录会持续刷新给外部 review 用的文档包：
+- [docs_review_bundle.zip](/root/mydir/MemTOTAL/docs_review_bundle.zip)
 
-- 已完成 `M4.1` 的 `FEVER Gate Recovery`、第一轮真实 `shared generative injection` gate，以及新一轮 `Phase 2 dynamics` 诊断。
-- 当前最新真实结果已经把 blocker 从“主链路会不会读 prefix”继续收紧成了两件事：
-  - `support variant`
-  - `step / checkpoint selection`
-- 当前最关键的新信号是：
-  - `raw8` support 下，`I-real` 在 `step32` 还有正信号，但继续训到 `step64` 会明显过冲并崩掉
-  - `triad6` support 下，`I-real` 在 `step32` 已经同时优于 `I-shuffle` 和 `I-zero`
-  - 也就是说，shared injection 现在已经不是“完全没用”，而是“已经能出 real-memory 正信号，但默认 support/step 口径会把它毁掉”
-- `Phase 0 / Phase 1` 的上游 gate 仍然保持通过：
-  - `Phase 0` 已真实通过：`A_winner=answer_slot_labels`，`T_winner=answer_slot_labels + example_blocks_raw8`
-  - `A_winner`：`accuracy=0.29435483870967744`、`macro_f1=0.15160955347871236`、`dominant_label_fraction=1.0`
-  - `T_winner`：`accuracy=0.7217741935483871`、`macro_f1=0.6868094914612671`、`dominant_label_fraction=0.5241935483870968`
-  - `selected_pair_accuracy_gain=0.4274`、`selected_pair_macro_f1_gain=0.5352`
-- `Phase 1 writer information audit` 也已真实通过：
-  - `label_probe_3way`: `real macro_f1=0.4434`，高于控制 `0.3499`
-  - `verifiability_probe`: `real auroc=0.7724`，高于控制 `0.5568`
-  - `polarity_probe`: `real auroc=0.5534`，高于控制 `0.4863`
-  - `phase1_gate_passed=true`
-- `Phase 2` 现在不再只看单个 final compare，而是新增了 `raw8 / triad6` 两个 support variant 的 step 级诊断：
-  - `raw8 final`
-    - `I-real = 0.109375 / macro_f1=0.1571`
-    - `I-shuffle = 0.453125 / macro_f1=0.4618`
-    - `I-zero = 0.25 / macro_f1=0.2`
-  - `raw8 best step = 32`
-    - `I-real = 0.515625 / macro_f1=0.4572`
-    - `flip_gain_vs_shuffle = 8`
-    - `flip_gain_vs_zero = 17`
-  - `triad6 final`
-    - `T = 0.578125 / macro_f1=0.5755`
-    - `I-real = 0.6875 / macro_f1=0.4112`
-    - `I-shuffle = 0.6875 / macro_f1=0.6135`
-    - `I-zero = 0.25 / macro_f1=0.2`
-  - `triad6 best step = 32`
-    - `I-real = 0.578125 / macro_f1=0.5238`
-    - `flip_gain_vs_shuffle = 16`
-    - `flip_gain_vs_zero = 21`
-- 两个 support variant 都已被 `dynamics-audit` 标成 `overshoot_detected=true`
-- 也就是说，当前不再适合把问题归因成：
-  - `FEVER` prompt/support surface 没修好
-  - 或 writer 完全没信息
-- 当前更准确的结论是：
-  - `teacher-text` 明确有用
-  - writer latent 也已有可读任务信息
-  - prefix 主链路现在已经真正“动起来了”，不再是零效应
-  - `triad6 + step32` 已经给出了 `I-real > I-shuffle > I-zero` 方向的正信号
-  - 当前问题已从“Qwen 会不会读 prefix”进一步改成“如何选对 support bank 和 checkpoint，避免 late-step 过冲毁掉已出现的 real-memory 内容效应”
-- benchmark-native `M3 core4` 主链已经打通：`gsm8k + kodcode + gpqa + story_cloze` 的 `Stage A/B/C`、统一产物、统一分析都可运行。
-- 真实 `Qwen2.5-1.5B-Instruct` 的最小闭环已经打通：`BackboneWrapper(load_mode=hf_causal_lm)` 现支持真实 `summarize_texts`、`score_continuations` 与本地 staged model 目录加载。
-- 最新判别实验已经完成三步：
-  - `story_cloze` 上的真实 qwen25 `fixed100` pilot，外加离线 oracle 审计
-  - `FEVER` 上的真实 qwen25 `fixed64` control pilot
-  - 基于上述结论重做了更保守的 `shared + candidate delta` real pilot
-  - 又进一步做了 `FEVER-first` 的 `choice_repair_ce_margin` fresh pilot：`B-newObj / R-real / R-shuffle / R-zero`
+## 最新状态
 
-## 最新结论
+当前已经正式停掉旧的 `candidate-conditioned residual family`。最新主线是：
+- `FEVER-first shared generative injection`
+- 目标不是旁路修分，而是让 frozen Qwen 在主 attention 链路里直接消费 latent memory
 
-- `story_cloze` 这轮 real pilot 的五条臂是：
-  - `A = base_only`
-  - `B = base + shared_summary residual`
-  - `C = base + candidate_conditioned residual`
-  - `D = base + candidate_conditioned residual + shuffled memory`
-  - `E = base + candidate_conditioned residual + choice-aligned objective`
-- 当前 `story_cloze` 结果仍是负的：`A/B/C/D/E` 在同一批 hard `fixed100` 上全部都是 `task_score=0.2`，`flip_count_delta` 全部为 `0`。
-- `candidate-conditioned` 相比 `base_only` 只带来了很小的平均 `margin/proxy` 改善：
-  - `A -> C`: `mean_margin_gain=0.0016285`
-  - `A -> C`: `mean_proxy_gain=0.0002348`
-- `C -> D` 和 `C -> E` 基本完全重合：
-  - `C -> D`: `mean_task_gain=0.0`
-  - `C -> E`: `mean_task_gain=0.0`
-- 这轮新增的离线 oracle 审计把问题进一步缩小了：
-  - `best-of-two oracle` 仍然只有 `0.2`
-  - `per-case alpha oracle` 达到 `0.96`
-  - `80` 个 base-wrong case 里，有 `76` 个能被离线 `alpha_i` 翻正
-  - 但这 `76` 个全部都需要 `|alpha| >= 32`，而且正负号几乎对半分：`+37 / -39`
-- 这说明 `story_cloze` 上不是“residual 完全没信息”，而是：
-  - 当前 residual family 缺的是 case-conditional routing / sign selection
-  - 单一全局 `alpha` 不足以把它变成可用决策
-- `FEVER` control pilot 给出了另一条关键证据：
-  - `A = 0.25`
-  - `B = 0.75`
-  - `C = 0.25`
-  - `D = 0.25`
-  - 也就是 `shared_summary residual` 在更干净的 multiple-choice task 上是 load-bearing 的，但当前 `candidate_conditioned residual` 分支没有工作，而且和 `shuffled memory` 完全重合
-- 这轮新增的更保守分支是：
-  - `F = base + shared residual + candidate delta`
-  - `G = base + shared residual + candidate delta + shuffled memory`
-- `story_cloze` 上，`F` 比 `B` 只多了极小的平均改善，但仍然没有任何 flip，而且 `F` 与 `G` 完全重合：
-  - `B -> F`: `mean_task_gain=0.0`
-  - `B -> F`: `mean_margin_gain=0.0005981`
-  - `F -> G`: `mean_task_gain=0.0`
-- `FEVER` 上，`F` 明显优于旧的坏分支 `C`，但仍然低于工作正常的 `B`，而且同样 `F = G`：
-  - `B = 0.75`
-  - `F = 0.671875`
-  - `G = 0.671875`
-  - `B -> F`: `flip_count_delta=-5`
-  - `C -> F`: `flip_count_delta=27`
-  - `F -> G`: `flip_count_delta=0`
-- 这轮新增的 `F-G` content audit 已经把问题进一步收紧：
-  - `Story Cloze` 上，`B + (F-G)` 仍然是 `0.2`
-  - `Story Cloze` 上，`oracle_per_case_alpha_content` 仍然是 `0.2`
-  - `Story Cloze` 上，`content_alignment_rate_shared_wrong=0.3375`
-  - `FEVER` 上，`B + (F-G)` 仍然是 `0.75`
-  - `FEVER` 上，`oracle_per_case_alpha_content` 仍然是 `0.75`
-  - `FEVER` 上，`best_of_BF=0.78125` 只说明 branch form 还能补一点 `B` 的盲点，不说明 memory 内容在起作用
-  - 两个任务上 `continue_candidate_branch=false`
-- 当前最合理的结论不是“memory idea 不行”，而是：
-  - `Story Cloze` 仍是 artifact-heavy stress test，不适合作为唯一生死判官
-  - `shared_summary residual` 在 `FEVER` 上仍是明确的正 control
-  - 当前这条 `candidate` residual family 的主体效应来自 branch form，而不是 real-memory content
-  - 因而下一步不该直接做 raw routing / sign selection，也不该继续扩大 `candidate-conditioned` sweep 或上 `Qwen3-8B`
-  - 如果后续还要回到 candidate-specific `Stage C`，应从新的 residual family 重新开始，而不是继续修这条 `shared + candidate delta`
-- 最新的 `FEVER-first repair` pilot 又把这条结论钉死了一次：
-  - 历史 `B-old = shared_summary + continuation_retrieval = 0.75`
-  - fresh `B-newObj = shared_summary + choice_repair_ce_margin = 0.75`
-  - fresh `R-real = shared + candidate_conditioned + repair objective = 0.25`
-  - fresh `R-shuffle = 0.25`
-  - fresh `R-zero = 0.25`
-  - `B-old -> B-newObj`: `flip_count_delta=0`
-  - `B-newObj -> R-real`: `flip_count_delta=-32`
-  - `R-shuffle -> R-real`: `flip_count_delta=0`
-  - `R-zero -> R-real`: `flip_count_delta=0`
-  - `gate_passed=false`
-- 这轮最重要的新结论不是“objective 也没用”，而是更窄的一条：
-  - `choice_repair_ce_margin` 没能让 `shared` baseline 更强
-  - 当前这条 `candidate-conditioned residual family` 在 repair objective 下依然没有 real-memory 内容效应
-  - `R-real` 同时没有优于 `R-shuffle`，也没有优于 `R-zero`
-  - 因而现在不该继续修 current candidate-conditioned family；如果后续还要做 candidate-specific `Stage C`，应直接换 residual family，而不是继续在这一条上加 router / sign selector
-- `M4.1 shared injection recovery` 这轮已经把 blocker 上移到真正的主链路注入与内容方向：
-  - `Phase 0` 已通过，显式 support 文本确实能帮助 frozen Qwen
-  - `Phase 1 writer audit` 也已通过，当前 writer family 里确实已有可读任务信息
-  - `Phase 2` 真实 shared injection 已进一步证明：不同 support 口径和不同 step 会给出完全不同的结论
-  - `raw8` 会在 `step64` 明显过冲，而 `triad6` 在 `step32` 已能给出正向 real-memory 内容效应
-  - 当前最合理的解释已变成：浅层 input-prefix 注入本身已经可行，但默认 `support variant + final checkpoint` 还不是正确的 capability gate
-- 因而，当前最重要的下一步已改成：
-  - 优先检查和升级 `writer -> prefix -> frozen Qwen` 这条主链路
-  - 现在不该回到旧的 score-side residual family
-  - 也不该直接扩到 `Story Cloze` 或 `Qwen3-8B`
+这条主线当前已经有三条成立的前提：
+- `Phase 0` 已通过：显式 support 文本对 frozen Qwen 有帮助
+- `Phase 1` 已通过：当前 writer family 产出的 latent 不是“完全没信息”
+- `Phase 2` 已经出现过 `I-real > I-shuffle > I-zero` 的正向内容信号
 
-## 关键结果路径
+所以现在的 blocker 不再是：
+- `Qwen` 会不会读 prefix
+- support bank 是否完全没价值
+- writer latent 是否完全没信息
 
-- 最新 `docs/` 压缩包：
-  - `docs_review_bundle.zip`
-- 最新 brief：
-  - `docs/briefs/20260307-story-cloze-real-pilot-brief.md`
-  - `docs/briefs/20260307-m4-shared-injection-brief.md`
-- Story Cloze real pilot 原始运行：
-  - `runs/review/m3-story-cloze-real-pilot-qwen25/`
-- Story Cloze real pilot 汇总：
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/`
-- Story Cloze 关键 compare / oracle 文件：
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/arm_pairwise_compare.csv`
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/arm_summary.csv`
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/compare/report.md`
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/oracle_summary.csv`
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/oracle/oracle_case_deltas.csv`
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/content-audit/report.md`
-  - `results/generated/review/m3-story-cloze-real-pilot-qwen25/content-audit/content_oracle_summary.csv`
-- FEVER control pilot 原始运行：
-  - `runs/review/m3-fever-real-pilot-qwen25/`
-- FEVER control pilot 汇总：
-  - `results/generated/review/m3-fever-real-pilot-qwen25/`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/compare/arm_pairwise_compare.csv`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/report.md`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/content-audit/content_oracle_summary.csv`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/report.md`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/arm_pairwise_compare.csv`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/real_vs_shuffle_gap.csv`
-  - `results/generated/review/m3-fever-real-pilot-qwen25/repair-compare/real_vs_zero_gap.csv`
-- M4 FEVER shared injection gating runs：
-  - `runs/review/m4-fever-shared-injection-qwen25/`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/phase0_summary.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/phase0_prompt_pairs.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/summary.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/arm_summary.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/real_vs_shuffle_gap.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/real_vs_zero_gap.csv`
-- M4 FEVER phase2 dynamics runs：
-  - `runs/review/m4-fever-phase2-dynamics-qwen25/`
-  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/`
-  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/report.md`
-  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/triad6/phase2-compare/report.md`
-  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/report.md`
-  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_summary.csv`
-  - `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_pairwise.csv`
+而是：
+- shared injection 的正信号目前还不稳定
+- 训练动力学会在后期把已出现的正信号过冲掉
+- 需要在不泄漏 `fixed64` 的前提下，用预注册 validation 把这个信号稳定下来
 
-## 现在最重要的下一步
+## 当前最可信的结论
 
-- 不再继续扫全局 loss / sample 网格。
-- 不直接进入更大的 `candidate-conditioned` sweep，也不直接上 `Qwen3-8B`。
-- 下一轮更值得做的是：
-  - 先保留 `FEVER` 作为正 control，不再继续扩 story sweep
-  - 不再把精力放在 `candidate delta` 的 routing / sign selection 上，因为 content audit 已经显示 `F-G` 本身几乎不是可用的 memory-only signal
-  - 也不继续修 current `candidate-conditioned residual family`，因为 repair objective 下它仍然 `R-real = R-shuffle = R-zero`
-  - 当前更上游的任务已经不再是“先修到能启动 `I-real / I-shuffle / I-zero`”，因为这一步已经跑完
-  - 当前新的核心问题已经更具体：
-    - `raw8` 为什么会在 late steps 过冲
-    - `triad6` 为什么能在 `step32` 出现正信号，但到 `step64` 又丢掉 `real > shuffle`
-  - 因而下一步应优先做两件事：
-    - 把 `support variant + checkpoint selection` 做成正式 capability gate，而不是只看 `step64`
-    - 在这个 gate 站稳后，再升级到更强的主链路注入（`deep prompt / per-layer prefix`）
-  - 只有 shared injection 先证明 `real > shuffle > zero`，才值得回到 candidate-specific / Story / Qwen3
-  - `Story Cloze` 只保留为后续 stress test，不再作为当前 candidate 分支的主开发面
+`M4.3` 这轮已经把 shared injection 放到预注册 validation 口径下重新检查。
+
+真实运行路径：
+- `runs/review/m4-fever-dynamics-recovery-qwen25/`
+- `results/generated/review/m4-fever-dynamics-recovery-qwen25/`
+
+关键结果：
+- [selection.json](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json)
+- [val_selection_report.md](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/val_selection_report.md)
+- [prefix_norm_drift.csv](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/prefix_norm_drift.csv)
+- [prefix_attention_consumption.csv](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/prefix_attention_consumption.csv)
+- [content_gap_curve.csv](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/content_gap_curve.csv)
+
+当前结论是：
+- `selection_passed = false`
+- 预注册 `screen248-val` 规则下，`raw8` 和 `triad6` 都没有出现可直接锁定的稳定 checkpoint
+- 两条线只有到 `step64` 才出现：
+  - `I-real` 相对 `I-shuffle` 的 `+2 flips`
+  - `I-real` 相对 `I-zero` 的 `+2 flips`
+- 但同时都带来：
+  - `regressions_vs_base = 18`
+- 因此这轮没有打开 `fixed64`
+
+更关键的是，这轮 observability 已经补齐，所以现在能更细地解释失败原因：
+- `prefix_attention_consumption` 不再是空的，说明 frozen Qwen 确实在看 prefix
+- 但 `prefix_norm_drift` 显示 prefix 范数快速爆炸
+  - `raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`
+  - `triad6 / I-real` 的 `prefix_l2` 从 `86.66` 升到 `11397.91`
+- 也就是说，当前主矛盾已经收缩成：
+  - 主链路消费存在
+  - 但训练动力学明显失稳
+
+因此，最新最稳妥的判断是：
+
+> shared injection 这条路已经出现了正信号，但这个正信号目前是“可训练但不稳健”的。  
+> 当前最该修的是 validation 下的 dynamics stability，而不是再回去修 score-side residual family。
+
+## 现在不该做什么
+
+- 不再继续修 current `candidate-conditioned residual family`
+- 不再做 router / sign selection / 全局 alpha / 更多 seed sweep
+- 不直接上 `Story Cloze`
+- 不直接上 `Qwen3-8B`
+- 不直接上 KL 蒸馏
+
+## 现在最该做什么
+
+继续留在 `shared injection` 主线，优先解决：
+- `support variant`
+- 训练动力学
+- 预注册 early-stop / capability gate
+
+更具体地说，下一步应优先做：
+- 继续用 `screen248-train / screen248-val / fixed64-test` 的三段职责
+- 保持 `fixed64` 只在 variant 和 stopping rule 预注册后打开一次
+- 围绕 `support masking + prefix norm control + attention observability` 做 dynamics recovery
+- 只有当 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero`，才进入：
+  - `Story Cloze` stress test
+  - candidate-conditioned / pair-conditioned injection
+  - `Qwen3-8B`
+
+## 关键结果目录
+
+### 当前主线
+- [m4-fever-dynamics-recovery-qwen25](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25)
+- [20260307-m4-shared-injection-brief.md](/root/mydir/MemTOTAL/docs/briefs/20260307-m4-shared-injection-brief.md)
+
+### 已判死的旧分支
+- [m3-story-cloze-real-pilot-qwen25](/root/mydir/MemTOTAL/results/generated/review/m3-story-cloze-real-pilot-qwen25)
+- [m3-fever-real-pilot-qwen25](/root/mydir/MemTOTAL/results/generated/review/m3-fever-real-pilot-qwen25)
+
+### 当前 active exec plan
+- [20260306-initial-bootstrap.md](/root/mydir/MemTOTAL/docs/exec-plans/active/20260306-initial-bootstrap.md)

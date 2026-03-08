@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import csv
 import json
 import math
@@ -22,6 +23,7 @@ from memtotal.training.m4_shared_injection import (
     _build_support_text_block,
     _classification_metrics_from_rows,
     _evaluate_examples,
+    _prefix_stats,
 )
 from memtotal.training.m4_shared_injection import _load_task_dataset_with_path
 from memtotal.utils.io import write_json, write_jsonl
@@ -106,6 +108,27 @@ def _resolve_phase2_suite_roots(root: Path) -> dict[str, Path]:
     return suites
 
 
+def _stable_hash_rank(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _label_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {label: 0 for label in FEVER_LABEL_ORDER}
+    for row in rows:
+        label = str(row.get("label", "")).strip()
+        if label in counts:
+            counts[label] += 1
+    return counts
+
+
+def _selection_bucket(case_row: dict[str, Any]) -> str:
+    if bool(case_row["predicted_correct"]):
+        return "A_correct"
+    if abs(float(case_row["final_margin"])) < 0.25:
+        return "A_near_threshold"
+    return "A_wrong"
+
+
 def _build_writer(config: dict[str, Any], resume: str, seed: int) -> tuple[BackboneWrapper, MemoryWriter]:
     backbone_cfg = config["backbone"]
     runtime_device = str(config["runtime"].get("device", "cpu"))
@@ -119,6 +142,7 @@ def _build_writer(config: dict[str, Any], resume: str, seed: int) -> tuple[Backb
         device=runtime_device,
         dtype=str(backbone_cfg.get("dtype", "float32")),
         cache_dir=backbone_cfg.get("cache_dir"),
+        attn_implementation=backbone_cfg.get("attn_implementation"),
         max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
     )
     writer_cfg = config["method"]["writer"]
@@ -137,6 +161,68 @@ def _build_writer(config: dict[str, Any], resume: str, seed: int) -> tuple[Backb
     for parameter in writer.parameters():
         parameter.requires_grad_(False)
     return backbone, writer
+
+
+def run_m4_prepare_fever_validation_splits(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_rows = _load_task_dataset_with_path(config, str(config["task"]["dataset_path"]))
+    by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for row in source_rows:
+        label = str(row.get("label", "")).strip()
+        if label in by_label:
+            by_label[label].append(dict(row))
+    train_rows: list[dict[str, Any]] = []
+    val_rows: list[dict[str, Any]] = []
+    for label in FEVER_LABEL_ORDER:
+        ordered = sorted(by_label[label], key=lambda row: _stable_hash_rank(str(row["id"])))
+        val_count = max(1, round(len(ordered) * 0.25))
+        val_ids = {str(row["id"]) for row in ordered[:val_count]}
+        for row in ordered:
+            if str(row["id"]) in val_ids:
+                row["m4_split"] = "screen_val"
+                val_rows.append(row)
+            else:
+                row["m4_split"] = "screen_train"
+                train_rows.append(row)
+    val_by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for row in val_rows:
+        val_by_label[str(row["label"])].append(row)
+    audit_rows: list[dict[str, Any]] = []
+    for label in FEVER_LABEL_ORDER:
+        ordered = sorted(val_by_label[label], key=lambda row: _stable_hash_rank(f"audit::{row['id']}"))
+        audit_rows.extend(ordered[:4])
+
+    data_root = Path(config["runtime"].get("split_output_root", "data/benchmarks/pilots/fever"))
+    data_root.mkdir(parents=True, exist_ok=True)
+    train_path = data_root / "screen-train.jsonl"
+    val_path = data_root / "screen-val.jsonl"
+    audit_path = data_root / "screen-val-audit12.jsonl"
+    manifest_path = data_root / "screen-train-val-manifest.json"
+    write_jsonl(train_path, train_rows)
+    write_jsonl(val_path, val_rows)
+    write_jsonl(audit_path, audit_rows)
+    metrics = {
+        "analysis_mode": "m4_prepare_fever_validation_splits",
+        "source_dataset_path": str(Path(config["task"]["dataset_path"]).resolve()),
+        "train_dataset_path": str(train_path.resolve()),
+        "val_dataset_path": str(val_path.resolve()),
+        "audit_dataset_path": str(audit_path.resolve()),
+        "train_examples": len(train_rows),
+        "val_examples": len(val_rows),
+        "audit_examples": len(audit_rows),
+        "train_label_distribution": _label_distribution(train_rows),
+        "val_label_distribution": _label_distribution(val_rows),
+        "audit_label_distribution": _label_distribution(audit_rows),
+        "manifest_path": str(manifest_path.resolve()),
+    }
+    write_json(manifest_path, metrics)
+    write_json(output_dir / "metrics.json", metrics)
 
 
 def _example_text(example: dict[str, Any]) -> str:
@@ -1100,5 +1186,415 @@ def run_m4_shared_injection_dynamics_audit(
             "summary_plot": str(summary_plot.resolve()),
             "report_path": str(report_path.resolve()),
             "suite_best_metrics": best_suite_metrics,
+        },
+    )
+
+
+def _build_case_lookup(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(row["example_id"]): row for row in rows}
+
+
+def _stage_case_bucket(a_rows: dict[str, dict[str, Any]], example_id: str) -> str:
+    row = a_rows[example_id]
+    if bool(row["predicted_correct"]):
+        return "A_correct"
+    if abs(float(row["final_margin"])) < 0.25:
+        return "A_near_threshold"
+    return "A_wrong"
+
+
+def _mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return float(sum(values) / len(values))
+
+
+def _collect_content_gap_rows(
+    *,
+    suite_name: str,
+    step: int,
+    a_rows: dict[str, dict[str, Any]],
+    real_rows: dict[str, dict[str, Any]],
+    shuffle_rows: dict[str, dict[str, Any]],
+    zero_rows: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    shared_ids = sorted(set(a_rows) & set(real_rows) & set(shuffle_rows) & set(zero_rows))
+    for bucket_name in ("overall", "A_wrong", "A_near_threshold", "SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"):
+        if bucket_name == "overall":
+            bucket_ids = shared_ids
+        elif bucket_name in {"A_wrong", "A_near_threshold"}:
+            bucket_ids = [example_id for example_id in shared_ids if _stage_case_bucket(a_rows, example_id) == bucket_name]
+        else:
+            bucket_ids = [
+                example_id
+                for example_id in shared_ids
+                if str(real_rows[example_id]["gold_label"]) == bucket_name
+            ]
+        if not bucket_ids:
+            continue
+        real_minus_shuffle = [
+            float(real_rows[example_id]["final_margin"]) - float(shuffle_rows[example_id]["final_margin"])
+            for example_id in bucket_ids
+        ]
+        real_minus_zero = [
+            float(real_rows[example_id]["final_margin"]) - float(zero_rows[example_id]["final_margin"])
+            for example_id in bucket_ids
+        ]
+        rows.append(
+            {
+                "suite": suite_name,
+                "step": int(step),
+                "bucket": bucket_name,
+                "example_count": len(bucket_ids),
+                "mean_margin_gap_real_vs_shuffle": _mean(real_minus_shuffle),
+                "mean_margin_gap_real_vs_zero": _mean(real_minus_zero),
+            }
+        )
+    return rows
+
+
+def _load_audit_examples(config: dict[str, Any], dataset_path: str, prompt_variant: str) -> list[SharedInjectionExampleCache]:
+    rows = _load_task_dataset_with_path(config, dataset_path)
+    return _build_example_caches(rows, prompt_variant=prompt_variant)
+
+
+def _attention_rows_for_snapshot(
+    *,
+    config: dict[str, Any],
+    support_examples: list[dict[str, Any]],
+    audit_examples: list[SharedInjectionExampleCache],
+    support_serialization_variant: str,
+    writer_memory_control: str,
+    checkpoint_path: str | None,
+    step: int,
+    suite_name: str,
+    arm_alias: str,
+) -> list[dict[str, Any]]:
+    runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=0,
+        arm="injected",
+        writer_memory_control=writer_memory_control,
+    )
+    if checkpoint_path:
+        runtime.load_injection_checkpoint(checkpoint_path)
+    example_lookup = {
+        str(row["id"]): row
+        for row in [*support_examples, *[cache.example for cache in audit_examples]]
+    }
+    support_text_block = _build_support_text_block(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    prefix_embeddings = runtime.build_prefix_embeddings(support_text_block)
+    prefix_stats = _prefix_stats(prefix_embeddings)
+    rows: list[dict[str, Any]] = []
+    for cache in audit_examples:
+        scores, diagnostics = runtime.score_example(
+            cache,
+            support_text_block=support_text_block,
+            prefix_embeddings=prefix_embeddings,
+            return_diagnostics=True,
+        )
+        scores_cpu = scores.detach().to(dtype=torch.float32).cpu()
+        competitor_index = max(
+            [index for index in range(len(cache.candidate_labels)) if index != cache.gold_index],
+            key=lambda index: float(scores_cpu[index].item()),
+        )
+        masses = [float(value) for value in diagnostics["prefix_attention_mass_by_candidate"]]
+        rows.append(
+            {
+                "suite": suite_name,
+                "step": int(step),
+                "arm_alias": arm_alias,
+                "example_id": str(cache.example["id"]),
+                "gold_label": cache.candidate_labels[cache.gold_index],
+                "predicted_label": cache.candidate_labels[int(torch.argmax(scores_cpu).item())],
+                "mean_prefix_attention_mass": _mean(masses),
+                "gold_prefix_attention_mass": masses[cache.gold_index],
+                "competitor_prefix_attention_mass": masses[competitor_index],
+                "prefix_tokens": int(prefix_stats["prefix_tokens"]),
+                "prefix_l2": float(prefix_stats["prefix_l2"]),
+            }
+        )
+    return rows
+
+
+def run_m4_shared_injection_dynamics_recovery(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    input_root: str,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suite_roots = _resolve_phase2_suite_roots(Path(input_root).resolve())
+    if not suite_roots:
+        raise ValueError(f"No phase2-selected suite roots found under {input_root}.")
+
+    summary_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+    content_gap_rows: list[dict[str, Any]] = []
+    prefix_norm_rows: list[dict[str, Any]] = []
+    candidate_selections: list[dict[str, Any]] = []
+    suite_support_variant: dict[str, str] = {}
+    report_lines = ["# M4 Shared Injection Dynamics Recovery", ""]
+
+    for suite_name, suite_root in sorted(suite_roots.items()):
+        runs = _collect_shared_injection_runs(suite_root)
+        required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
+        missing = sorted(required - set(runs))
+        if missing:
+            raise ValueError(f"Suite {suite_name} is missing required runs: {', '.join(missing)}")
+        snapshots = {alias: _load_snapshot_eval_rows(run_dir) for alias, (_, run_dir) in runs.items()}
+        static_rows: dict[str, list[dict[str, Any]]] = {}
+        for alias in ("A", "T", "I_zero"):
+            if 0 in snapshots[alias]:
+                static_rows[alias] = snapshots[alias][0][1]
+            else:
+                _, static_rows[alias] = _load_case_rows(runs[alias][1])
+        common_steps = sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"]))
+        if not common_steps:
+            raise ValueError(f"Suite {suite_name} has no overlapping snapshot steps.")
+        suite_support_variant[suite_name] = str(runs["I_real"][0].get("support_serialization_variant", suite_name))
+        for step in common_steps:
+            step_case_rows = {
+                "A": static_rows["A"],
+                "T": static_rows["T"],
+                "I_zero": static_rows["I_zero"],
+                "I_real": snapshots["I_real"][step][1],
+                "I_shuffle": snapshots["I_shuffle"][step][1],
+            }
+            step_metrics = {
+                alias: _classification_metrics_from_rows(rows)
+                for alias, rows in step_case_rows.items()
+            }
+            for alias, metrics in step_metrics.items():
+                summary_rows.append(
+                    {
+                        "suite": suite_name,
+                        "step": int(step),
+                        "alias": alias,
+                        "task_score": float(metrics["accuracy"]),
+                        "macro_f1": float(metrics["macro_f1"]),
+                        "mean_margin": float(metrics["mean_margin"]),
+                        "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
+                    }
+                )
+            step_pairwise_lookup: dict[tuple[str, str], dict[str, Any]] = {}
+            for left_alias, right_alias in [("A", "I_real"), ("I_shuffle", "I_real"), ("I_zero", "I_real")]:
+                compare = _pairwise_compare(
+                    _build_case_lookup(step_case_rows[left_alias]),
+                    _build_case_lookup(step_case_rows[right_alias]),
+                )
+                row = {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "left_alias": left_alias,
+                    "right_alias": right_alias,
+                    **compare,
+                }
+                pairwise_rows.append(row)
+                step_pairwise_lookup[(left_alias, right_alias)] = row
+            content_gap_rows.extend(
+                _collect_content_gap_rows(
+                    suite_name=suite_name,
+                    step=int(step),
+                    a_rows=_build_case_lookup(step_case_rows["A"]),
+                    real_rows=_build_case_lookup(step_case_rows["I_real"]),
+                    shuffle_rows=_build_case_lookup(step_case_rows["I_shuffle"]),
+                    zero_rows=_build_case_lookup(step_case_rows["I_zero"]),
+                )
+            )
+            snapshot_metrics = snapshots["I_real"][step][0]
+            prefix_norm_rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": "I_real",
+                    "prefix_tokens": float(snapshot_metrics.get("prefix_tokens", 0.0)),
+                    "prefix_l2": float(snapshot_metrics.get("prefix_l2", 0.0)),
+                    "prefix_slot_norm_mean": float(snapshot_metrics.get("prefix_slot_norm_mean", 0.0)),
+                    "prefix_slot_norm_std": float(snapshot_metrics.get("prefix_slot_norm_std", 0.0)),
+                    "prefix_slot_norm_max": float(snapshot_metrics.get("prefix_slot_norm_max", 0.0)),
+                }
+            )
+            shuffle_snapshot_metrics = snapshots["I_shuffle"][step][0]
+            prefix_norm_rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": "I_shuffle",
+                    "prefix_tokens": float(shuffle_snapshot_metrics.get("prefix_tokens", 0.0)),
+                    "prefix_l2": float(shuffle_snapshot_metrics.get("prefix_l2", 0.0)),
+                    "prefix_slot_norm_mean": float(shuffle_snapshot_metrics.get("prefix_slot_norm_mean", 0.0)),
+                    "prefix_slot_norm_std": float(shuffle_snapshot_metrics.get("prefix_slot_norm_std", 0.0)),
+                    "prefix_slot_norm_max": float(shuffle_snapshot_metrics.get("prefix_slot_norm_max", 0.0)),
+                }
+            )
+            zero_metrics = snapshots["I_zero"].get(0, (runs["I_zero"][0], static_rows["I_zero"]))[0]
+            prefix_norm_rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": "I_zero",
+                    "prefix_tokens": float(zero_metrics.get("prefix_tokens", 0.0)),
+                    "prefix_l2": float(zero_metrics.get("prefix_l2", 0.0)),
+                    "prefix_slot_norm_mean": float(zero_metrics.get("prefix_slot_norm_mean", 0.0)),
+                    "prefix_slot_norm_std": float(zero_metrics.get("prefix_slot_norm_std", 0.0)),
+                    "prefix_slot_norm_max": float(zero_metrics.get("prefix_slot_norm_max", 0.0)),
+                }
+            )
+            real_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_real")
+            shuffle_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_shuffle")
+            zero_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_zero")
+            a_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "A")
+            regressions_vs_base = int(step_pairwise_lookup[("A", "I_real")]["left_correct_to_right_wrong"])
+            passes = bool(
+                int(step_pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]) >= 2
+                and (float(real_summary["macro_f1"]) - float(shuffle_summary["macro_f1"])) >= 0.03
+                and int(step_pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]) >= 2
+                and (float(real_summary["macro_f1"]) - float(zero_summary["macro_f1"])) >= 0.03
+                and float(real_summary["task_score"]) >= float(a_summary["task_score"])
+                and regressions_vs_base <= 1
+            )
+            candidate_selections.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "support_serialization_variant": suite_support_variant[suite_name],
+                    "passes_selection": passes,
+                    "task_score": float(real_summary["task_score"]),
+                    "macro_f1": float(real_summary["macro_f1"]),
+                    "regressions_vs_base": regressions_vs_base,
+                    "flip_gain_vs_shuffle": int(step_pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]),
+                    "flip_gain_vs_zero": int(step_pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]),
+                    "i_real_checkpoint_path": str(snapshots["I_real"][step][0].get("checkpoint_path", "")),
+                    "i_shuffle_checkpoint_path": str(snapshots["I_shuffle"][step][0].get("checkpoint_path", "")),
+                }
+            )
+
+    passed_candidates = [row for row in candidate_selections if bool(row["passes_selection"])]
+    selected = None
+    if passed_candidates:
+        selected = sorted(
+            passed_candidates,
+            key=lambda row: (
+                int(row["step"]),
+                -float(row["macro_f1"]),
+                int(row["regressions_vs_base"]),
+            ),
+        )[0]
+    selection_payload = {
+        "selection_passed": selected is not None,
+        "selected_suite": None if selected is None else str(selected["suite"]),
+        "selected_step": None if selected is None else int(selected["step"]),
+        "selected_support_serialization": None if selected is None else str(selected["support_serialization_variant"]),
+        "selected_prompt_variant": None,
+        "i_real_checkpoint_path": "" if selected is None else str(selected["i_real_checkpoint_path"]),
+        "i_shuffle_checkpoint_path": "" if selected is None else str(selected["i_shuffle_checkpoint_path"]),
+        "candidate_rows": candidate_selections,
+    }
+    if selected is not None:
+        selected_suite_root = suite_roots[str(selected["suite"])]
+        selected_runs = _collect_shared_injection_runs(selected_suite_root)
+        selection_payload["selected_prompt_variant"] = str(selected_runs["I_real"][0].get("prompt_variant", ""))
+
+    attention_rows: list[dict[str, Any]] = []
+    audit_dataset_path = str(config["runtime"].get("pilot_val_audit_dataset_path", "")).strip()
+    if audit_dataset_path:
+        support_examples = _load_task_dataset_with_path(config, str(config["task"]["support_dataset_path"]))
+        for suite_name, suite_root in sorted(suite_roots.items()):
+            runs = _collect_shared_injection_runs(suite_root)
+            prompt_variant = str(runs["I_real"][0].get("prompt_variant", ""))
+            audit_examples = _load_audit_examples(
+                config,
+                audit_dataset_path,
+                prompt_variant=prompt_variant,
+            )
+            snapshots = {alias: _load_snapshot_eval_rows(run_dir) for alias, (_, run_dir) in runs.items()}
+            for step in sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"])):
+                for arm_alias, memory_control in (("I_real", "real"), ("I_shuffle", "shuffled"), ("I_zero", "zero")):
+                    checkpoint_path = ""
+                    if arm_alias in {"I_real", "I_shuffle"}:
+                        checkpoint_path = str(snapshots[arm_alias][step][0].get("checkpoint_path", ""))
+                    attention_rows.extend(
+                        _attention_rows_for_snapshot(
+                            config=config,
+                            support_examples=support_examples,
+                            audit_examples=audit_examples,
+                            support_serialization_variant=suite_support_variant[suite_name],
+                            writer_memory_control=memory_control,
+                            checkpoint_path=checkpoint_path,
+                            step=int(step),
+                            suite_name=suite_name,
+                            arm_alias=arm_alias,
+                        )
+                    )
+
+    summary_csv = output_dir / "dynamics_recovery_summary.csv"
+    pairwise_csv = output_dir / "dynamics_recovery_pairwise.csv"
+    content_gap_csv = output_dir / "content_gap_curve.csv"
+    prefix_norm_csv = output_dir / "prefix_norm_drift.csv"
+    attention_csv = output_dir / "prefix_attention_consumption.csv"
+    summary_plot = output_dir / "summary.svg"
+    selection_json = output_dir / "selection.json"
+    _write_csv(summary_csv, summary_rows)
+    _write_csv(pairwise_csv, pairwise_rows)
+    _write_csv(content_gap_csv, content_gap_rows)
+    _write_csv(prefix_norm_csv, prefix_norm_rows)
+    _write_csv(attention_csv, attention_rows)
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['suite']}:I_real:step{int(row['step']):04d}",
+                "run_dir": f"{row['suite']}-I_real-step{int(row['step']):04d}",
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+            }
+            for row in summary_rows
+            if row["alias"] == "I_real"
+        ],
+    )
+    write_json(selection_json, selection_payload)
+    report_lines.extend(
+        [
+            f"- selection_passed: {selection_payload['selection_passed']}",
+            f"- selected_suite: {selection_payload['selected_suite']}",
+            f"- selected_step: {selection_payload['selected_step']}",
+            f"- selected_support_serialization: {selection_payload['selected_support_serialization']}",
+            "",
+            "## Candidate Checkpoints",
+        ]
+    )
+    for row in candidate_selections:
+        report_lines.append(
+            f"- {row['suite']} step{int(row['step']):04d}: passes={row['passes_selection']}, "
+            f"macro_f1={row['macro_f1']:.4f}, flip_gain_vs_shuffle={row['flip_gain_vs_shuffle']}, "
+            f"flip_gain_vs_zero={row['flip_gain_vs_zero']}, regressions_vs_base={row['regressions_vs_base']}"
+        )
+    report_path = output_dir / "val_selection_report.md"
+    report_path.write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_shared_injection_dynamics_recovery",
+            "selection_passed": bool(selection_payload["selection_passed"]),
+            "selected_suite": selection_payload["selected_suite"],
+            "selected_step": selection_payload["selected_step"],
+            "selected_support_serialization": selection_payload["selected_support_serialization"],
+            "summary_csv": str(summary_csv.resolve()),
+            "pairwise_csv": str(pairwise_csv.resolve()),
+            "content_gap_csv": str(content_gap_csv.resolve()),
+            "prefix_norm_csv": str(prefix_norm_csv.resolve()),
+            "attention_csv": str(attention_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "selection_json": str(selection_json.resolve()),
+            "report_path": str(report_path.resolve()),
         },
     )

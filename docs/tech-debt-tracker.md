@@ -5,13 +5,14 @@
 - 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
 - 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
 - `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。
-- `shared latent prefix injection` 已经真实跑完 `A / T / I-real / I-shuffle / I-zero`，而且最新 blocker 不再是“prefix 根本没生效”。当前 stable compare `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/report.md` 记录：`A=0.25`、`T=0.53125`、`I-real=0.390625`、`I-shuffle=0.546875`、`I-zero=0.25`。这说明 `writer -> latent prefix -> frozen Qwen` 已经开始产生主链路效应，因为 `I-real > I-zero`。
-- 但新的主 tech debt 也已经更具体：`results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/report.md` 现明确显示，当前问题不是“没有 real-memory signal”，而是“support variant + checkpoint selection` 还没固定住”。`raw8` 与 `triad6` 两条线都在 `step32` 给出正向 `real > shuffle > zero` 信号，但在 `step64` 都出现 `overshoot_detected=true`。因此当前默认 final checkpoint 已不再是可信 capability gate。
-- `triad6` 当前已经给出最强的正向主链路证据：`results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/dynamics_summary.csv` 记录 `best_step=32` 时，`I-real=0.578125 / macro_f1=0.5238`，并且 `flip_gain_vs_shuffle=16`、`flip_gain_vs_zero=21`。这说明 shared injection 主线不再适合被表述成“完全失败”；更准确的 debt 是如何把“会在早期出现的正向 real-memory 内容效应”稳定保存下来。
+- `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
+- 这轮的新证据比“step32 曾经好过”更强：两条 support variant 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`，但同时都带来 `regressions_vs_base=18`。因此当前不该把问题写成“只要挑对 checkpoint 就行”，而应写成“shared injection 的正信号目前可训练但不稳健”。
+- 当前真正最关键的 tech debt 已继续收紧成动力学问题：`results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/prefix_attention_consumption.csv` 已证明 frozen Qwen 会消费 prefix，而 `prefix_norm_drift.csv` 同时显示明显 norm blow-up。当前 `raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`，`triad6 / I-real` 从 `86.66` 升到 `11397.91`。
 - 因而当前最应优先补的不是新的 score-side residual family，而是：
-  - 把 `support variant + checkpoint selection` 做成正式 capability gate
-  - 在该 gate 站稳后，再尝试更强的主链路注入（如 `deep prompt / per-layer prefix`）
-  - 继续停止维护旧的 `candidate-conditioned residual family`
+  - 继续把 `shared injection` 当作主线
+  - 在 `screen248-train / screen248-val / fixed64-test` 的预注册口径下恢复稳定训练动力学
+  - 优先修 `support masking / prefix norm control / validation stopping rule`
+  - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，再尝试更强的主链路注入（如 `deep prompt / per-layer prefix`）
 - 旧的 `candidate-conditioned residual family` 现已进入停止维护状态：`FEVER-first repair` fresh pilot 已证明 `R-real = R-shuffle = R-zero = 0.25`，当前没有任何继续在这条 family 上叠 router / sign selector / 更多 sweep 的理由。后续若回到 candidate-specific `Stage C`，必须建立在 shared injection 已先证明 `real > shuffle > zero` 的前提上。
 - 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
 - 将当前 toy smoke 数据替换为与 `docs/EXPERIMENTS_INFO.md` 主套件兼容的数据准备流水线。

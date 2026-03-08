@@ -18,7 +18,9 @@ from memtotal.analysis.m3_stage_c_probe import run_m3_stage_c_probe_summary
 from memtotal.analysis.m3_stage_c_seed_sweep import run_m3_stage_c_seed_sweep_summary
 from memtotal.analysis.m4_shared_injection import (
     run_m4_phase0_gate_sweep,
+    run_m4_prepare_fever_validation_splits,
     run_m4_shared_injection_compare,
+    run_m4_shared_injection_dynamics_recovery,
     run_m4_shared_injection_dynamics_audit,
     run_m4_writer_information_audit,
 )
@@ -178,6 +180,13 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
         return 0
+    if analysis_mode == "m4_prepare_fever_validation_splits":
+        run_m4_prepare_fever_validation_splits(
+            config=config,
+            output_dir=output_dir,
+            dry_run=args.dry_run,
+        )
+        return 0
     if analysis_mode == "story_cloze_real_pilot_split":
         run_story_cloze_real_pilot_split(
             config=config,
@@ -267,6 +276,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args.input_root:
             raise ValueError("--input_root is required for m4_shared_injection_dynamics_audit mode.")
         run_m4_shared_injection_dynamics_audit(
+            config=config,
+            output_dir=output_dir,
+            input_root=args.input_root,
+            dry_run=args.dry_run,
+        )
+        return 0
+    if analysis_mode == "m4_shared_injection_dynamics_recovery":
+        if not args.input_root:
+            raise ValueError("--input_root is required for m4_shared_injection_dynamics_recovery mode.")
+        run_m4_shared_injection_dynamics_recovery(
             config=config,
             output_dir=output_dir,
             input_root=args.input_root,

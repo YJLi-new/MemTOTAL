@@ -23,6 +23,7 @@ class BackboneWrapper(nn.Module):
         device: str | torch.device = "cpu",
         dtype: str = "float32",
         cache_dir: str | None = None,
+        attn_implementation: str | None = None,
         max_new_tokens: int = 32,
     ) -> None:
         super().__init__()
@@ -34,6 +35,7 @@ class BackboneWrapper(nn.Module):
         self.device = torch.device(device)
         self.dtype_name = dtype
         self.cache_dir = cache_dir or os.environ.get("HF_HOME") or "/root/autodl-tmp/hf-cache"
+        self.attn_implementation = attn_implementation
         self.max_new_tokens = int(max_new_tokens)
         self.tokenizer = None
         self.model = None
@@ -82,11 +84,16 @@ class BackboneWrapper(nn.Module):
                 self.tokenizer.pad_token = self.tokenizer.unk_token
             else:
                 raise ValueError(f"{self.model_id} tokenizer has neither pad/eos/unk token configured.")
+        model_kwargs = {
+            "cache_dir": self.cache_dir,
+            "torch_dtype": torch_dtype,
+            "low_cpu_mem_usage": True,
+        }
+        if self.attn_implementation:
+            model_kwargs["attn_implementation"] = self.attn_implementation
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
-            cache_dir=self.cache_dir,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
+            **model_kwargs,
         )
         self.model.to(self.device)
         self.model.eval()
@@ -232,7 +239,8 @@ class BackboneWrapper(nn.Module):
         candidate_texts: list[str],
         *,
         prefix_embeddings: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_diagnostics: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, object]]:
         if self.load_mode != "hf_causal_lm":
             raise RuntimeError("score_continuations is only available for load_mode='hf_causal_lm'.")
         if self.model is None or self.tokenizer is None:
@@ -242,8 +250,15 @@ class BackboneWrapper(nn.Module):
         encoded, prefix_length = self._prepare_prefixed_hf_inputs(full_texts, prefix_embeddings)
         prompt_length = len(self.tokenizer(prompt_with_sep, add_special_tokens=True)["input_ids"])
         model_context = torch.inference_mode if prefix_embeddings is None else nullcontext
+        model_kwargs = {
+            **encoded,
+            "use_cache": False,
+        }
+        if return_diagnostics:
+            model_kwargs["output_attentions"] = True
         with model_context():
-            logits = self.model(**encoded, use_cache=False).logits
+            outputs = self.model(**model_kwargs)
+        logits = outputs.logits
         log_probs = torch.log_softmax(logits[:, :-1, :].to(dtype=torch.float32), dim=-1)
         labels_source = encoded.get("input_ids")
         # When prefix embeddings are injected, encoded no longer carries input_ids.
@@ -256,13 +271,40 @@ class BackboneWrapper(nn.Module):
         labels = labels_source[:, 1:]
         token_log_probs = log_probs.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
         scores: list[torch.Tensor] = []
+        prefix_attention_masses: list[float] = []
         sequence_lengths = encoded["attention_mask"].sum(dim=1).tolist()
         for row_index, sequence_length_value in enumerate(sequence_lengths):
             sequence_length = int(sequence_length_value) - prefix_length
             start_index = max(0, label_position_offset + prompt_length - 1)
             end_index = max(start_index, label_position_offset + sequence_length - 1)
             scores.append(token_log_probs[row_index, start_index:end_index].sum())
-        return torch.stack(scores)
+            if return_diagnostics:
+                if prefix_length <= 0:
+                    prefix_attention_masses.append(0.0)
+                else:
+                    if outputs.attentions is None:
+                        raise RuntimeError("Attention diagnostics requested but model did not return attentions.")
+                    attention_start = max(0, prefix_length + prompt_length - 1)
+                    attention_end = max(attention_start, prefix_length + sequence_length - 1)
+                    last_attention = outputs.attentions[-1][row_index].to(dtype=torch.float32)
+                    candidate_query_attention = last_attention[
+                        :,
+                        attention_start:attention_end,
+                        :prefix_length,
+                    ]
+                    if candidate_query_attention.numel() == 0:
+                        prefix_attention_masses.append(0.0)
+                    else:
+                        prefix_attention_masses.append(float(candidate_query_attention.mean().item()))
+        score_tensor = torch.stack(scores)
+        if not return_diagnostics:
+            return score_tensor
+        diagnostics: dict[str, object] = {
+            "prefix_length": int(prefix_length),
+            "prefix_attention_mass_by_candidate": prefix_attention_masses,
+            "prompt_length": int(prompt_length),
+        }
+        return score_tensor, diagnostics
 
     def generate(self, prompts: Iterable[str], memory_tokens: torch.Tensor | None = None) -> list[str]:
         if self.load_mode == "hf_causal_lm":

@@ -1,242 +1,133 @@
 # M4 Shared Injection Brief
 
-## 这轮在做什么
+## 当前一句话结论
 
-这轮不是继续修 `candidate-conditioned residual family`，而是正式把主战场从“旁路修分”切到“让 frozen Qwen 在主链路里看见并使用 memory”。
+`shared injection` 已经不再是“完全没信号”，但在预注册 `screen248-val` 口径下还不稳定；当前 blocker 是训练动力学与 prefix norm blow-up，不是“frozen Qwen 根本不看 prefix”。
 
-当前固定问题只有一个：
+## 这轮真正做了什么
 
-> 如果把 shared latent memory 直接作为 continuous prefix 注入 `Qwen2.5-1.5B-Instruct`，真实 memory 会不会第一次显著优于 `shuffle / zero`？
+这轮不是继续修旧的 `candidate-conditioned residual family`，而是把主战场切到：
 
-这轮最开始确实先做了更上游恢复：
+> 让 frozen `Qwen2.5-1.5B-Instruct` 在主 attention 链路里直接消费 latent memory。
 
-1. `Phase 0`: `FEVER screen248` 上的 prompt / support gate
-2. `Phase 1`: writer information audit
-3. 只有前两步都通过，才会在 `fixed64` 上跑真实 `I-real / I-shuffle / I-zero`
+当前主线已经分成三段：
 
-## 关键路径
+1. `Phase 0`
+   - support 文本显式拼进 prompt 的 teacher-text sanity check
+2. `Phase 1`
+   - writer information audit
+3. `Phase 2`
+   - shared latent prefix injection
 
-- 原始 runs：
-  - `runs/review/m4-fever-shared-injection-qwen25/`
-- 汇总结果：
-  - `results/generated/review/m4-fever-shared-injection-qwen25/`
-- 最关键的文件：
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/summary.csv`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/report.md`
-  - `results/generated/review/m4-fever-shared-injection-qwen25/phase2-compare/arm_summary.csv`
+## 已经坐实的前提
 
-## 这轮实际实现了什么
+### Phase 0 已通过
 
-### 1. Phase 0 prompt/support gate
+显式 support 文本对 frozen Qwen 有帮助。
 
-这一步不训练任何参数，只比较 frozen Qwen 在 `FEVER screen248` 上对不同 prompt 和 support surface 的反应。
+对应结果：
+- `A_winner` 很差，但不是因为 prompt surface 完全坏掉
+- `T_winner` 明显强于 `A_winner`
 
-当前已经补上：
+结论：
+- 当前 blocker 不再是 `FEVER` prompt / support 完全没价值
 
-- 3 个 `A` prompt 变体
-- 3 个 `T` support serialization 变体
-- `macro_f1 / accuracy / dominant_label_fraction / label_recall_by_class`
+### Phase 1 已通过
 
-这一步的作用是：
+当前 writer family 产出的 latent 不是“完全没信息”。
 
-- 如果 `T` 都不比 `A` 强，就说明 support bank 的显式文本还没让 frozen Qwen 受益
-- 在这种情况下，继续训练 latent injection 没意义
+对应结果：
+- `real` 在 `label / verifiability / polarity` probe 上均优于 `shuffle/zero`
+- 这一步已经不支持“writer 完全没写出任务相关信息”的解释
 
-### 2. Phase 1 writer information audit
+结论：
+- 当前 blocker 不再是 writer 完全无信息
 
-这一步不训练新 writer，只审计当前 writer family 的 latent 到底有没有可读的 FEVER 任务信息。
+## 当前最新真实结果：M4.3 dynamics recovery
 
-当前已经实现：
+review 路径：
+- `runs/review/m4-fever-dynamics-recovery-qwen25/`
+- `results/generated/review/m4-fever-dynamics-recovery-qwen25/`
 
-- `linear probe`
-- `shallow MLP probe`
-- `real / shuffle / zero`
+最关键文件：
+- `dynamics-recovery/selection.json`
+- `dynamics-recovery/val_selection_report.md`
+- `dynamics-recovery/prefix_norm_drift.csv`
+- `dynamics-recovery/prefix_attention_consumption.csv`
+- `dynamics-recovery/content_gap_curve.csv`
 
-而且 probe target 现在都只预测任务语义本身，不再混入旧的 `teacher_gain_probe`。
+### 预注册 validation 结果
 
-### 3. Shared latent prefix injection scaffold
+当前 `selection_passed=false`。
 
-真正的 injected 路径也已经搭好了：
+两条 support variant：
+- `raw8`
+- `triad6`
 
-- support text
-  -> `backbone.summarize_texts`
-  -> `MemoryWriter`
-  -> `LatentPrefixProjector`
-  -> prefix embeddings
-  -> `BackboneWrapper.score_continuations(prefix_embeddings=...)`
+都没有在预注册规则下选出一个稳定 checkpoint。
 
-第一版固定只做 shared injection：
+两条线都只有到 `step64` 才同时出现：
+- `I-real` 相对 `I-shuffle` 的 `+2 flips`
+- `I-real` 相对 `I-zero` 的 `+2 flips`
 
-- 不做 candidate-conditioned
-- 不做 pair-conditioned
-- 不做 KL
-- 不做 deep prompt
+但同时也都带来：
+- `regressions_vs_base = 18`
 
-另外，这轮还修掉了一个关键 harness 问题：
+因此：
+- 本轮没有打开 `fixed64`
+- 当前还不能说 capability gate 已通过
 
-- `BackboneWrapper.score_continuations(prefix_embeddings=...)` 现在会在 prefix 路径上保留梯度
-- 所以 `Phase 2` 的 dry-run 链路已经能技术上完整跑通
+### 这轮新增的关键 observability
 
-## 这轮结果
+现在最值钱的新信息不在最终 accuracy，而在主链路 observability。
 
-### Phase 0：prompt/support gate 已通过
+1. `prefix_attention_consumption.csv`
+- 不再是空文件
+- 说明 frozen Qwen 在 scoring choice 时，确实会把 prefix 当成可见上下文消费
 
-`screen248` 上的真实结果已不再是 collapse 到同一条错误 surface。
+2. `prefix_norm_drift.csv`
+- 显示 prefix norm 快速爆炸
+- `raw8 / I-real`
+  - `prefix_l2`: `84.54 -> 7001.36`
+- `triad6 / I-real`
+  - `prefix_l2`: `86.66 -> 11397.91`
 
-- `phase0_gate_passed = true`
-- `A_winner = answer_slot_labels`
-- `T_winner = answer_slot_labels + example_blocks_raw8`
-- `selected_pair_accuracy_gain = 0.4274`
-- `selected_pair_macro_f1_gain = 0.5352`
+3. `content_gap_curve.csv`
+- 说明 content gap 并不是完全没有出现
+- 但它没有在 validation 规则下稳定到足以通过 gate
 
-对应数字：
+## 当前最稳妥的解释
 
-- `A_winner`
-  - `accuracy = 0.29435483870967744`
-  - `macro_f1 = 0.15160955347871236`
-  - `dominant_label_fraction = 1.0`
-- `T_winner`
-  - `accuracy = 0.7217741935483871`
-  - `macro_f1 = 0.6868094914612671`
-  - `dominant_label_fraction = 0.5241935483870968`
+当前已经可以排除：
+- frozen Qwen 完全不看 prefix
+- support bank 完全没价值
+- writer latent 完全没信息
 
-也就是说：
+当前更合理的解释是：
 
-- 当前 support bank 显式拼进 prompt 已经能明显帮助 frozen Qwen
-- `teacher-text / support serialization / label verbalization` 不再是当前第一 blocker
+> shared injection 的正信号已经出现过，但训练过程会把这个信号过冲掉。  
+> 也就是说，当前问题是 `dynamics stability`，不是 `main-chain injection` 本身不存在。
 
-### Phase 1：writer latent 的任务语义信号也已通过 gate
+## 现在不该做什么
 
-当前审计结果：
+- 不再回去修旧的 score-side residual family
+- 不直接扩到 `Story Cloze`
+- 不直接上 `Qwen3-8B`
+- 不直接上 KL
+- 不用 `fixed64` 事后挑“最好 step”
 
-- `label_probe_passed = true`
-- `semantic_probe_passed = true`
-- `phase1_probe_passed = true`
-- `phase1_gate_passed = true`
+## 现在最该做什么
 
-最佳 probe 数字：
+继续留在 `shared injection` 主线，先做：
+- 预注册 validation 下的 stopping rule
+- 更强的 support masking / dynamics stabilization
+- prefix norm / attention 的持续 observability
 
-- `label_probe_3way`
-  - `real macro_f1 = 0.4434`
-  - `best control = 0.3499`
-- `verifiability_probe`
-  - `real auroc = 0.7724`
-  - `best control = 0.5568`
-- `polarity_probe`
-  - `real auroc = 0.5534`
-  - `best control = 0.4863`
+只有当 `fixed64` 也稳定出现：
+- `I-real > I-shuffle`
+- `I-real > I-zero`
 
-这轮的关键变化是：
-
-- 现在已经不能再把 shared injection 失败归因成“writer 完全没信息”
-- prompt/support surface 和 writer 信息这两道上游 gate 都已经通过
-
-### Phase 2：真实 shared injection 已启动，而且 prefix 主链路已经真正动起来了
-
-这轮已经真实跑完：
-
-- `A = base_only`
-- `T = teacher-text upper bound`
-- `I-real`
-- `I-shuffle`
-- `I-zero`
-
-最新真实结果是：
-
-- `A = 0.25 / macro_f1 = 0.2`
-- `T = 0.53125 / macro_f1 = 0.5294`
-- `I-real = 0.390625 / macro_f1 = 0.4061`
-- `I-shuffle = 0.546875 / macro_f1 = 0.5031`
-- `I-zero = 0.25 / macro_f1 = 0.2`
-- `gate_passed = false`
-
-pairwise compare 里最关键的四条是：
-
-- `A -> T: flip_delta = 18`
-- `A -> I_real: flip_delta = 9`
-- `I_zero -> I_real: flip_delta = 9`
-- `I_shuffle -> I_real: flip_delta = -10`
-
-## 现在能下的结论
-
-这轮最重要的结论已经进一步推进了，不再是“shared injection 完全没动”，而是：
-
-> 现在已经到了能公平评判 shared injection 的时候，而且当前这版 shared latent prefix injection 已经让 frozen Qwen 开始消费 prefix；但 current real support latent 的方向仍然是错的，因为 `I-real > I-zero` 却被 `I-shuffle` 反超。
-
-更准确地说，当前卡住的是：
-
-1. `teacher-text` 明确有用，说明 support bank 本身不是空的
-2. writer latent 也已有可读任务信息
-3. `writer -> latent prefix -> frozen Qwen` 这条主链路已经不再是零效应，因为 `I-real > I-zero`
-4. 但 current real support latent 还没有形成正确方向的内容效应，因为 `I-shuffle > I-real`
-
-所以：
-
-- 这轮不能再把问题归因成上游 gate 没过
-- 也不能继续把 shared injection 说成“尚未开始”或“完全没动”
-
-## 这轮之后最合理的下一步
-
-当前最该做的不是：
-
-- 回去继续修旧 `candidate-conditioned residual`
-- 也不是直接上 `Story Cloze`
-- 更不是直接上 `Qwen3-8B` 或 KL
-
-而是直接检查和升级主链路注入本身：
-
-1. 检查 prefix 投影后的幅度、范数和层间可见性
-2. 检查 frozen Qwen 是否真的对 prefix token 产生注意力消费
-3. 直接解释为什么 `I-shuffle` 会反超 `I-real`
-4. 在不回退到 score-side family 的前提下，优先尝试更强的 main-chain injection 方案
-
-## 当前最稳妥的口径
-
-- `candidate-conditioned residual family` 已经停止继续修补
-- `M4` 的新主线仍然是对的：把 memory 放回 frozen Qwen 的主链路
-- 但现在 immediate blocker 已经不在 injection 之前，而在 injection 本身的内容方向
-- 因而下一轮的主要任务不是“继续修 gate”，而是“解释并修正 `real` 为何比 `shuffle` 更差”
-
-## M4.2：Phase 2 dynamics 进一步把 blocker 收紧了
-
-这轮又补了一层真正可核验的证据：不再只看 `Phase 2` 的单个 final compare，而是把 `raw8 / triad6` 两个 support variant 的 `step0/16/32/64` 全部落成 case dump，并做统一 dynamics audit。
-
-新增结果路径：
-
-- `runs/review/m4-fever-phase2-dynamics-qwen25/`
-- `results/generated/review/m4-fever-phase2-dynamics-qwen25/raw8/phase2-compare/report.md`
-- `results/generated/review/m4-fever-phase2-dynamics-qwen25/triad6/phase2-compare/report.md`
-- `results/generated/review/m4-fever-phase2-dynamics-qwen25/dynamics-audit/report.md`
-
-这轮最重要的数字是：
-
-- `raw8 final`
-  - `I-real = 0.109375 / macro_f1 = 0.1571`
-  - `I-shuffle = 0.453125 / macro_f1 = 0.4618`
-- `raw8 best step = 32`
-  - `I-real = 0.515625 / macro_f1 = 0.4572`
-  - `flip_gain_vs_shuffle = 8`
-  - `flip_gain_vs_zero = 17`
-- `triad6 final`
-  - `I-real = 0.6875 / macro_f1 = 0.4112`
-  - `I-shuffle = 0.6875 / macro_f1 = 0.6135`
-- `triad6 best step = 32`
-  - `I-real = 0.578125 / macro_f1 = 0.5238`
-  - `flip_gain_vs_shuffle = 16`
-  - `flip_gain_vs_zero = 21`
-
-现在能更准确地下结论了：
-
-- shared injection 已经不是“完全没有 real-memory signal”
-- `triad6 + step32` 已经出现了 `real > shuffle > zero` 的正向内容信号
-- 当前真正的主矛盾是：
-  - support bank 口径会改变 real prefix 的方向
-  - late-step 训练会把已经出现的正信号过冲掉
-
-所以当前下一步不再是“继续证明 prefix 有没有用”，而是：
-
-1. 把 `support variant + checkpoint selection` 做成正式 capability gate
-2. 在这个 gate 站稳后，再考虑更强的主链路注入，比如 `deep prompt / per-layer prefix`
+才进入：
+- `Story Cloze` stress test
+- candidate-conditioned / pair-conditioned injection
+- `Qwen3-8B`

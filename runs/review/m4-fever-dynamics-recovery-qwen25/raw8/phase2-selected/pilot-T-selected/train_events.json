@@ -1,0 +1,20 @@
+{
+  "events": [],
+  "snapshots": [
+    {
+      "accuracy": 0.6885245901639344,
+      "checkpoint_path": "",
+      "dominant_label_fraction": 0.5245901639344263,
+      "macro_f1": 0.6347380156075808,
+      "mean_margin": 0.7818380516694218,
+      "prefix_l2": 0.0,
+      "prefix_slot_norm_max": 0.0,
+      "prefix_slot_norm_mean": 0.0,
+      "prefix_slot_norm_std": 0.0,
+      "prefix_tokens": 0,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-dynamics-recovery-qwen25/raw8/phase2-selected/pilot-T-selected/snapshot_evals/step_0000",
+      "step": 0,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-dynamics-recovery-qwen25/raw8/phase2-selected/pilot-T-selected/snapshot_evals/step_0000/task_case_dump.jsonl"
+    }
+  ]
+}

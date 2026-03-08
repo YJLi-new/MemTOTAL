@@ -1,0 +1,27 @@
+{
+  "best_adapt_macro_f1": 0.1646090534979424,
+  "best_adapt_task_margin": -18.99937301385598,
+  "best_adapt_task_score": 0.32786885245901637,
+  "checkpoint_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-dynamics-recovery-qwen25/raw8/phase2-selected/pilot-I-real/snapshot_evals/step_0064/checkpoint.pt",
+  "dominant_label_fraction": 1.0,
+  "label_recall_by_class": {
+    "NOT_ENOUGH_INFO": 0.0,
+    "REFUTES": 1.0,
+    "SUPPORTS": 0.0
+  },
+  "pilot_arm_alias": "I_real",
+  "prefix_l2": 5794.82861328125,
+  "prefix_slot_norm_max": 2048.78125,
+  "prefix_slot_norm_mean": 2048.78125,
+  "prefix_slot_norm_std": 0.0,
+  "prefix_tokens": 8,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "injected",
+  "step": 64,
+  "support_serialization_variant": "example_blocks_raw8",
+  "support_text_block_chars": 1988,
+  "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-dynamics-recovery-qwen25/raw8/phase2-selected/pilot-I-real/snapshot_evals/step_0064/task_case_dump.jsonl",
+  "task_case_dump_rows": 61,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "real"
+}

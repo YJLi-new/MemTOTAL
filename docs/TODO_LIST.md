@@ -735,18 +735,21 @@ shots × steps 网格尽量在单个 run 内完成，并导出同一个 `adapt_c
   - `Phase 0` 已真实通过：`A_winner=answer_slot_labels`，`T_winner=answer_slot_labels + example_blocks_raw8`
   - `Phase 1 writer audit` 也已通过：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_gate_passed=true`
   - 因而当前已不再适合把问题归因成“prompt/support surface 没修好”或“writer 完全没信息”
-- `M4.1` 的 `Phase 2` 真实 shared injection 已经进入训练与 step 级诊断：
-  - 单看最早一版 stable compare，当前 `A=0.25 / macro_f1=0.2`，`T=0.53125 / macro_f1=0.5294`，`I-real=0.390625 / macro_f1=0.4061`，`I-shuffle=0.546875 / macro_f1=0.5031`，`I-zero=0.25 / macro_f1=0.2`
-  - 这说明 prefix 主链路已经不再是零效应，因为 `I-real > I-zero`
-  - 但它也说明当前 real support latent 方向仍然会被错误 support 反超，因为 `I-shuffle > I-real`
-- `M4.2` 又把 blocker 继续收紧到 `support variant + checkpoint selection`：
-  - `raw8` support 下，`I-real` 在 `step32` 仍能到 `0.515625 / macro_f1=0.4572`，并且 `flip_gain_vs_shuffle=8`、`flip_gain_vs_zero=17`
-  - `triad6` support 下，`I-real` 在 `step32` 已达到 `0.578125 / macro_f1=0.5238`，并且 `flip_gain_vs_shuffle=16`、`flip_gain_vs_zero=21`
-  - 但两条线在 `step64` 都被 `dynamics-audit` 标成 `overshoot_detected=true`
-  - 当前更准确的结论已经变成：shared injection 不是“完全没有 real-memory signal”，而是“已经能出正信号，但默认 support/step 口径会把它毁掉”
-- 因而当前最值得继续的不是回去修 score-side residual family，也不是直接扩 `Story Cloze` / `Qwen3-8B`，而是：
-  - 把 `support variant + checkpoint selection` 做成正式 capability gate
-  - 在这条 gate 站稳后，再升级到更强的主链路注入（如 `deep prompt / per-layer prefix`）
+- `M4.3` 已把这条线推进到预注册 validation 口径：
+  - 训练与选择现在严格分成 `screen248-train / screen248-val / fixed64-test`
+  - `fixed64` 不再参与 step 选择，只在 validation 规则锁定后才允许打开一次
+  - 当前 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示 `selection_passed=false`
+  - 两条 support variant 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`
+  - 但同一时刻都伴随 `regressions_vs_base=18`
+  - 因此本轮没有打开 `fixed64`
+- 这轮新增的主链路 observability 已进一步把 blocker 收紧：
+  - `prefix_attention_consumption.csv` 已证明 frozen Qwen 会消费 prefix，而不是完全忽略
+  - `prefix_norm_drift.csv` 同时显示明显 norm blow-up：`raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`，`triad6 / I-real` 从 `86.66` 升到 `11397.91`
+  - 所以当前更准确的结论已变成：shared injection 已经“可训练但不稳健”，当前主矛盾是 `dynamics stability`，不是“Qwen 会不会读 prefix”
+- 因而当前最值得继续的不是回去修 score-side residual family，也不是直接扩 `Story Cloze / Qwen3-8B`，而是：
+  - 继续把 `shared injection` 当作主线
+  - 优先做 validation 下的 stopping 规则与 dynamics stabilization
+  - 只有 `fixed64` 也稳定出现 `I-real > I-shuffle > I-zero` 后，才升级到更强主链路注入（如 `deep prompt / per-layer prefix`）
 
 ### P0 必须
 - [ ] 接入主套件 benchmark
