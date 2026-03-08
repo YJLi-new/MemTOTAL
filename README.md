@@ -253,10 +253,28 @@
   - 当前问题已经不再是“如何把 Reader/Fuser 接进 active harness”
   - 也还不到“receiver 完全拒收，所以必须立刻动 `k_proj/v_proj`”的阶段
   - 更像是 `M_long -> Reader -> M_short` 这一层自己的表示几何没有立起来：readout 近似均匀、rank 接近 1、compression 过早塌缩
+- 针对这个 `B-1` 解释，最新又补做了一轮 `TL bridge rescue`：
+  - 顶层结果位于：
+    - [bridge-rescue-summary.json](/root/mydir/MemTOTAL/results/generated/review/tl-bridge-rescue-fever-qwen25/bridge-rescue-summary.json)
+    - [bridge-rescue-summary.md](/root/mydir/MemTOTAL/results/generated/review/tl-bridge-rescue-fever-qwen25/bridge-rescue-summary.md)
+  - 实现上新增了两类显式 memory-side geometry 修正：
+    - `MemoryWriter` 在 `support_set` 路径上保留 conditioned slot identity 的 residual (`support_query_residual_scale=1.0`)
+    - 训练期加入 `memory_long / memory_short / reader_attention` diversity regularization
+  - 真实结果仍为：
+    - `comparison_conclusion=failure`
+    - `failure_reason=no_bridge_geometry_gain`
+    - `tl_h4_k8_rescue_selection_passed=false`
+    - `tl_h4_k8_rescue_primary_gate_passed=false`
+  - rescue 没有带来正向几何改善：
+    - `tl_h4_k8_rescue_dominant_label_collapse_onset_step=2`
+    - `tl_h4_k8_rescue_reader_query_entropy_mean=2.0794`
+    - `tl_h4_k8_rescue_reader_query_argmax_unique_mean=0.5885`，低于原始 `TL-H4-K8` 的 `0.6458`
+    - `pilot-I-real` 训练事件里，`memory_long_effective_rank` 从 step1 到 step32 基本始终钉在 `≈1.0`
+    - `reader_attention_pairwise_cosine_mean` 与新增的 `reader_attention_diversity_loss` 也都持续贴着最坏边界 `1.0`
 
 因此，最新最稳妥的判断应更新为：
 
-> shared injection 主线没有破产，但 current single-level objective family 已基本跑到头；同时，两层路径虽然已经正式进入 active FEVER harness，却还没有把 bridge 自己做活。下一步最该修的不是 teacher loss，也不是 receiver，而是 two-level memory path 的 capacity / geometry。
+> shared injection 主线没有破产，但 current single-level objective family 已基本跑到头；同时，两层路径虽然已经正式进入 active FEVER harness，甚至补做了 first bridge-rescue，也还没有把 bridge 自己做活。下一步最该修的不是 teacher loss，也不是 receiver，而是更具体的 `M_long` 写入 / readout geometry。
 
 ## 现在不该做什么
 
@@ -275,10 +293,11 @@
 - 保持 `screen248-test` 为 primary capability gate，`fixed64` 只保留为 legacy report
 - 继续把 `control-safe-hinge` 视为当前 least-collapsed single-level substrate objective
 - 在 two-level path 内优先修 `Failure mode B-1`，而不是 receiver：
-  - 提高 `M_long` 的有效 rank
+  - 优先解决 `M_long` 从 step1 起就接近 rank-1 的写入几何
   - 避免 `Reader` 对 `8` 个 long slots 的近均匀注意力
   - 让 `H=4` 真正出现 query specialization，而不是和 `H=1` 本质等价
   - 避免 `M_short` 在压缩前就塌成近 rank-1
+  - 不再把“再加一点 diversity regularization”当成默认主药；下一轮应更直接地约束 long-slot basis / slot factorization
 - 只有当 two-level FEVER bridge 真正活起来后，才打开：
   - `Stage B/C` transfer refresh
   - `Story Cloze` stress test
@@ -297,6 +316,7 @@
 - [m5-fever-writer-objective-rewrite-qwen25](/root/mydir/MemTOTAL/results/generated/review/m5-fever-writer-objective-rewrite-qwen25)
 - [m5-fever-dense-teacher-qwen25](/root/mydir/MemTOTAL/results/generated/review/m5-fever-dense-teacher-qwen25)
 - [tl-poc-fever-qwen25](/root/mydir/MemTOTAL/results/generated/review/tl-poc-fever-qwen25)
+- [tl-bridge-rescue-fever-qwen25](/root/mydir/MemTOTAL/results/generated/review/tl-bridge-rescue-fever-qwen25)
 - [20260307-m4-shared-injection-brief.md](/root/mydir/MemTOTAL/docs/briefs/20260307-m4-shared-injection-brief.md)
 
 ### 已判死的旧分支

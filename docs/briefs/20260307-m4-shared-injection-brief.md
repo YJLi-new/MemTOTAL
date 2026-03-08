@@ -316,6 +316,20 @@ canonical 设计：
 - 当前已不再是“还没把 two-level path 接进 active FEVER harness”
 - 也还不到“receiver 完全拒收，所以必须立刻做 tiny LoRA / IA3 receptor adaptation”的阶段
 - 更合理的解释是：`M_long -> Reader -> M_short` 这一层自己的读写几何还没立起来，readout 接近均匀、rank 接近 `1`、compression 过早塌缩
+- 针对这个 `B-1` 假设，最新又补做了一轮 `TL bridge rescue`：
+  - 结果位于 `results/generated/review/tl-bridge-rescue-fever-qwen25/`
+  - 新实现显式加入了：
+    - `support_set -> writer` 路径上的 conditioned-slot residual preservation
+    - `memory_long / memory_short / reader_attention` diversity regularization
+  - 顶层结论为：
+    - `comparison_conclusion=failure`
+    - `failure_reason=no_bridge_geometry_gain`
+  - rescue 既没有让 `TL-H4-K8` 通过 selection，也没有延后 collapse onset
+  - `reader_query_argmax_unique_mean` 还从原始 `0.6458` 降到 `0.5885`
+  - `reader_attention_entropy_mean` 仍然贴在 `2.0794≈ln(8)`，`memory_long_effective_rank` 也仍几乎全程 `≈1.0`
+  - 这说明当前解释还可以再收紧一层：
+    - two-level bridge 的 long-slot 写入几何本身就在极早期塌到了近 rank-1 manifold
+    - reader/fuser 看到的不是“有结构的 `M_long`”，而只是一个近均匀可交换的退化槽集
 
 ## 当前最稳妥的解释
 
@@ -352,6 +366,7 @@ canonical 设计：
   - 让 `Reader` 摆脱对 `8` 个 long slots 的近均匀读法
   - 让 `H=4` 真正出现 specialization，而不是与 `H=1` 本质等价
   - 避免 `M_short` 在压缩前就塌成近 rank-1
+  - 不把“更多 diversity regularization”继续当默认主药；下一轮应更直接约束 long-slot basis / factorization
 - 继续增强 observability，重点盯：
   - `memory_long_effective_rank`
   - `memory_short_effective_rank`

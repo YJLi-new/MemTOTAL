@@ -13,6 +13,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_alignment_runs,
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
+    compare_tl_bridge_rescue_runs,
     compare_tl_poc_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
@@ -39,8 +40,10 @@ from memtotal.training.m4_shared_injection import (
     _effective_rank,
     _latent_anchor_loss,
     _prefix_stats,
+    _reader_attention_diversity_loss,
     _scheduled_linear_decay_weight,
     _sample_support_examples_for_training,
+    _slot_diversity_loss,
     _teacher_advantage_weight,
     run_shared_injection_pilot,
 )
@@ -261,6 +264,18 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         entropy = _class_entropy(torch.tensor([1.0, 0.5, -0.2], dtype=torch.float32))
         self.assertGreaterEqual(entropy, 0.0)
 
+    def test_slot_diversity_loss_prefers_distinct_slots(self) -> None:
+        collapsed = torch.tensor([[[1.0, 0.0], [1.0, 0.0]]], dtype=torch.float32)
+        diverse = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        self.assertGreater(float(_slot_diversity_loss(collapsed).item()), 0.5)
+        self.assertLess(float(_slot_diversity_loss(diverse).item()), 0.1)
+
+    def test_reader_attention_diversity_loss_prefers_specialized_queries(self) -> None:
+        identical = torch.tensor([[[0.5, 0.5], [0.5, 0.5]]], dtype=torch.float32)
+        specialized = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        self.assertGreater(float(_reader_attention_diversity_loss(identical).item()), 0.9)
+        self.assertLess(float(_reader_attention_diversity_loss(specialized).item()), 0.1)
+
     def test_latent_anchor_loss_combines_support_and_writer_cosines(self) -> None:
         current_support = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
         current_writer = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
@@ -368,6 +383,28 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         support_states = torch.randn(2, 6, 6)
         memory = writer.write(support_states, input_schema="support_set")
         self.assertEqual(list(memory.shape), [2, 4, 6])
+
+    def test_transformer_writer_support_set_residual_preserves_slot_identity(self) -> None:
+        class ZeroCrossAttention(torch.nn.Module):
+            def forward(self, query, key, value, need_weights=False):
+                return torch.zeros_like(query), None
+
+        writer = MemoryWriter(
+            embed_dim=6,
+            memory_slots=4,
+            arch="transformer",
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+            support_query_residual_scale=1.0,
+        )
+        writer.support_cross_attn = ZeroCrossAttention()
+        writer.encoder = torch.nn.Identity()
+        writer.output_norm = torch.nn.Identity()
+        support_states = torch.zeros(2, 6, 6)
+        memory = writer.write(support_states, input_schema="support_set")
+        self.assertEqual(list(memory.shape), [2, 4, 6])
+        self.assertGreater(float(memory.var(dim=1).sum().item()), 0.0)
 
     def test_mlp_writer_rejects_support_set_mode(self) -> None:
         writer = MemoryWriter(embed_dim=6, memory_slots=4, arch="mlp")
@@ -1629,6 +1666,84 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertTrue(summary["bridge_supported"])
             self.assertTrue(summary["bottleneck_supported"])
             self.assertTrue(summary["specialization_supported"])
+
+    def test_compare_tl_bridge_rescue_runs_reports_informative_when_rescue_improves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_reader_csv(name: str, rows: list[dict[str, object]]) -> Path:
+                path = root / name
+                fieldnames = sorted({key for row in rows for key in row})
+                with path.open("w") as handle:
+                    handle.write(",".join(fieldnames) + "\n")
+                    for row in rows:
+                        handle.write(",".join(str(row.get(field, "")) for field in fieldnames) + "\n")
+                return path
+
+            summary = compare_tl_bridge_rescue_runs(
+                sl8_summary_json=str(
+                    write_payload(
+                        "sl8.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 2,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 8,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_h4_k8_summary_json=str(
+                    write_payload(
+                        "h4k8.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 2,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_h4_k8_rescue_summary_json=str(
+                    write_payload(
+                        "h4k8_rescue.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 4,
+                            "screen248_test_gate_passed": False,
+                            "dominant_label_collapse_onset_step": 8,
+                            "cap_saturation_onset_step": None,
+                        },
+                    )
+                ),
+                tl_h4_k8_reader_query_csv=str(
+                    write_reader_csv(
+                        "h4k8_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.0},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.0},
+                        ],
+                    )
+                ),
+                tl_h4_k8_rescue_reader_query_csv=str(
+                    write_reader_csv(
+                        "h4k8_rescue_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 1.5},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 1, "reader_attention_entropy": 1.4},
+                        ],
+                    )
+                ),
+            )
+            self.assertEqual(summary["comparison_conclusion"], "informative")
+            self.assertTrue(summary["rescue_selection_improved"])
+            self.assertTrue(summary["rescue_reader_specialization_improved"])
 
 
 if __name__ == "__main__":

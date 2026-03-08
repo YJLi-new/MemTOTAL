@@ -1765,6 +1765,16 @@ def _collect_train_event_norm_rows(
                 "alignment_aux_mode": str(event.get("alignment_aux_mode", "off")),
                 "alignment_aux_active": bool(event.get("alignment_aux_active", False)),
                 "alignment_aux_loss": float(event.get("alignment_aux_loss", 0.0)),
+                "memory_long_diversity_loss": float(event.get("memory_long_diversity_loss", 0.0)),
+                "memory_long_diversity_weight": float(event.get("memory_long_diversity_weight", 0.0)),
+                "memory_short_diversity_loss": float(event.get("memory_short_diversity_loss", 0.0)),
+                "memory_short_diversity_weight": float(event.get("memory_short_diversity_weight", 0.0)),
+                "reader_attention_diversity_loss": float(
+                    event.get("reader_attention_diversity_loss", 0.0)
+                ),
+                "reader_attention_diversity_weight": float(
+                    event.get("reader_attention_diversity_weight", 0.0)
+                ),
                 "support_encoder_grad_norm": float(event.get("support_encoder_grad_norm", 0.0)),
                 "prefix_projector_grad_norm": float(event.get("prefix_projector_grad_norm", 0.0)),
                 "reader_grad_norm": float(event.get("reader_grad_norm", 0.0)),
@@ -2702,6 +2712,106 @@ def compare_tl_poc_runs(
         "tl_h4_k8_reader_query_entropy_mean": h4_k8_reader["reader_query_entropy_mean"],
         "tl_h4_k4_reader_query_entropy_mean": h4_k4_reader["reader_query_entropy_mean"],
         "tl_h1_k4_reader_query_entropy_mean": h1_k4_reader["reader_query_entropy_mean"],
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def compare_tl_bridge_rescue_runs(
+    *,
+    sl8_summary_json: str,
+    tl_h4_k8_summary_json: str,
+    tl_h4_k8_rescue_summary_json: str,
+    tl_h4_k8_reader_query_csv: str | None = None,
+    tl_h4_k8_rescue_reader_query_csv: str | None = None,
+) -> dict[str, Any]:
+    sl8 = json.loads(Path(sl8_summary_json).read_text())
+    tl_h4_k8 = json.loads(Path(tl_h4_k8_summary_json).read_text())
+    rescue = json.loads(Path(tl_h4_k8_rescue_summary_json).read_text())
+    baseline_reader = _reader_query_summary(tl_h4_k8_reader_query_csv)
+    rescue_reader = _reader_query_summary(tl_h4_k8_rescue_reader_query_csv)
+
+    rescue_selection_improved = bool(
+        bool(rescue.get("selection_passed", False)) and not bool(tl_h4_k8.get("selection_passed", False))
+    )
+    rescue_primary_gate_improved = bool(
+        bool(rescue.get("screen248_test_gate_passed", False))
+        and not bool(tl_h4_k8.get("screen248_test_gate_passed", False))
+    )
+    rescue_collapse_delayed = bool(
+        _later_onset(
+            rescue.get("dominant_label_collapse_onset_step"),
+            tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            rescue.get("cap_saturation_onset_step"),
+            tl_h4_k8.get("cap_saturation_onset_step"),
+        )
+    )
+    rescue_reader_specialization_improved = bool(
+        rescue_reader["reader_query_argmax_unique_mean"]
+        > baseline_reader["reader_query_argmax_unique_mean"] + 1e-6
+        or rescue_reader["reader_query_entropy_mean"] + 1e-6
+        < baseline_reader["reader_query_entropy_mean"]
+    )
+    rescue_bridge_supported_vs_sl8 = bool(
+        bool(rescue.get("screen248_test_gate_passed", False))
+        or _later_onset(
+            rescue.get("dominant_label_collapse_onset_step"),
+            sl8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            rescue.get("cap_saturation_onset_step"),
+            sl8.get("cap_saturation_onset_step"),
+        )
+    )
+    rescue_improves_over_baseline = bool(
+        rescue_selection_improved
+        or rescue_primary_gate_improved
+        or rescue_collapse_delayed
+        or rescue_reader_specialization_improved
+    )
+    if rescue_primary_gate_improved or (
+        rescue_bridge_supported_vs_sl8 and rescue_improves_over_baseline
+    ):
+        conclusion = "success"
+        failure_reason = ""
+    elif rescue_improves_over_baseline:
+        conclusion = "informative"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        failure_reason = "no_bridge_geometry_gain"
+
+    return {
+        "sl8_selection_passed": bool(sl8.get("selection_passed", False)),
+        "sl8_selected_step": sl8.get("selected_step"),
+        "sl8_primary_gate_passed": bool(sl8.get("screen248_test_gate_passed", False)),
+        "sl8_cap_saturation_onset_step": sl8.get("cap_saturation_onset_step"),
+        "sl8_dominant_label_collapse_onset_step": sl8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_selection_passed": bool(tl_h4_k8.get("selection_passed", False)),
+        "tl_h4_k8_selected_step": tl_h4_k8.get("selected_step"),
+        "tl_h4_k8_primary_gate_passed": bool(tl_h4_k8.get("screen248_test_gate_passed", False)),
+        "tl_h4_k8_cap_saturation_onset_step": tl_h4_k8.get("cap_saturation_onset_step"),
+        "tl_h4_k8_dominant_label_collapse_onset_step": tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_rescue_selection_passed": bool(rescue.get("selection_passed", False)),
+        "tl_h4_k8_rescue_selected_step": rescue.get("selected_step"),
+        "tl_h4_k8_rescue_primary_gate_passed": bool(rescue.get("screen248_test_gate_passed", False)),
+        "tl_h4_k8_rescue_cap_saturation_onset_step": rescue.get("cap_saturation_onset_step"),
+        "tl_h4_k8_rescue_dominant_label_collapse_onset_step": rescue.get(
+            "dominant_label_collapse_onset_step"
+        ),
+        "tl_h4_k8_reader_query_argmax_unique_mean": baseline_reader["reader_query_argmax_unique_mean"],
+        "tl_h4_k8_reader_query_entropy_mean": baseline_reader["reader_query_entropy_mean"],
+        "tl_h4_k8_rescue_reader_query_argmax_unique_mean": rescue_reader[
+            "reader_query_argmax_unique_mean"
+        ],
+        "tl_h4_k8_rescue_reader_query_entropy_mean": rescue_reader["reader_query_entropy_mean"],
+        "rescue_selection_improved": rescue_selection_improved,
+        "rescue_primary_gate_improved": rescue_primary_gate_improved,
+        "rescue_collapse_delayed": rescue_collapse_delayed,
+        "rescue_reader_specialization_improved": rescue_reader_specialization_improved,
+        "rescue_bridge_supported_vs_sl8": rescue_bridge_supported_vs_sl8,
         "comparison_conclusion": conclusion,
         "failure_reason": failure_reason,
     }

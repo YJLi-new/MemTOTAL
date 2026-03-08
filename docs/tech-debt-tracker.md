@@ -9,6 +9,10 @@
   - 为什么 reader attention entropy 稳定停在 `2.0794 ≈ ln(8)`，表现得像对 long slots 的近均匀读法
   - 为什么 `H=4` 没有比 `H=1` 提供更健康的 specialization
   - 当前是否应先修 `Reader/Fuser` 的 memory-side geometry，而不是立即动 receiver
+- `TL bridge rescue` 已对上述 `B-1` 解释做了第一轮更直接的工程检验：最新 `results/generated/review/tl-bridge-rescue-fever-qwen25/bridge-rescue-summary.json` 当前显示 `comparison_conclusion=failure`、`failure_reason=no_bridge_geometry_gain`。这说明当前 top tech debt 已进一步从“是否需要 geometry regularization”收紧成：
+  - 为什么 `support_set -> writer` 保留 conditioned-slot residual 后，`M_long` 仍几乎全程 `≈ rank-1`
+  - 为什么显式 `memory_long / memory_short / reader_attention` diversity regularization 仍被训练动力学压平到最坏边界
+  - 当前更该直接约束的是 `M_long` 的 slot basis / factorization，还是 reader query initialization / temperature
 - `M4.7` structured support-set alignment 已经把“pooled support block 是否就是主瓶颈”和“writer 是否必须可训练”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.json` 显示 `comparison_conclusion=canonical_failed_selection`。当前新的第一优先级 tech debt 不再是“support block 要不要结构化”本身，而是：
   - 为什么 canonical structured path 虽然优于 `freeze-writer / pooled-block`，却仍无法通过 selection
   - 为什么三臂都会从 `step0` 起落在 `dominant_label_fraction=1.0`

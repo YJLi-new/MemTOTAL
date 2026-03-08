@@ -505,6 +505,18 @@ def _resolve_latent_anchor_decay_steps(config: dict[str, Any]) -> int:
     return int(config["runtime"].get("pilot_latent_anchor_decay_steps", 0))
 
 
+def _resolve_memory_long_diversity_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_memory_long_diversity_weight", 0.0))
+
+
+def _resolve_memory_short_diversity_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_memory_short_diversity_weight", 0.0))
+
+
+def _resolve_reader_attention_diversity_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_reader_attention_diversity_weight", 0.0))
+
+
 def _resolve_train_support_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_train_support_mode", "static_support_rows"))
     if mode not in {"static_support_rows", "episode_bank"}:
@@ -1394,6 +1406,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             num_heads=int(writer_cfg.get("num_heads", 4)),
             transformer_layers=int(writer_cfg.get("transformer_layers", 1)),
             dropout=float(writer_cfg.get("dropout", 0.0)),
+            support_query_residual_scale=float(writer_cfg.get("support_query_residual_scale", 0.0)),
         )
         self.memory_path_variant = _resolve_memory_path_variant(config)
         self.injection_mode = _resolve_injection_mode(config)
@@ -2162,6 +2175,32 @@ def _latent_anchor_loss(
     return total_anchor_loss, support_anchor_loss, writer_anchor_loss, support_cosine, writer_cosine
 
 
+def _slot_diversity_loss(slots: torch.Tensor | None) -> torch.Tensor | None:
+    if slots is None or slots.ndim != 3 or slots.shape[1] <= 1:
+        return None
+    normalized = F.normalize(slots.to(dtype=torch.float32), dim=-1)
+    similarity = torch.matmul(normalized, normalized.transpose(1, 2))
+    slot_count = similarity.shape[-1]
+    mask = ~torch.eye(slot_count, dtype=torch.bool, device=similarity.device).unsqueeze(0)
+    off_diag = similarity.masked_select(mask)
+    if off_diag.numel() == 0:
+        return torch.zeros((), dtype=torch.float32, device=slots.device)
+    return torch.mean(off_diag.square())
+
+
+def _reader_attention_diversity_loss(attention: torch.Tensor | None) -> torch.Tensor | None:
+    if attention is None or attention.ndim != 3 or attention.shape[1] <= 1:
+        return None
+    normalized = F.normalize(attention.to(dtype=torch.float32), dim=-1)
+    similarity = torch.matmul(normalized, normalized.transpose(1, 2))
+    query_count = similarity.shape[-1]
+    mask = ~torch.eye(query_count, dtype=torch.bool, device=similarity.device).unsqueeze(0)
+    off_diag = similarity.masked_select(mask)
+    if off_diag.numel() == 0:
+        return torch.zeros((), dtype=torch.float32, device=attention.device)
+    return torch.mean(off_diag)
+
+
 def _grad_norm(module: nn.Module | None) -> float:
     if module is None:
         return 0.0
@@ -2313,6 +2352,9 @@ def run_shared_injection_pilot(
     latent_anchor_weight_start = _resolve_latent_anchor_weight_start(config)
     latent_anchor_weight_end = _resolve_latent_anchor_weight_end(config)
     latent_anchor_decay_steps = _resolve_latent_anchor_decay_steps(config)
+    memory_long_diversity_weight = _resolve_memory_long_diversity_weight(config)
+    memory_short_diversity_weight = _resolve_memory_short_diversity_weight(config)
+    reader_attention_diversity_weight = _resolve_reader_attention_diversity_weight(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
     train_support_dataset_path = str(config["task"].get("train_support_dataset_path", support_dataset_path))
@@ -2711,6 +2753,20 @@ def run_shared_injection_pilot(
                     reference_memory_slots=reference_memory_slots,
                 )
                 loss = loss + (active_latent_anchor_weight * latent_anchor_loss)
+            memory_long_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
+            memory_short_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_short)
+            reader_attention_diversity_loss = _reader_attention_diversity_loss(
+                prefix_artifacts.reader_attention
+            )
+            if memory_long_diversity_weight > 0.0 and memory_long_diversity_loss is not None:
+                loss = loss + (memory_long_diversity_weight * memory_long_diversity_loss)
+            if memory_short_diversity_weight > 0.0 and memory_short_diversity_loss is not None:
+                loss = loss + (memory_short_diversity_weight * memory_short_diversity_loss)
+            if (
+                reader_attention_diversity_weight > 0.0
+                and reader_attention_diversity_loss is not None
+            ):
+                loss = loss + (reader_attention_diversity_weight * reader_attention_diversity_loss)
             active_alignment_aux_weight = _active_competitor_hinge_weight(
                 current_step=step + 1,
                 max_weight=alignment_aux_weight_max,
@@ -2809,6 +2865,24 @@ def run_shared_injection_pilot(
                     "anchor_writer_slot_cosine": (
                         0.0 if anchor_writer_slot_cosine is None else float(anchor_writer_slot_cosine.item())
                     ),
+                    "memory_long_diversity_loss": (
+                        0.0
+                        if memory_long_diversity_loss is None
+                        else float(memory_long_diversity_loss.item())
+                    ),
+                    "memory_long_diversity_weight": float(memory_long_diversity_weight),
+                    "memory_short_diversity_loss": (
+                        0.0
+                        if memory_short_diversity_loss is None
+                        else float(memory_short_diversity_loss.item())
+                    ),
+                    "memory_short_diversity_weight": float(memory_short_diversity_weight),
+                    "reader_attention_diversity_loss": (
+                        0.0
+                        if reader_attention_diversity_loss is None
+                        else float(reader_attention_diversity_loss.item())
+                    ),
+                    "reader_attention_diversity_weight": float(reader_attention_diversity_weight),
                     "train_example_id": str(train_example.example["id"]),
                     "writer_frozen": writer_frozen,
                     "train_support_mode": train_support_mode,
@@ -2962,6 +3036,9 @@ def run_shared_injection_pilot(
         "pilot_projector_token_source": projector_token_source,
         "pilot_support_encoder_mode": support_encoder_mode,
         "pilot_trainable_variant": trainable_variant,
+        "pilot_writer_support_query_residual_scale": float(
+            config["method"].get("writer", {}).get("support_query_residual_scale", 0.0)
+        ),
         "pilot_alignment_aux_mode": alignment_aux_mode,
         "pilot_alignment_aux_weight": alignment_aux_weight_max,
         "pilot_alignment_aux_weight_max": alignment_aux_weight_max,
@@ -3018,6 +3095,9 @@ def run_shared_injection_pilot(
         "pilot_latent_anchor_weight_start": latent_anchor_weight_start,
         "pilot_latent_anchor_weight_end": latent_anchor_weight_end,
         "pilot_latent_anchor_decay_steps": latent_anchor_decay_steps,
+        "pilot_memory_long_diversity_weight": memory_long_diversity_weight,
+        "pilot_memory_short_diversity_weight": memory_short_diversity_weight,
+        "pilot_reader_attention_diversity_weight": reader_attention_diversity_weight,
         "pilot_gradient_clip_norm": gradient_clip_norm,
         "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
         "pilot_prefix_total_max_norm": float(config["runtime"].get("pilot_prefix_total_max_norm", 0.0)),
@@ -3041,6 +3121,15 @@ def run_shared_injection_pilot(
         ),
         "train_final_anchor_writer_slot_cosine": (
             train_events[-1]["anchor_writer_slot_cosine"] if train_events else None
+        ),
+        "train_final_memory_long_diversity_loss": (
+            train_events[-1]["memory_long_diversity_loss"] if train_events else None
+        ),
+        "train_final_memory_short_diversity_loss": (
+            train_events[-1]["memory_short_diversity_loss"] if train_events else None
+        ),
+        "train_final_reader_attention_diversity_loss": (
+            train_events[-1]["reader_attention_diversity_loss"] if train_events else None
         ),
         "train_final_alignment_aux_loss": train_events[-1]["alignment_aux_loss"] if train_events else None,
         "train_final_teacher_margin_aux_loss": (

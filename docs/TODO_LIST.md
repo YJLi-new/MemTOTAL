@@ -27,12 +27,15 @@
 - `Workstream B / TL-PoC` 已真实跑完，但 `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 三条两层路径都没有通过 `screen248-val` selection。
 - 当前结果位于 `results/generated/review/tl-poc-fever-qwen25/`。
 - 当前最优先问题已经不再是“Reader/Fuser 还没进 active harness”，因为两层路径现在已经完整走通了训练、dynamics、selection、gate 和 review 发布。
+- `TL bridge rescue` 也已真实跑完，结果位于 `results/generated/review/tl-bridge-rescue-fever-qwen25/`。
+- 这轮显式加入了 `support_query_residual_scale=1.0` 与 `memory_long / memory_short / reader_attention diversity regularization`，但顶层 `bridge-rescue-summary.json` 仍记录 `comparison_conclusion=failure`、`failure_reason=no_bridge_geometry_gain`。
 - 当前新的第一主因更像 `PLAN.md` 里的 `Failure mode B-1 / memory-side capacity-geometry problem`：
   - 为什么 `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 的末步 `memory_long_effective_rank` 都仍接近 `1.0`
   - 为什么 `memory_short_effective_rank` 也只停在约 `1.1-1.2`
   - 为什么 reader attention entropy 维持在 `2.0794 ≈ ln(8)`，表现得像对 `8` 个 long slots 的近均匀读法
   - 为什么 `H=4` 没有比 `H=1` 表现出更强的 query specialization
   - 为什么 `SL-8` 还能在 `screen248-val` 选出 `step2`，而当前 two-level bridge 连 selection 都活不起来
+  - 为什么连 residual-preserving writer + explicit diversity regularization 也仍然无法把 `M_long` 从近 rank-1 manifold 拉出来
 
 ---
 

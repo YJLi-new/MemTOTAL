@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/tl_bridge_rescue_fever_qwen25_dynamics_recovery_h4_k8.yaml",
+    "--seed",
+    "19191",
+    "--output_dir",
+    "/root/autodl-tmp/results/generated/tl-bridge-rescue-fever-qwen25/tl-h4-k8-rescue/dynamics-recovery",
+    "--input_root",
+    "/root/autodl-tmp/runs/verify/tl-bridge-rescue-fever-qwen25/tl-h4-k8-rescue"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "tl_bridge_rescue_fever_qwen25_dynamics_recovery_h4_k8",
+  "git_hash": "337b8c722b68800793935d361966c8779ab8dc79",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-tl-bridge-rescue-dynamics-h4-k8",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 19191,
+  "smoke_subset": "real_screen_val_m46_canonical",
+  "stage": "TL-Bridge-Rescue",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_val_m46_canonical",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-08T16:30:34.686759+00:00",
+  "torch_version": "2.8.0+cu128"
+}

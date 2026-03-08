@@ -1,0 +1,6 @@
+includes:
+  - memory_bootstrap_transformer_real_twolevel_h4_k8.yaml
+
+method:
+  writer:
+    support_query_residual_scale: 1.0

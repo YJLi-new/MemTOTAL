@@ -15,6 +15,8 @@ sync_dir() {
   rsync -a \
     --exclude='*.pt' \
     --exclude='*.ckpt' \
+    --exclude='snapshot_evals/' \
+    --exclude='task_case_dump.jsonl' \
     "${src}/" "${dst}/"
 }
 
@@ -71,6 +73,12 @@ sync_first_available "runs/review/m5-fever-writer-objective-rewrite-qwen25" \
 sync_first_available "runs/review/m5-fever-dense-teacher-qwen25" \
   "runs/verify/m5-fever-dense-teacher-qwen25" \
   "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25"
+sync_first_available "runs/review/tl-poc-fever-qwen25" \
+  "runs/verify/tl-poc-fever-qwen25" \
+  "/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25"
+sync_first_available "runs/review/tl-bridge-rescue-fever-qwen25" \
+  "runs/verify/tl-bridge-rescue-fever-qwen25" \
+  "/root/autodl-tmp/runs/verify/tl-bridge-rescue-fever-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -99,6 +107,12 @@ sync_first_available "results/generated/review/m5-fever-writer-objective-rewrite
 sync_first_available "results/generated/review/m5-fever-dense-teacher-qwen25" \
   "results/generated/m5-fever-dense-teacher-qwen25" \
   "/root/autodl-tmp/results/generated/m5-fever-dense-teacher-qwen25"
+sync_first_available "results/generated/review/tl-poc-fever-qwen25" \
+  "results/generated/tl-poc-fever-qwen25" \
+  "/root/autodl-tmp/results/generated/tl-poc-fever-qwen25"
+sync_first_available "results/generated/review/tl-bridge-rescue-fever-qwen25" \
+  "results/generated/tl-bridge-rescue-fever-qwen25" \
+  "/root/autodl-tmp/results/generated/tl-bridge-rescue-fever-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

@@ -1,0 +1,17 @@
+includes:
+  - m5_fever_qwen25_phase2_val_objective_dense_teacher_control_common.yaml
+  - ../method/memory_bootstrap_transformer_real_twolevel_h4_k8_bridge_rescue.yaml
+
+experiment:
+  name: tl_bridge_rescue_fever_qwen25_h4_k8
+  stage: TL-Bridge-Rescue
+  method_variant: fever-tl-bridge-rescue-h4-k8
+
+runtime:
+  pilot_memory_path_variant: two_level
+  pilot_reader_context_mode: prompt_summary
+  pilot_projector_token_source: short_slots
+  pilot_memory_long_diversity_weight: 0.02
+  pilot_memory_short_diversity_weight: 0.02
+  pilot_reader_attention_diversity_weight: 0.01
+  pilot_init_checkpoint_path: runs/review/tl-poc-fever-qwen25/sl8/phase2-selected/pilot-I-real/snapshot_evals/step_0002/checkpoint.pt

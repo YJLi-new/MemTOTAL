@@ -462,6 +462,18 @@
     - 当前不再是“Reader/Fuser 还没接进 active FEVER harness”
     - 也还不到“receiver 一定要解冻”的阶段
     - 更合理的 next step 是先修 two-level memory path 的 capacity / geometry，再谈 transfer refresh 或 receiver fallback
+  - `TL bridge rescue` 又在现有 two-level path 上补了一层更直接的 geometry 尝试：
+    - `MemoryWriter.write(..., input_schema=support_set)` 现在支持 `support_query_residual_scale`，可把 conditioned writer slots 残差保留到 `M_long`
+    - 训练期新增 `memory_long_diversity_loss`、`memory_short_diversity_loss`、`reader_attention_diversity_loss`
+  - 但最新 `results/generated/review/tl-bridge-rescue-fever-qwen25/bridge-rescue-summary.json` 仍记录：
+    - `comparison_conclusion=failure`
+    - `failure_reason=no_bridge_geometry_gain`
+    - `tl_h4_k8_rescue_selection_passed=false`
+    - `tl_h4_k8_rescue_reader_query_entropy_mean≈2.0794`
+  - 因而：
+    - 当前 bottleneck 已更具体地收缩到 long-slot write/read geometry
+    - “再加一点 regularization”本身不是充分条件
+    - receiver fallback 仍然不该先于更直接的 memory-side factorization / basis constraints
 
 ## M3 Failure Checks
 

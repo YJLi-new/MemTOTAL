@@ -52,11 +52,13 @@ class MemoryWriter(ManagedMemoryModule):
         num_heads: int = 4,
         transformer_layers: int = 1,
         dropout: float = 0.0,
+        support_query_residual_scale: float = 0.0,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.memory_slots = memory_slots
         self.arch = arch
+        self.support_query_residual_scale = float(support_query_residual_scale)
         hidden_dim = hidden_dim or (2 * embed_dim)
         if arch == "mlp":
             self.proj = nn.Sequential(
@@ -131,7 +133,8 @@ class MemoryWriter(ManagedMemoryModule):
             value=state,
             need_weights=False,
         )
-        return self.output_norm(self.encoder(attended_slots))
+        support_slots = attended_slots + (self.support_query_residual_scale * conditioned_slots)
+        return self.output_norm(self.encoder(support_slots))
 
 
 class MemoryReader(ManagedMemoryModule):
