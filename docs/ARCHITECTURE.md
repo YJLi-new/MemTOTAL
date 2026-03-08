@@ -17,6 +17,7 @@
 - `scripts/run_m4_fever_anti_shortcut_recovery_qwen25.sh`: `M4.6` 的 anti-shortcut recovery 入口，会先构建 `32` 个 `2/2/2` train triad episodes 和 `screen-val / screen248-test / heldout A/B` support banks，再并排跑 `Run A=episode_bank` 与 `Run B=static triad6`，最后生成 top-level anti-shortcut comparison
 - `scripts/run_m4_fever_alignment_qwen25.sh`: `M4.7` 的 structured support-set alignment 入口，会并排跑 `canonical / freeze-writer / pooled-block` 三臂，并生成 top-level alignment summary
 - `scripts/run_m5_fever_alignment_qwen25.sh`: `M5.1` 的 same-schema warm-start alignment 入口，会写出 `warm_start_manifest.json`，再并排跑 `canonical / freeze-writer / pooled-block` 三臂 continuation，并生成 top-level `success / ambiguous_pass / failure` summary
+- `scripts/run_m5_fever_objective_rewrite_qwen25.sh`: `M5.2` 的 writer objective rewrite 入口，会写出 `warm_start_manifest.json`，再并排跑 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂 continuation，并生成 top-level objective summary
 - `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
 - `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
 - `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
@@ -41,6 +42,7 @@
 - `scripts/update_m4_anti_shortcut_summary.py`: 汇总 `Run A vs Run B` 的 anti-shortcut comparison，并生成 `anti-shortcut-comparison.{json,md}`
 - `scripts/update_m4_alignment_summary.py`: 汇总 `canonical / freeze-writer / pooled-block` 三臂 alignment 结果，并生成 `alignment-summary.{json,md}`
 - `scripts/update_m5_alignment_summary.py`: 汇总 `M5.1` 三臂 continuation 结果，并生成 `alignment-summary.{json,md}`
+- `scripts/update_m5_objective_summary.py`: 汇总 `M5.2` 三臂 objective rewrite 结果，并生成 `objective-summary.{json,md}`
 - `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
 - `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
 - `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
@@ -257,7 +259,7 @@
 - `M4.7` 还新增了两条训练语义开关：
   - `runtime.pilot_trainable_variant in {full, projector_only}`
   - `runtime.pilot_alignment_aux_mode in {off, teacher_margin}`
-  - 当前真实主跑固定 `teacher_margin=off`，只保留 dormant hook，不进入 canonical 主矩阵
+  - `M5.1` 真实主跑固定 `teacher_margin=off`；`M5.2` 又把它放进 canonical objective，但 fresh run 显示 hook 仍然全程 dormant
 - `M4.6` 又在训练侧补了一层 support-source 解耦：
   - `task.support_dataset_path` 继续表示 eval-time 单个 support bank
   - `task.train_support_dataset_path` 允许 train-time 静态 support rows
@@ -368,6 +370,29 @@
     - same-schema warm-start 已不再是主要未知量
     - 当前 blocker 已进一步收紧成 `writer objective`
     - 下一步应进入 `M5.2 writer objective rewrite under shared injection`
+- `M5.2` 当前又把主线推进到 writer objective rewrite：
+  - continuation 三臂固定为：
+    - `task-only-control`
+    - `anchor-only`
+    - `canonical(anchor+teacher_margin)`
+  - 训练侧新增：
+    - `runtime.pilot_latent_anchor_weight_{start,end}`
+    - `runtime.pilot_latent_anchor_decay_steps`
+    - `runtime.pilot_alignment_aux_weight_max`
+    - `runtime.pilot_alignment_aux_start_step`
+    - `runtime.pilot_alignment_aux_ramp_steps`
+    - `runtime.pilot_alignment_aux_apply_only_to_real_memory`
+  - `build_prefix_artifacts(...)` 现会额外暴露：
+    - `memory_slots`
+    - `support_item_states`
+    供 writer-side latent anchor 使用
+  - fresh canonical run 仍然 `selection_passed=false`
+  - `anchor-only` 已证明 latent anchor 能保住 warm-start 流形，但单靠保流形仍然不够
+  - canonical 的 `teacher_margin` hook 在 `32` 个训练 step 中 `aux_active=0`
+  - 因而：
+    - 当前并不是“teacher signal 已尝试且无效”
+    - 而是“current teacher hook 太 dormant，还没有真正介入 writer-side alignment”
+    - 下一步应进入 `M5.3 engaged teacher-aided objective under shared injection`
 
 ## M3 Failure Checks
 

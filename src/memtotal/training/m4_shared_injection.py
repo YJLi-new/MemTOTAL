@@ -45,6 +45,8 @@ class PrefixInjectionArtifacts:
     prefix_embeddings: torch.Tensor | None
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None
     prefix_stats: dict[str, Any]
+    memory_slots: torch.Tensor | None = None
+    support_item_states: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -379,8 +381,22 @@ def _resolve_alignment_aux_mode(config: dict[str, Any]) -> str:
     return mode
 
 
-def _resolve_alignment_aux_weight(config: dict[str, Any]) -> float:
+def _resolve_alignment_aux_weight_max(config: dict[str, Any]) -> float:
+    if "pilot_alignment_aux_weight_max" in config["runtime"]:
+        return float(config["runtime"].get("pilot_alignment_aux_weight_max", 0.0))
     return float(config["runtime"].get("pilot_alignment_aux_weight", 0.0))
+
+
+def _resolve_alignment_aux_start_step(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_alignment_aux_start_step", 0))
+
+
+def _resolve_alignment_aux_ramp_steps(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_alignment_aux_ramp_steps", 0))
+
+
+def _resolve_alignment_aux_apply_only_to_real_memory(config: dict[str, Any]) -> bool:
+    return bool(config["runtime"].get("pilot_alignment_aux_apply_only_to_real_memory", False))
 
 
 def _resolve_init_checkpoint_path(config: dict[str, Any]) -> str:
@@ -402,6 +418,18 @@ def _resolve_competitor_hinge_start_step(config: dict[str, Any]) -> int:
 
 def _resolve_competitor_hinge_ramp_steps(config: dict[str, Any]) -> int:
     return int(config["runtime"].get("pilot_competitor_hinge_ramp_steps", 0))
+
+
+def _resolve_latent_anchor_weight_start(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_latent_anchor_weight_start", 0.0))
+
+
+def _resolve_latent_anchor_weight_end(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_latent_anchor_weight_end", 0.0))
+
+
+def _resolve_latent_anchor_decay_steps(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_latent_anchor_decay_steps", 0))
 
 
 def _resolve_train_support_mode(config: dict[str, Any]) -> str:
@@ -777,6 +805,21 @@ def _active_competitor_hinge_weight(
     return float(capped_weight * progress)
 
 
+def _scheduled_linear_decay_weight(
+    *,
+    current_step: int,
+    start_weight: float,
+    end_weight: float,
+    decay_steps: int,
+) -> float:
+    start = float(start_weight)
+    end = float(end_weight)
+    if decay_steps <= 1:
+        return end
+    progress = min(1.0, max(0.0, float(current_step - 1)) / float(decay_steps - 1))
+    return float(start + ((end - start) * progress))
+
+
 def _fever_candidate_texts(prompt_variant: str) -> tuple[list[str], list[str]]:
     labels = list(FEVER_LABEL_ORDER)
     if prompt_variant == "inline_short_labels":
@@ -1064,7 +1107,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.support_encoder_mode = _resolve_support_encoder_mode(config)
         self.trainable_variant = _resolve_trainable_variant(config)
         self.alignment_aux_mode = _resolve_alignment_aux_mode(config)
-        self.alignment_aux_weight = _resolve_alignment_aux_weight(config)
+        self.alignment_aux_weight_max = _resolve_alignment_aux_weight_max(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
         self.support_serialization_variant = _resolve_support_serialization_variant(config)
         self.support_encoder: StructuredSupportSetEncoder | None = None
@@ -1277,6 +1320,8 @@ class SharedInjectionPilotRuntime(nn.Module):
                 prefix_embeddings=prefix_embeddings,
                 layer_prefix_hidden_by_layer=None,
                 prefix_stats=prefix_stats,
+                memory_slots=memory_slots,
+                support_item_states=support_item_states,
             )
         layer_prefix_hidden_by_layer = self.prefix_projector(memory_slots)
         prefix_stats = _prefix_stats(
@@ -1292,6 +1337,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             prefix_embeddings=None,
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
             prefix_stats=prefix_stats,
+            memory_slots=memory_slots,
+            support_item_states=support_item_states,
         )
 
     def score_example(
@@ -1380,6 +1427,80 @@ def _alignment_aux_loss(
     target = torch.tensor(teacher_margin, dtype=torch.float32, device=active_scores.device)
     aux_loss = F.smooth_l1_loss(_score_margin_tensor(active_scores, gold_index), target)
     return aux_loss, True
+
+
+def _cosine_anchor_loss(
+    current: torch.Tensor,
+    reference: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if tuple(current.shape) != tuple(reference.shape):
+        raise ValueError(
+            f"Anchor tensors must share the same shape, got current={tuple(current.shape)} "
+            f"and reference={tuple(reference.shape)}."
+        )
+    current_flat = current.reshape(current.shape[0], -1)
+    reference_flat = reference.reshape(reference.shape[0], -1)
+    cosine = F.cosine_similarity(current_flat, reference_flat, dim=1).mean()
+    return 1.0 - cosine, cosine
+
+
+def _reference_latent_targets(
+    *,
+    runtime: "SharedInjectionPilotRuntime",
+    reference_support_encoder: nn.Module | None,
+    reference_writer: MemoryWriter,
+    support_text_block: str,
+    support_rows: list[dict[str, Any]] | None,
+) -> tuple[torch.Tensor | None, torch.Tensor]:
+    if runtime.writer_memory_control == "zero":
+        reference_memory_slots = torch.zeros(
+            1,
+            int(reference_writer.memory_slots),
+            runtime.backbone.hidden_size,
+            dtype=torch.float32,
+            device=runtime.backbone.device,
+        )
+        return None, reference_memory_slots
+    if runtime.support_encoder_mode == "structured_support_set":
+        if not support_rows:
+            raise ValueError("Latent anchor reference requires support_rows for structured support-set mode.")
+        if reference_support_encoder is None:
+            raise RuntimeError("Structured latent anchor reference requires reference_support_encoder.")
+        support_row_texts = _serialize_support_rows(
+            support_rows,
+            support_serialization_variant=runtime.support_serialization_variant,
+        )
+        support_item_states = runtime.backbone.summarize_texts(support_row_texts).unsqueeze(0)
+        encoded_support_states = reference_support_encoder(
+            support_item_states,
+            _support_label_ids(support_rows, device=runtime.backbone.device),
+        )
+        reference_memory_slots = reference_writer.write(
+            encoded_support_states,
+            input_schema="support_set",
+        )
+        return encoded_support_states, reference_memory_slots
+    support_state = runtime.backbone.summarize_texts([support_text_block])
+    reference_memory_slots = reference_writer.write(support_state, input_schema="pooled_state")
+    return None, reference_memory_slots
+
+
+def _latent_anchor_loss(
+    *,
+    current_support_states: torch.Tensor | None,
+    reference_support_states: torch.Tensor | None,
+    current_memory_slots: torch.Tensor | None,
+    reference_memory_slots: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if current_memory_slots is None or reference_memory_slots is None:
+        raise ValueError("Latent anchor loss requires current and reference memory slots.")
+    writer_anchor_loss, writer_cosine = _cosine_anchor_loss(current_memory_slots, reference_memory_slots)
+    if current_support_states is None or reference_support_states is None:
+        zero = torch.zeros((), dtype=writer_anchor_loss.dtype, device=writer_anchor_loss.device)
+        return writer_anchor_loss, zero, writer_anchor_loss, zero, writer_cosine
+    support_anchor_loss, support_cosine = _cosine_anchor_loss(current_support_states, reference_support_states)
+    total_anchor_loss = 0.5 * support_anchor_loss + 0.5 * writer_anchor_loss
+    return total_anchor_loss, support_anchor_loss, writer_anchor_loss, support_cosine, writer_cosine
 
 
 def _grad_norm(module: nn.Module | None) -> float:
@@ -1495,7 +1616,10 @@ def run_shared_injection_pilot(
     support_encoder_mode = _resolve_support_encoder_mode(config)
     trainable_variant = _resolve_trainable_variant(config)
     alignment_aux_mode = _resolve_alignment_aux_mode(config)
-    alignment_aux_weight = _resolve_alignment_aux_weight(config)
+    alignment_aux_weight_max = _resolve_alignment_aux_weight_max(config)
+    alignment_aux_start_step = _resolve_alignment_aux_start_step(config)
+    alignment_aux_ramp_steps = _resolve_alignment_aux_ramp_steps(config)
+    alignment_aux_apply_only_to_real_memory = _resolve_alignment_aux_apply_only_to_real_memory(config)
     init_checkpoint_path = _resolve_init_checkpoint_path(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
@@ -1504,6 +1628,9 @@ def run_shared_injection_pilot(
     competitor_hinge_weight_max = _resolve_competitor_hinge_weight_max(config)
     competitor_hinge_start_step = _resolve_competitor_hinge_start_step(config)
     competitor_hinge_ramp_steps = _resolve_competitor_hinge_ramp_steps(config)
+    latent_anchor_weight_start = _resolve_latent_anchor_weight_start(config)
+    latent_anchor_weight_end = _resolve_latent_anchor_weight_end(config)
+    latent_anchor_decay_steps = _resolve_latent_anchor_decay_steps(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
     train_support_dataset_path = str(config["task"].get("train_support_dataset_path", support_dataset_path))
@@ -1613,6 +1740,24 @@ def run_shared_injection_pilot(
             runtime.load_injection_checkpoint(init_checkpoint_path)
         if injection_checkpoint_path:
             runtime.load_injection_checkpoint(injection_checkpoint_path)
+    reference_support_encoder: nn.Module | None = None
+    reference_writer: MemoryWriter | None = None
+    latent_anchor_enabled = bool(
+        arm == "injected"
+        and writer_memory_control != "zero"
+        and (
+            abs(float(latent_anchor_weight_start)) > 0.0
+            or abs(float(latent_anchor_weight_end)) > 0.0
+        )
+    )
+    if latent_anchor_enabled:
+        reference_writer = copy.deepcopy(runtime.writer).eval()
+        for parameter in reference_writer.parameters():
+            parameter.requires_grad_(False)
+        if runtime.support_encoder is not None:
+            reference_support_encoder = copy.deepcopy(runtime.support_encoder).eval()
+            for parameter in reference_support_encoder.parameters():
+                parameter.requires_grad_(False)
 
     profiler = ProfileTracker(
         output_dir=output_dir,
@@ -1823,9 +1968,58 @@ def run_shared_injection_pilot(
                 ce_weight=choice_ce_weight,
                 competitor_hinge_weight=active_competitor_hinge_weight,
             )
-            aux_loss = None
-            aux_active = False
-            if alignment_aux_mode != "off" and alignment_aux_weight > 0.0:
+            active_latent_anchor_weight = _scheduled_linear_decay_weight(
+                current_step=step + 1,
+                start_weight=latent_anchor_weight_start,
+                end_weight=latent_anchor_weight_end,
+                decay_steps=latent_anchor_decay_steps,
+            )
+            latent_anchor_loss = None
+            support_anchor_loss = None
+            writer_anchor_loss = None
+            anchor_support_cosine = None
+            anchor_writer_slot_cosine = None
+            if (
+                active_latent_anchor_weight > 0.0
+                and reference_writer is not None
+            ):
+                with torch.no_grad():
+                    reference_support_states, reference_memory_slots = _reference_latent_targets(
+                        runtime=runtime,
+                        reference_support_encoder=reference_support_encoder,
+                        reference_writer=reference_writer,
+                        support_text_block=masked_support_text_block,
+                        support_rows=masked_support_rows_for_prefix,
+                    )
+                (
+                    latent_anchor_loss,
+                    support_anchor_loss,
+                    writer_anchor_loss,
+                    anchor_support_cosine,
+                    anchor_writer_slot_cosine,
+                ) = _latent_anchor_loss(
+                    current_support_states=prefix_artifacts.support_item_states,
+                    reference_support_states=reference_support_states,
+                    current_memory_slots=prefix_artifacts.memory_slots,
+                    reference_memory_slots=reference_memory_slots,
+                )
+                loss = loss + (active_latent_anchor_weight * latent_anchor_loss)
+            teacher_margin_aux_loss = None
+            teacher_margin_aux_active = False
+            active_alignment_aux_weight = _active_competitor_hinge_weight(
+                current_step=step + 1,
+                max_weight=alignment_aux_weight_max,
+                start_step=alignment_aux_start_step,
+                ramp_steps=alignment_aux_ramp_steps,
+            )
+            alignment_aux_allowed = not (
+                alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
+            )
+            if (
+                alignment_aux_mode != "off"
+                and alignment_aux_allowed
+                and active_alignment_aux_weight > 0.0
+            ):
                 with torch.no_grad():
                     base_scores = runtime.backbone.score_continuations(
                         train_example.prompt_text,
@@ -1835,15 +2029,15 @@ def run_shared_injection_pilot(
                         _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
                         train_example.candidate_texts,
                     )
-                aux_loss, aux_active = _alignment_aux_loss(
+                teacher_margin_aux_loss, teacher_margin_aux_active = _alignment_aux_loss(
                     mode=alignment_aux_mode,
                     active_scores=scores,
                     base_scores=base_scores,
                     teacher_scores=teacher_scores,
                     gold_index=train_example.gold_index,
                 )
-                if aux_loss is not None:
-                    loss = loss + (alignment_aux_weight * aux_loss)
+                if teacher_margin_aux_loss is not None:
+                    loss = loss + (active_alignment_aux_weight * teacher_margin_aux_loss)
             loss.backward()
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
@@ -1877,6 +2071,22 @@ def run_shared_injection_pilot(
                     "choice_ce_loss": float(choice_ce_loss.item()),
                     "competitor_hinge_loss": float(competitor_hinge_loss.item()),
                     "active_competitor_hinge_weight": float(active_competitor_hinge_weight),
+                    "latent_anchor_loss": (
+                        0.0 if latent_anchor_loss is None else float(latent_anchor_loss.item())
+                    ),
+                    "latent_anchor_weight": float(active_latent_anchor_weight),
+                    "support_anchor_loss": (
+                        0.0 if support_anchor_loss is None else float(support_anchor_loss.item())
+                    ),
+                    "writer_anchor_loss": (
+                        0.0 if writer_anchor_loss is None else float(writer_anchor_loss.item())
+                    ),
+                    "anchor_support_cosine": (
+                        0.0 if anchor_support_cosine is None else float(anchor_support_cosine.item())
+                    ),
+                    "anchor_writer_slot_cosine": (
+                        0.0 if anchor_writer_slot_cosine is None else float(anchor_writer_slot_cosine.item())
+                    ),
                     "train_example_id": str(train_example.example["id"]),
                     "writer_frozen": writer_frozen,
                     "train_support_mode": train_support_mode,
@@ -1888,8 +2098,15 @@ def run_shared_injection_pilot(
                     "pilot_support_encoder_mode": support_encoder_mode,
                     "pilot_trainable_variant": trainable_variant,
                     "alignment_aux_mode": alignment_aux_mode,
-                    "alignment_aux_active": bool(aux_active),
-                    "alignment_aux_loss": 0.0 if aux_loss is None else float(aux_loss.item()),
+                    "alignment_aux_active": bool(teacher_margin_aux_active),
+                    "alignment_aux_loss": (
+                        0.0 if teacher_margin_aux_loss is None else float(teacher_margin_aux_loss.item())
+                    ),
+                    "teacher_margin_aux_loss": (
+                        0.0 if teacher_margin_aux_loss is None else float(teacher_margin_aux_loss.item())
+                    ),
+                    "teacher_margin_aux_weight": float(active_alignment_aux_weight),
+                    "teacher_margin_aux_active": bool(teacher_margin_aux_active),
                     "support_encoder_grad_norm": support_encoder_grad_norm,
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
                     "writer_grad_norm": writer_grad_norm,
@@ -1974,7 +2191,11 @@ def run_shared_injection_pilot(
         "pilot_support_encoder_mode": support_encoder_mode,
         "pilot_trainable_variant": trainable_variant,
         "pilot_alignment_aux_mode": alignment_aux_mode,
-        "pilot_alignment_aux_weight": alignment_aux_weight,
+        "pilot_alignment_aux_weight": alignment_aux_weight_max,
+        "pilot_alignment_aux_weight_max": alignment_aux_weight_max,
+        "pilot_alignment_aux_start_step": alignment_aux_start_step,
+        "pilot_alignment_aux_ramp_steps": alignment_aux_ramp_steps,
+        "pilot_alignment_aux_apply_only_to_real_memory": alignment_aux_apply_only_to_real_memory,
         "pilot_init_checkpoint_path": "" if not init_checkpoint_path else str(Path(init_checkpoint_path).resolve()),
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
@@ -2019,6 +2240,9 @@ def run_shared_injection_pilot(
         "pilot_competitor_hinge_weight_max": competitor_hinge_weight_max,
         "pilot_competitor_hinge_start_step": competitor_hinge_start_step,
         "pilot_competitor_hinge_ramp_steps": competitor_hinge_ramp_steps,
+        "pilot_latent_anchor_weight_start": latent_anchor_weight_start,
+        "pilot_latent_anchor_weight_end": latent_anchor_weight_end,
+        "pilot_latent_anchor_decay_steps": latent_anchor_decay_steps,
         "pilot_gradient_clip_norm": gradient_clip_norm,
         "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
         "pilot_prefix_total_max_norm": float(config["runtime"].get("pilot_prefix_total_max_norm", 0.0)),
@@ -2033,7 +2257,23 @@ def run_shared_injection_pilot(
         "train_final_active_competitor_hinge_weight": (
             train_events[-1]["active_competitor_hinge_weight"] if train_events else None
         ),
+        "train_final_latent_anchor_loss": train_events[-1]["latent_anchor_loss"] if train_events else None,
+        "train_final_latent_anchor_weight": train_events[-1]["latent_anchor_weight"] if train_events else None,
+        "train_final_support_anchor_loss": train_events[-1]["support_anchor_loss"] if train_events else None,
+        "train_final_writer_anchor_loss": train_events[-1]["writer_anchor_loss"] if train_events else None,
+        "train_final_anchor_support_cosine": (
+            train_events[-1]["anchor_support_cosine"] if train_events else None
+        ),
+        "train_final_anchor_writer_slot_cosine": (
+            train_events[-1]["anchor_writer_slot_cosine"] if train_events else None
+        ),
         "train_final_alignment_aux_loss": train_events[-1]["alignment_aux_loss"] if train_events else None,
+        "train_final_teacher_margin_aux_loss": (
+            train_events[-1]["teacher_margin_aux_loss"] if train_events else None
+        ),
+        "train_final_teacher_margin_aux_weight": (
+            train_events[-1]["teacher_margin_aux_weight"] if train_events else None
+        ),
         "checkpoint_path": str(checkpoint_path.resolve()) if checkpoint_path.exists() else "",
         "pilot_checkpoint_path": "" if not injection_checkpoint_path else str(Path(injection_checkpoint_path).resolve()),
         "prefix_artifact_stats": final_prefix_stats,

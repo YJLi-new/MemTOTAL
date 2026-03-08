@@ -20,7 +20,7 @@
 - `Phase 1` 已通过：当前 writer family 产出的 latent 不是“完全没信息”
 - `Phase 2` 不论 shallow 还是 deep path，都已经出现过非零 main-chain consumption 与局部 `I_real > I_shuffle / I_zero` 信号
 - `M4.7` 的 structured support-set alignment 已真实跑完：`canonical / freeze-writer / pooled-block` 三臂都没有通过 selection，但 canonical structured path 的最佳点明显强于两个 ablation
-- `M5.1` 的 same-schema warm-start + task-first `CE + delayed hinge` 也已真实跑完：仍然没有通过 selection，但已经把下一步进一步收缩成 `writer objective rewrite`
+- `M5.1` 的 same-schema warm-start + task-first `CE + delayed hinge` 已真实跑完；随后 `M5.2` 的 `task-only / anchor-only / anchor+teacher_margin` objective rewrite 也已真实跑完：`latent anchor` 能保住 warm-start 流形，但 current `teacher_margin` hook 在 canonical 中全程 dormant
 
 所以当前 blocker 不再是：
 - `Qwen` 会不会读 prefix
@@ -32,12 +32,12 @@
 - shared injection 仍然没有在预注册 `screen248-val` 规则下稳定过 selection gate
 - shallow prefix 会失稳，stabilized shallow prefix 会把有效学习压平
 - sparse deep prompt 虽然提供了更强主链路带宽，但当前会很快塌成强标签偏置
-- `M5.1` 并没有把 `same-schema warm-start` 稳定固化成 `I_real > I_shuffle` 的可泛化能力信号
+- `M5.1/M5.2` 都还没有把 warm-start 的局部正信号稳定固化成 `I_real > I_shuffle` 的可泛化能力信号
 - 当前更像是 `support representation -> writer -> projector -> frozen reasoner` 的对齐与目标错配，而不只是 static support memorization、projector 容量或初始化随机性
 
 ## 当前最可信的结论
 
-`M4.3` 已把 shared injection 放到预注册 validation 口径下重新检查，`M4.4` 又补了一轮显式稳定化，`M4.5` 把注入升级成 `5` 层稀疏 shared low-rank deep prompt，`M4.6` 专门测试了 anti-shortcut support protocol，`M4.7` 把 injected path 改成了 `structured support-set encoder -> writer -> sparse deep prompt -> frozen Qwen` 的三臂判因矩阵，最新 `M5.1` 则在此基础上补了 `same-schema warm-start + task-first CE+delayed hinge` 的 writer–reasoner alignment 续跑。
+`M4.3` 已把 shared injection 放到预注册 validation 口径下重新检查，`M4.4` 又补了一轮显式稳定化，`M4.5` 把注入升级成 `5` 层稀疏 shared low-rank deep prompt，`M4.6` 专门测试了 anti-shortcut support protocol，`M4.7` 把 injected path 改成了 `structured support-set encoder -> writer -> sparse deep prompt -> frozen Qwen` 的三臂判因矩阵，`M5.1` 补了 `same-schema warm-start + task-first CE+delayed hinge` 的 writer–reasoner alignment 续跑，最新 `M5.2` 则进一步测试了 `task-only / anchor-only / anchor+teacher_margin` 的 objective rewrite。
 
 真实运行路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
@@ -52,6 +52,8 @@
 - `results/generated/review/m4-fever-shared-injection-alignment-qwen25/`
 - `runs/review/m5-fever-writer-reasoner-alignment-qwen25/`
 - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/`
+- `runs/review/m5-fever-writer-objective-rewrite-qwen25/`
+- `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`
 
 关键结果：
 - [selection.json](/root/mydir/MemTOTAL/results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json)
@@ -165,10 +167,32 @@
   - `task-first CE+hinge` 能在早期压掉一部分回归，但仍不能把 `real > shuffle` 稳定起来
   - 下一步最合理的分流已不是 receptor adaptation，而是 `M5.2 writer objective rewrite`
 
+`M5.2 writer objective rewrite` 的最新结论是：
+- `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂都没有通过 `screen248-val` selection，因此没有任何一臂打开 `screen248-test`
+- 顶层结果位于：
+  - [objective-summary.json](/root/mydir/MemTOTAL/results/generated/review/m5-fever-writer-objective-rewrite-qwen25/objective-summary.json)
+  - [objective-summary.md](/root/mydir/MemTOTAL/results/generated/review/m5-fever-writer-objective-rewrite-qwen25/objective-summary.md)
+  - [warm_start_manifest.json](/root/mydir/MemTOTAL/results/generated/review/m5-fever-writer-objective-rewrite-qwen25/warm_start_manifest.json)
+- 这轮最有信息量的新事实不是“三臂又失败了”，而是：
+  - `anchor-only` 的 latent anchor 机制确实生效：
+    - `step32 anchor_support_cosine≈0.9975`
+    - `step32 anchor_writer_slot_cosine≈0.9999`
+  - `anchor-only step8` 一度拿到：
+    - `macro_f1=0.3175`
+    - `flip_gain_vs_shuffle=2`
+    - `flip_gain_vs_zero=7`
+    - `regressions_vs_base=5`
+  - 但仍然没有过 selection
+  - canonical 的 `teacher_margin` hook 在 `32` 个训练 step 里 `teacher_margin_aux_active=0`
+- 这说明：
+  - latent anchor 能保住 warm-start 流形，但单靠保流形还不够
+  - 当前 `teacher_margin` hook 太 dormant，这轮并没有真正把 teacher-facing alignment 信号写进训练
+  - 下一步不应直接跳 receptor adaptation，而应进入“更强但仍 lightweight 的 engaged teacher-aided objective”
+
 因此，最新最稳妥的判断是：
 
 > shared injection 这条路已经出现了正信号，但这个正信号目前仍是“可训练、可消费、但不稳健”。  
-> `M5.1` 进一步说明：即便给 canonical 一个同源 warm-start，再用 task-first `CE+delayed hinge` 续跑，系统仍然无法把 `real > shuffle` 稳定固化成能过预注册 selection 的能力信号。当前最该修的是 writer objective，而不是再回去修 score-side residual family，也不是立刻动 receiver。
+> `M5.2` 进一步说明：单靠 task-first continuation 或 latent anchor 都还不够，而 current `teacher_margin` hook 又在 canonical 中完全 dormant。当前最该修的不是 receiver，而是“怎样让 teacher-aided objective 真正以可控方式介入 writer-side alignment”。
 
 ## 现在不该做什么
 
@@ -184,10 +208,10 @@
 - 保持 `sparse deep prompt` 这条主链路，不回旧 residual family
 - 把 `screen248-test` 固定为 primary capability gate，`fixed64` 只保留为 legacy report
 - 把 `episode bank vs static triad6` 这类 support-side 对照降级为辅线，因为 `M4.6` 已经证明它不是当前第一主因
-- 进入 `M5.2 writer-objective rewrite under shared injection`
+- 进入 `M5.3 engaged teacher-aided objective under shared injection`
 
 更具体地说，下一步应优先做：
-- 不把“更多步数”当主药；`M5.1` 已经说明 same-schema warm-start 也不够
+- 不把“更多步数”当主药；`M5.1/M5.2` 已经说明 same-schema warm-start 和 latent anchor 单独都不够
 - canonical 继续保持 shared injection 与 frozen Qwen，不立刻做 receptor adaptation
 - 下一轮先改 writer objective：
   - 仍以 `task-first` 为主

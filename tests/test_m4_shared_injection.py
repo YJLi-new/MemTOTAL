@@ -11,6 +11,7 @@ import torch
 from memtotal.analysis.m4_shared_injection import (
     compare_m4_alignment_runs,
     compare_m5_alignment_runs,
+    compare_m5_objective_runs,
     run_m4_phase0_gate_sweep,
     run_m4_prepare_fever_support_banks,
     run_m4_prepare_fever_validation_splits,
@@ -30,6 +31,8 @@ from memtotal.training.m4_shared_injection import (
     _alignment_aux_loss,
     _build_support_text_block,
     _choice_task_loss,
+    _latent_anchor_loss,
+    _scheduled_linear_decay_weight,
     _sample_support_examples_for_training,
     run_shared_injection_pilot,
 )
@@ -175,6 +178,55 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             0.2,
             places=6,
         )
+
+    def test_scheduled_linear_decay_weight_decays_from_start_to_end(self) -> None:
+        self.assertAlmostEqual(
+            _scheduled_linear_decay_weight(
+                current_step=1,
+                start_weight=0.1,
+                end_weight=0.02,
+                decay_steps=16,
+            ),
+            0.1,
+            places=6,
+        )
+        self.assertAlmostEqual(
+            _scheduled_linear_decay_weight(
+                current_step=16,
+                start_weight=0.1,
+                end_weight=0.02,
+                decay_steps=16,
+            ),
+            0.02,
+            places=6,
+        )
+        self.assertAlmostEqual(
+            _scheduled_linear_decay_weight(
+                current_step=32,
+                start_weight=0.1,
+                end_weight=0.02,
+                decay_steps=16,
+            ),
+            0.02,
+            places=6,
+        )
+
+    def test_latent_anchor_loss_combines_support_and_writer_cosines(self) -> None:
+        current_support = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        current_writer = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
+        reference_support = current_support.clone()
+        reference_writer = torch.tensor([[[0.0, 1.0], [1.0, 0.0]]], dtype=torch.float32)
+        total_loss, support_loss, writer_loss, support_cosine, writer_cosine = _latent_anchor_loss(
+            current_support_states=current_support,
+            reference_support_states=reference_support,
+            current_memory_slots=current_writer,
+            reference_memory_slots=reference_writer,
+        )
+        self.assertAlmostEqual(float(support_loss.item()), 0.0, places=6)
+        self.assertAlmostEqual(float(support_cosine.item()), 1.0, places=6)
+        self.assertGreater(float(writer_loss.item()), 0.0)
+        self.assertLess(float(writer_cosine.item()), 1.0)
+        self.assertGreater(float(total_loss.item()), 0.0)
 
     def test_init_and_eval_checkpoint_paths_are_mutually_exclusive(self) -> None:
         config = {
@@ -1032,6 +1084,103 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
                 pooled_block_summary_json=str(
                     write_payload(
                         "pooled_failure.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+            )
+            self.assertEqual(failure["comparison_conclusion"], "failure")
+            self.assertEqual(failure["failure_reason"], "canonical_failed_selection")
+
+    def test_compare_m5_objective_runs_reports_success_optional_teacher_and_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            success = compare_m5_objective_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_success.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 8,
+                            "screen248_test_gate_passed": True,
+                            "support_bank_brittle": False,
+                            "fixed64_report_generated": True,
+                            "fixed64_gate_passed": False,
+                        },
+                    )
+                ),
+                anchor_only_summary_json=str(
+                    write_payload(
+                        "anchor_success.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+                task_only_control_summary_json=str(
+                    write_payload(
+                        "task_success.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+            )
+            self.assertEqual(success["comparison_conclusion"], "success")
+            self.assertTrue(success["objective_rewrite_supported"])
+            self.assertTrue(success["teacher_margin_increment_supported"])
+
+            optional_teacher = compare_m5_objective_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_optional.json",
+                        {
+                            "selection_passed": True,
+                            "selected_step": 8,
+                            "screen248_test_gate_passed": True,
+                            "support_bank_brittle": False,
+                        },
+                    )
+                ),
+                anchor_only_summary_json=str(
+                    write_payload(
+                        "anchor_optional.json",
+                        {"selection_passed": True, "selected_step": 8, "screen248_test_gate_passed": True},
+                    )
+                ),
+                task_only_control_summary_json=str(
+                    write_payload(
+                        "task_optional.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+            )
+            self.assertEqual(optional_teacher["comparison_conclusion"], "anchor_supported_teacher_optional")
+            self.assertTrue(optional_teacher["objective_rewrite_supported"])
+            self.assertFalse(optional_teacher["teacher_margin_increment_supported"])
+
+            failure = compare_m5_objective_runs(
+                canonical_summary_json=str(
+                    write_payload(
+                        "canonical_failure.json",
+                        {
+                            "selection_passed": False,
+                            "selected_step": None,
+                            "screen248_test_gate_passed": False,
+                            "support_bank_brittle": False,
+                        },
+                    )
+                ),
+                anchor_only_summary_json=str(
+                    write_payload(
+                        "anchor_failure.json",
+                        {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
+                    )
+                ),
+                task_only_control_summary_json=str(
+                    write_payload(
+                        "task_failure.json",
                         {"selection_passed": False, "selected_step": None, "screen248_test_gate_passed": False},
                     )
                 ),

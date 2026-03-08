@@ -3,10 +3,10 @@
 ## Open
 
 - 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
-- `M5.1` same-schema warm-start alignment 已经把“writer 初始化是否太随机”和“是否只是缺一次 continuation training”这两个解释单独排除了：最新 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/alignment-summary.json` 当前显示 `comparison_conclusion=failure`、`failure_reason=canonical_failed_selection`。当前新的第一优先级 tech debt 已进一步收紧成：
-  - 为什么 canonical warm-start `step0` 已有强 `vs_zero` 信号，却始终拉不开 `vs_shuffle`
-  - 为什么 canonical 续跑到 `step8` 能把 `regressions_vs_base` 压到 `1`，但仍然没有 selection signal
-  - 为什么 delayed hinge 仍不足以把 `probe-readable` latent 推到 frozen Qwen 真会消费的 decision direction
+- `M5.2` writer objective rewrite 已经把“same-schema warm-start 是否还不够”和“latent anchor 是否完全无效”这两个解释进一步单独排除了：最新 `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/objective-summary.json` 当前显示 `comparison_conclusion=failure`、`failure_reason=canonical_failed_selection`。当前新的第一优先级 tech debt 已进一步收紧成：
+  - 为什么 `anchor-only` 已能把 warm-start 流形稳定保在高 cosine，却仍然过不了 selection
+  - 为什么 canonical 的 `teacher_margin` hook 在 `32` 个训练 step 中始终 `aux_active=0`
+  - 为什么 current lightweight teacher hook 没有真正变成 writer-side alignment signal
 - `M4.7` structured support-set alignment 已经把“pooled support block 是否就是主瓶颈”和“writer 是否必须可训练”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.json` 显示 `comparison_conclusion=canonical_failed_selection`。当前新的第一优先级 tech debt 不再是“support block 要不要结构化”本身，而是：
   - 为什么 canonical structured path 虽然优于 `freeze-writer / pooled-block`，却仍无法通过 selection
   - 为什么三臂都会从 `step0` 起落在 `dominant_label_fraction=1.0`
@@ -20,7 +20,7 @@
   - `shared injection` 的 shortcut attractor 是如何形成的
   - structured support representation 进入 writer 之后，为什么仍会快速塌成 label-biased prefix
   - writer / projector / frozen-reasoner 的梯度与表示错配具体发生在哪里
-  - 下一轮 `M5.2 writer objective rewrite` 应采用怎样的 task-first objective，才能把 probe-readable latent 变成 reasoner-readable control
+  - 下一轮 `M5.3 engaged teacher-aided objective` 应采用怎样的轻量 teacher signal，才能把 probe-readable latent 变成 reasoner-readable control
 - 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
 - `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。
 - `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
@@ -37,8 +37,8 @@
   - 在 `screen248-train / screen248-val / screen248-test` 的预注册口径下继续做稳定训练
   - `fixed64` 只保留为 legacy report，不再做硬 veto
   - 但不再把“再换一个 support bank / 再补一个浅层 tweak”当成主解
-  - 更合理的 next step 已经变成 `M5.2 writer objective rewrite under shared injection`
-  - `M5.1` 已经说明 same-schema warm-start 也不够；这一步不应再被表述成“把训练步数简单拉长”
+  - 更合理的 next step 已经变成 `M5.3 engaged teacher-aided objective under shared injection`
+  - `M5.1/M5.2` 已经说明 same-schema warm-start 和 latent anchor 单独都不够；这一步不应再被表述成“把训练步数简单拉长”
   - 只有 `screen248-test` 真正稳定通过后，再进入 `fixed64 / Story Cloze / Qwen3-8B`
 - 旧的 `candidate-conditioned residual family` 现已进入停止维护状态：`FEVER-first repair` fresh pilot 已证明 `R-real = R-shuffle = R-zero = 0.25`，当前没有任何继续在这条 family 上叠 router / sign selector / 更多 sweep 的理由。后续若回到 candidate-specific `Stage C`，必须建立在 shared injection 已先证明 `real > shuffle > zero` 的前提上。
 - 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。

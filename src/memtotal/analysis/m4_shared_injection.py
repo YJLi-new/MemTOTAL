@@ -2226,3 +2226,59 @@ def compare_m5_alignment_runs(
         "comparison_conclusion": conclusion,
         "failure_reason": failure_reason,
     }
+
+
+def compare_m5_objective_runs(
+    *,
+    canonical_summary_json: str,
+    anchor_only_summary_json: str,
+    task_only_control_summary_json: str,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    anchor_only = json.loads(Path(anchor_only_summary_json).read_text())
+    task_only_control = json.loads(Path(task_only_control_summary_json).read_text())
+
+    canonical_selection = bool(canonical.get("selection_passed", False))
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_brittle = bool(canonical.get("support_bank_brittle", False))
+    anchor_primary = bool(anchor_only.get("screen248_test_gate_passed", False))
+    task_only_primary = bool(task_only_control.get("screen248_test_gate_passed", False))
+    objective_rewrite_supported = bool(canonical_primary and not task_only_primary)
+    teacher_margin_increment_supported = bool(canonical_primary and not anchor_primary)
+    if objective_rewrite_supported and teacher_margin_increment_supported:
+        conclusion = "success"
+        failure_reason = ""
+    elif objective_rewrite_supported and anchor_primary:
+        conclusion = "anchor_supported_teacher_optional"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not canonical_selection:
+            failure_reason = "canonical_failed_selection"
+        elif not canonical_primary:
+            failure_reason = "canonical_selected_but_primary_gate_failed"
+        elif canonical_brittle:
+            failure_reason = "canonical_support_bank_brittle"
+        elif task_only_primary:
+            failure_reason = "task_only_control_also_passed"
+        else:
+            failure_reason = "anchor_only_or_teacher_margin_did_not_improve"
+
+    return {
+        "canonical_selection_passed": canonical_selection,
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": canonical_brittle,
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "anchor_only_selection_passed": bool(anchor_only.get("selection_passed", False)),
+        "anchor_only_selected_step": anchor_only.get("selected_step"),
+        "anchor_only_primary_gate_passed": anchor_primary,
+        "task_only_control_selection_passed": bool(task_only_control.get("selection_passed", False)),
+        "task_only_control_selected_step": task_only_control.get("selected_step"),
+        "task_only_control_primary_gate_passed": task_only_primary,
+        "objective_rewrite_supported": objective_rewrite_supported,
+        "teacher_margin_increment_supported": teacher_margin_increment_supported,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }

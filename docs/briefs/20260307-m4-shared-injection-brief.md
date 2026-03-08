@@ -2,10 +2,10 @@
 
 ## 当前一句话结论
 
-`shared injection` 已经不是“完全没信号”，但截至 `M5.1` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 same-schema warm-start alignment 实验说明：即便从 `M4.7` 的最强 structured checkpoint 续跑，并把 objective 固定成 task-first `CE + delayed hinge`，canonical 仍然没能把 `real > shuffle` 稳定固化成 capability signal。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
+`shared injection` 已经不是“完全没信号”，但截至 `M5.2` 仍没有在预注册 `screen248-val` 规则下稳定选出 checkpoint。最新 objective-rewrite 实验说明：same-schema warm-start、task-first continuation、latent anchor 都已被单独测过；当前真正没有被有效写进训练的是一个“会实际激活的 teacher-aided objective”。当前最真实的 blocker 已经从 `shallow prefix norm blow-up` 继续演化成：
 
-> main-chain consumption 已成立，deep prompt 也已成立；structured support set、trainable writer、same-schema warm-start 也都已显示出方向性增量。  
-> 但当前系统仍不能把这条增量稳定固化成 `I_real > I_shuffle` 的可泛化能力信号，所以下一步应进入 `M5.2 writer objective rewrite`，而不是立刻做 receptor adaptation。
+> main-chain consumption 已成立，deep prompt 也已成立；structured support set、trainable writer、same-schema warm-start、latent anchor 也都已显示出方向性增量。  
+> 但当前系统仍不能把这条增量稳定固化成 `I_real > I_shuffle` 的可泛化能力信号，而且 current `teacher_margin` hook 在 canonical 中全程 dormant。所以下一步应进入更强但仍 lightweight 的 engaged teacher-aided objective，而不是立刻做 receptor adaptation。
 
 ## 已经坐实的前提
 
@@ -21,7 +21,7 @@
 
 `candidate-conditioned residual family` 在更对题的 repair/content audit 下仍然表现为 `real = shuffle = zero`，不再是当前主线。
 
-## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 / M5.1 的连续结论
+## M4.3 / M4.4 / M4.5 / M4.6 / M4.7 / M5.1 / M5.2 的连续结论
 
 review 路径：
 - `runs/review/m4-fever-dynamics-recovery-qwen25/`
@@ -36,6 +36,8 @@ review 路径：
 - `results/generated/review/m4-fever-shared-injection-alignment-qwen25/`
 - `runs/review/m5-fever-writer-reasoner-alignment-qwen25/`
 - `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/`
+- `runs/review/m5-fever-writer-objective-rewrite-qwen25/`
+- `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`
 
 最关键文件：
 - `dynamics-recovery/selection.json`
@@ -227,6 +229,32 @@ canonical 设计：
   - 继续 frozen Qwen
   - 不立刻做 receptor adaptation
 
+### M5.2 writer objective rewrite
+
+- 三臂分别为：
+  - `task-only-control`
+  - `anchor-only`
+  - `canonical(anchor+teacher_margin)`
+- 三臂都没有通过 `screen248-val`
+- `anchor-only` 的 early-step cosine 证明 latent anchor 的保流形机制生效：
+  - `step32 anchor_support_cosine≈0.9975`
+  - `step32 anchor_writer_slot_cosine≈0.9999`
+- `anchor-only step8` 一度拿到：
+  - `macro_f1=0.3175`
+  - `flip_gain_vs_shuffle=2`
+  - `flip_gain_vs_zero=7`
+  - `regressions_vs_base=5`
+- canonical 的 `teacher_margin` hook 在 `32` 个训练 step 中 `teacher_margin_aux_active=0`
+
+含义：
+- `latent anchor` 能保住 warm-start 流形，但单靠保流形还不够
+- current `teacher_margin` hook 太 dormant，这轮没有真正把 teacher-facing alignment 信号写进训练
+- 当前最合理的下一步已从 `M5.2` 收紧成：
+  - `M5.3 engaged teacher-aided objective`
+  - 继续 shared injection
+  - 继续 frozen Qwen
+  - 仍不立刻做 receptor adaptation
+
 ## 当前最稳妥的解释
 
 当前已经可以排除：
@@ -260,7 +288,7 @@ canonical 设计：
   - real-vs-shuffle 的层内分离
   - label-bias collapse
 - 下一轮优先进入：
-  - `M5.2 writer objective rewrite under shared injection`
+  - `M5.3 engaged teacher-aided objective under shared injection`
   - 继续保持 `frozen Qwen + shared injection + structured support-set canonical`
-  - 先改 writer-side objective，而不是立刻动 receiver
-  - 如仍需要 teacher signal，只做 lightweight teacher-aided alignment；不把 full KL 放进 canonical
+  - 先让 teacher-facing objective 真正激活，而不是立刻动 receiver
+  - 仍不把 full KL 放进 canonical

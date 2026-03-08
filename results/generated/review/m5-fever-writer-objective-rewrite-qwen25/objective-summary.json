@@ -1,0 +1,18 @@
+{
+  "anchor_only_primary_gate_passed": false,
+  "anchor_only_selected_step": null,
+  "anchor_only_selection_passed": false,
+  "canonical_fixed64_gate_passed": false,
+  "canonical_fixed64_report_generated": false,
+  "canonical_primary_gate_passed": false,
+  "canonical_selected_step": null,
+  "canonical_selection_passed": false,
+  "canonical_support_bank_brittle": false,
+  "comparison_conclusion": "failure",
+  "failure_reason": "canonical_failed_selection",
+  "objective_rewrite_supported": false,
+  "task_only_control_primary_gate_passed": false,
+  "task_only_control_selected_step": null,
+  "task_only_control_selection_passed": false,
+  "teacher_margin_increment_supported": false
+}

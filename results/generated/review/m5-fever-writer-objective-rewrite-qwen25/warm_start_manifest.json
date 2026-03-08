@@ -1,0 +1,5 @@
+{
+  "anchor-only": "/root/autodl-tmp/runs/verify/m5-fever-writer-reasoner-alignment-qwen25/canonical/phase2-selected/pilot-I-real/snapshot_evals/step_0000/checkpoint.pt",
+  "canonical": "/root/autodl-tmp/runs/verify/m5-fever-writer-reasoner-alignment-qwen25/canonical/phase2-selected/pilot-I-real/snapshot_evals/step_0000/checkpoint.pt",
+  "task-only-control": "/root/autodl-tmp/runs/verify/m5-fever-writer-reasoner-alignment-qwen25/canonical/phase2-selected/pilot-I-real/snapshot_evals/step_0000/checkpoint.pt"
+}

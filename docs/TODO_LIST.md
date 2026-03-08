@@ -24,13 +24,13 @@
 > 任何任务若无法服务于这六类产物，应降低优先级。
 
 ### Current Active Blocker
-- `M5.1` 的 same-schema warm-start alignment 已真实跑完，但 `canonical / freeze-writer / pooled-block` 三臂仍都没有通过 `screen248-val` selection。
-- 当前结果位于 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/`。
-- 当前最优先问题已经不是“writer 初始化是否太随机”，也不是“缺一次 continuation training”，而是：
-  - 为什么 canonical warm-start `step0` 已有 `flip_gain_vs_zero=5`，却始终拉不开 `flip_gain_vs_shuffle`
-  - 为什么 canonical 续跑到 `step8` 能把 `regressions_vs_base` 压到 `1`，但仍无法恢复 `real > shuffle`
-  - 为什么 `freeze-writer` 与 `pooled-block` 继续明显弱于 canonical，但 canonical 仍然过不了 selection
-  - 下一轮 `M5.2` 应如何重写 writer objective，才能把 probe-readable latent 对齐成 frozen Qwen 真会消费的 decision signal
+- `M5.2` 的 writer objective rewrite 已真实跑完，但 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂仍都没有通过 `screen248-val` selection。
+- 当前结果位于 `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/`。
+- 当前最优先问题已经不是“same-schema warm-start 是否还不够”或“latent anchor 是否完全无效”，而是：
+  - 为什么 `anchor-only` 已能把 warm-start 流形稳定保在高 cosine，却仍然过不了 selection
+  - 为什么 canonical 的 `teacher_margin` hook 在 `32` 个训练 step 中 `teacher_margin_aux_active=0`
+  - 为什么 `task-only-control` 反而在 `step8` 拿到最强的 `flip_gain_vs_shuffle=6`，但仍伴随 `regressions_vs_base=10`
+  - 下一轮 `M5.3` 应如何把 teacher-aided objective 变成“真正会激活的 writer-side alignment signal”
 
 ---
 

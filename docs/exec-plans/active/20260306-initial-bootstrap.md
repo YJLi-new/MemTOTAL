@@ -54,6 +54,9 @@
 
 ## Progress
 
+- 2026-03-08 21:18 UTC: 已完成 `M5.2 writer objective rewrite under shared injection` 的代码实现与真实三臂主跑：训练侧新增 `latent anchor`、per-step `teacher_margin` schedule、`support/writer cosine` diagnostics、`scripts/run_m5_fever_objective_rewrite_qwen25.sh` / `scripts/update_m5_objective_summary.py`，并发布 `warm_start_manifest.json`。
+- 2026-03-08 21:18 UTC: `M5.2` 真实结果位于 `results/generated/review/m5-fever-writer-objective-rewrite-qwen25/` 与 `runs/review/m5-fever-writer-objective-rewrite-qwen25/`。顶层 `objective-summary.json` 当前记录：`comparison_conclusion=failure`、`failure_reason=canonical_failed_selection`，三臂都没有打开 `screen248-test`。
+- 2026-03-08 21:18 UTC: 这轮把 blocker 进一步收紧成“current teacher hook 太 dormant”：`anchor-only` 已经证明 latent anchor 能把 warm-start 流形稳定保在高 cosine（`step32 anchor_support_cosine≈0.9975`、`anchor_writer_slot_cosine≈0.9999`），但 canonical 的 `teacher_margin_aux_active` 在 `32` 个训练 step 中始终为 `0`。因此下一步已自然收缩成 `M5.3 engaged teacher-aided objective under shared injection`，而不是 receptor adaptation。
 - 2026-03-08 18:01 UTC: 已完成 `M5.1 writer–reasoner alignment under shared injection` 的代码实现与真实三臂主跑：新增 `pilot_init_checkpoint_path`、warm-start schema 校验、task-first `CE + delayed strongest-competitor hinge`、`scripts/run_m5_fever_alignment_qwen25.sh` / `scripts/update_m5_alignment_summary.py`，并发布 `warm_start_manifest.json`。
 - 2026-03-08 18:01 UTC: `M5.1` 真实结果位于 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/` 与 `runs/review/m5-fever-writer-reasoner-alignment-qwen25/`。顶层 `alignment-summary.json` 当前记录：`comparison_conclusion=failure`、`failure_reason=canonical_failed_selection`，三臂都没有打开 `screen248-test`。
 - 2026-03-08 18:01 UTC: 这轮把 blocker 进一步收紧成 `writer objective`：canonical 最佳候选其实是 warm-start 自身的 `step0`（`flip_gain_vs_zero=5`、`flip_gain_vs_shuffle=0`、`regressions_vs_base=16`）；续跑到 `step8` 虽能把 `regressions_vs_base` 压到 `1`，但仍没有恢复 `real > shuffle`。因此下一步已自然收缩成 `M5.2 writer objective rewrite under shared injection`，而不是立即做 receptor adaptation。
