@@ -111,6 +111,9 @@ class SmokeComponentTest(unittest.TestCase):
         outputs = reader.read(memory, context=context, memory_mask=memory_mask)
 
         self.assertEqual(list(outputs["readouts"].shape), [1, 2, 8])
+        self.assertEqual(list(outputs["base_queries"].shape), [1, 2, 8])
+        self.assertEqual(list(outputs["conditioned_queries"].shape), [1, 2, 8])
+        self.assertEqual(list(outputs["attention_logits"].shape), [1, 2, 2, 4])
         self.assertTrue(torch.allclose(outputs["attention"][:, :, 2:], torch.zeros(1, 2, 2), atol=1e-6))
 
     def test_reader_query_residual_preserves_query_signal(self) -> None:

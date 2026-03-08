@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -672,6 +673,7 @@ def _write_snapshot_eval(
         "support_item_hidden_norm_std": float(scalar_prefix_stats.get("support_item_hidden_norm_std", 0.0)),
         "support_item_hidden_norm_max": float(scalar_prefix_stats.get("support_item_hidden_norm_max", 0.0)),
         "checkpoint_path": "" if checkpoint_path is None else str(checkpoint_path.resolve()),
+        **scalar_prefix_stats,
     }
     write_json(snapshot_dir / "metrics.json", payload)
     return payload
@@ -703,10 +705,269 @@ def _pairwise_cosine_mean(slots: torch.Tensor | None) -> float:
     return float(cosine.masked_select(mask).mean().item())
 
 
+PREFIX_SCALAR_KEYS = (
+    "prefix_tokens",
+    "prefix_l2",
+    "prefix_slot_norm_mean",
+    "prefix_slot_norm_std",
+    "prefix_slot_norm_max",
+    "writer_memory_l2",
+    "writer_slot_norm_mean",
+    "writer_slot_norm_std",
+    "writer_slot_norm_max",
+    "support_item_count",
+    "support_item_hidden_l2",
+    "support_item_hidden_norm_mean",
+    "support_item_hidden_norm_std",
+    "support_item_hidden_norm_max",
+    "memory_long_l2",
+    "memory_long_slots",
+    "memory_long_slot_norm_mean",
+    "memory_long_slot_norm_std",
+    "memory_long_slot_norm_max",
+    "memory_long_slot_energy_cv",
+    "memory_long_slot_variance_cv",
+    "memory_long_singular_value_top1",
+    "memory_long_singular_value_top2",
+    "memory_long_singular_value_top3",
+    "memory_long_slot_norm_histogram_min",
+    "memory_long_slot_norm_histogram_max",
+    "memory_long_slot_energy_histogram_min",
+    "memory_long_slot_energy_histogram_max",
+    "memory_short_l2",
+    "memory_short_slots",
+    "memory_short_slot_norm_mean",
+    "memory_short_slot_norm_std",
+    "memory_short_slot_norm_max",
+    "memory_short_pairwise_cosine_mean",
+    "reader_num_queries",
+    "reader_slot_count",
+    "reader_base_query_pairwise_cosine_mean",
+    "reader_conditioned_query_pairwise_cosine_mean",
+    "reader_base_query_norm_mean",
+    "reader_conditioned_query_norm_mean",
+    "reader_context_shift_norm_mean",
+    "reader_context_overwrite_ratio",
+    "reader_qk_logit_mean",
+    "reader_qk_logit_std",
+    "reader_qk_logit_range",
+    "reader_qk_logit_pairwise_cosine_mean",
+    "reader_attention_entropy_mean",
+    "reader_attention_entropy_min",
+    "reader_attention_entropy_max",
+    "reader_attention_pairwise_cosine_mean",
+    "reader_slot_coverage_fraction",
+    "reader_argmax_mass_mean",
+    "reader_argmax_mass_std",
+    "reader_readout_pairwise_cosine_mean",
+    "reader_readout_effective_rank",
+    "reader_query_to_slot_top1_agreement_rate",
+    "reader_query_to_slot_top2_coverage_fraction",
+    "fuser_input_pairwise_cosine_mean",
+    "fuser_input_effective_rank",
+    "fuser_output_pairwise_cosine_mean",
+    "fuser_output_effective_rank",
+    "fuser_short_query_pairwise_cosine_mean",
+    "fuser_linear_output_singular_value_top1",
+    "fuser_linear_output_singular_value_top2",
+    "fuser_linear_output_singular_value_top3",
+)
+
+
+def _finite_values(tensor: torch.Tensor | None) -> torch.Tensor:
+    if tensor is None or tensor.numel() == 0:
+        return torch.empty(0, dtype=torch.float32)
+    tensor_fp32 = tensor.detach().to(dtype=torch.float32, device="cpu")
+    return tensor_fp32[torch.isfinite(tensor_fp32)]
+
+
+def _coefficient_of_variation(values: torch.Tensor | None) -> float:
+    finite = _finite_values(values)
+    if finite.numel() == 0:
+        return 0.0
+    mean_abs = finite.abs().mean().item()
+    if mean_abs <= 1e-8:
+        return 0.0
+    return float(finite.std(unbiased=False).item() / mean_abs)
+
+
+def _histogram_counts(values: torch.Tensor | None, *, bins: int = 4) -> list[float]:
+    finite = _finite_values(values)
+    if finite.numel() == 0:
+        return [0.0 for _ in range(max(1, bins))]
+    min_value = float(finite.min().item())
+    max_value = float(finite.max().item())
+    if math.isclose(min_value, max_value, rel_tol=0.0, abs_tol=1e-8):
+        counts = [0.0 for _ in range(max(1, bins))]
+        counts[0] = float(finite.numel())
+        return counts
+    histogram = torch.histc(finite, bins=max(1, bins), min=min_value, max=max_value)
+    return [float(value) for value in histogram.tolist()]
+
+
+def _top_singular_values(tensor: torch.Tensor | None, *, top_k: int = 3) -> list[float]:
+    if tensor is None or tensor.numel() == 0:
+        return [0.0 for _ in range(max(1, top_k))]
+    matrix = tensor.detach().to(dtype=torch.float32)
+    if matrix.ndim == 2:
+        matrix = matrix.unsqueeze(0)
+    elif matrix.ndim != 3:
+        raise ValueError(
+            f"Expected rank-2 or rank-3 tensor for singular values, got shape={tuple(matrix.shape)}."
+        )
+    singular_values = torch.linalg.svdvals(matrix)
+    means = singular_values.mean(dim=0)
+    padded = torch.zeros(max(1, top_k), dtype=torch.float32, device=means.device)
+    padded[: min(len(means), max(1, top_k))] = means[: max(1, top_k)]
+    return [float(value) for value in padded.cpu().tolist()]
+
+
+def _reader_pre_attention_stats(
+    *,
+    base_queries: torch.Tensor | None,
+    conditioned_queries: torch.Tensor | None,
+    attention_logits: torch.Tensor | None,
+) -> dict[str, float]:
+    zero_stats = {
+        "reader_base_query_pairwise_cosine_mean": 0.0,
+        "reader_conditioned_query_pairwise_cosine_mean": 0.0,
+        "reader_base_query_norm_mean": 0.0,
+        "reader_conditioned_query_norm_mean": 0.0,
+        "reader_context_shift_norm_mean": 0.0,
+        "reader_context_overwrite_ratio": 0.0,
+        "reader_qk_logit_mean": 0.0,
+        "reader_qk_logit_std": 0.0,
+        "reader_qk_logit_range": 0.0,
+        "reader_qk_logit_pairwise_cosine_mean": 0.0,
+    }
+    if base_queries is None or conditioned_queries is None:
+        return zero_stats
+    shift = conditioned_queries - base_queries
+    base_norm_mean = float(base_queries.detach().to(dtype=torch.float32).norm(dim=-1).mean().item())
+    conditioned_norm_mean = float(
+        conditioned_queries.detach().to(dtype=torch.float32).norm(dim=-1).mean().item()
+    )
+    shift_norm_mean = float(shift.detach().to(dtype=torch.float32).norm(dim=-1).mean().item())
+    logits_mean = 0.0
+    logits_std = 0.0
+    logits_range = 0.0
+    logits_pairwise = 0.0
+    if attention_logits is not None and attention_logits.numel() > 0:
+        logits_source = attention_logits.detach().to(dtype=torch.float32)
+        if logits_source.ndim == 4:
+            logits_source = logits_source.mean(dim=1)
+        finite_logits = _finite_values(logits_source)
+        if finite_logits.numel() > 0:
+            logits_mean = float(finite_logits.mean().item())
+            logits_std = float(finite_logits.std(unbiased=False).item())
+            logits_range = float((finite_logits.max() - finite_logits.min()).item())
+        logits_pairwise = _pairwise_cosine_mean(
+            torch.where(torch.isfinite(logits_source), logits_source, torch.zeros_like(logits_source))
+        )
+    return {
+        "reader_base_query_pairwise_cosine_mean": _pairwise_cosine_mean(base_queries),
+        "reader_conditioned_query_pairwise_cosine_mean": _pairwise_cosine_mean(conditioned_queries),
+        "reader_base_query_norm_mean": base_norm_mean,
+        "reader_conditioned_query_norm_mean": conditioned_norm_mean,
+        "reader_context_shift_norm_mean": shift_norm_mean,
+        "reader_context_overwrite_ratio": (
+            0.0 if base_norm_mean <= 1e-8 else float(shift_norm_mean / base_norm_mean)
+        ),
+        "reader_qk_logit_mean": logits_mean,
+        "reader_qk_logit_std": logits_std,
+        "reader_qk_logit_range": logits_range,
+        "reader_qk_logit_pairwise_cosine_mean": logits_pairwise,
+    }
+
+
+def _reader_top1_agreement_rate(attention: torch.Tensor) -> float:
+    top1_indices = attention.argmax(dim=-1)
+    rates: list[float] = []
+    query_count = max(1, int(attention.shape[1]))
+    slot_count = max(1, int(attention.shape[2]))
+    for batch_index in range(top1_indices.shape[0]):
+        counts = torch.bincount(top1_indices[batch_index], minlength=slot_count)
+        rates.append(float(counts.max().item()) / query_count)
+    return float(sum(rates) / max(1, len(rates)))
+
+
+def _reader_top2_coverage_fraction(attention: torch.Tensor) -> float:
+    slot_count = max(1, int(attention.shape[2]))
+    top_k = min(2, slot_count)
+    topk_indices = torch.topk(attention, k=top_k, dim=-1).indices
+    fractions: list[float] = []
+    for batch_index in range(topk_indices.shape[0]):
+        unique_slots = torch.unique(topk_indices[batch_index].reshape(-1))
+        fractions.append(float(unique_slots.numel()) / slot_count)
+    return float(sum(fractions) / max(1, len(fractions)))
+
+
+def _memory_long_geometry_stats(memory_long: torch.Tensor | None) -> dict[str, Any]:
+    zero_stats: dict[str, Any] = {
+        "memory_long_slot_energy_cv": 0.0,
+        "memory_long_slot_variance_cv": 0.0,
+        "memory_long_singular_value_top1": 0.0,
+        "memory_long_singular_value_top2": 0.0,
+        "memory_long_singular_value_top3": 0.0,
+        "memory_long_slot_norm_histogram_counts": [0.0, 0.0, 0.0, 0.0],
+        "memory_long_slot_norm_histogram_min": 0.0,
+        "memory_long_slot_norm_histogram_max": 0.0,
+        "memory_long_slot_energy_histogram_counts": [0.0, 0.0, 0.0, 0.0],
+        "memory_long_slot_energy_histogram_min": 0.0,
+        "memory_long_slot_energy_histogram_max": 0.0,
+    }
+    if memory_long is None or memory_long.numel() == 0:
+        return zero_stats
+    memory_long_fp32 = memory_long.detach().to(dtype=torch.float32, device="cpu")
+    slot_norms = memory_long_fp32.norm(dim=-1)
+    slot_energy = memory_long_fp32.pow(2).sum(dim=-1)
+    slot_variance = memory_long_fp32.var(dim=-1, unbiased=False)
+    singular_values = _top_singular_values(memory_long_fp32, top_k=3)
+    return {
+        "memory_long_slot_energy_cv": _coefficient_of_variation(slot_energy),
+        "memory_long_slot_variance_cv": _coefficient_of_variation(slot_variance),
+        "memory_long_singular_value_top1": singular_values[0],
+        "memory_long_singular_value_top2": singular_values[1],
+        "memory_long_singular_value_top3": singular_values[2],
+        "memory_long_slot_norm_histogram_counts": _histogram_counts(slot_norms, bins=4),
+        "memory_long_slot_norm_histogram_min": float(slot_norms.min().item()),
+        "memory_long_slot_norm_histogram_max": float(slot_norms.max().item()),
+        "memory_long_slot_energy_histogram_counts": _histogram_counts(slot_energy, bins=4),
+        "memory_long_slot_energy_histogram_min": float(slot_energy.min().item()),
+        "memory_long_slot_energy_histogram_max": float(slot_energy.max().item()),
+    }
+
+
+def _fuser_stats(
+    *,
+    fuser: MemoryFuser | None,
+    fuser_input: torch.Tensor | None,
+    memory_short: torch.Tensor | None,
+) -> dict[str, float]:
+    arch = "" if fuser is None else str(getattr(fuser, "arch", ""))
+    short_queries = None
+    if arch == "resampler" and fuser is not None:
+        short_queries = getattr(fuser, "short_queries", None)
+    linear_singular_values = _top_singular_values(memory_short, top_k=3) if arch == "linear" else [0.0, 0.0, 0.0]
+    return {
+        "fuser_input_pairwise_cosine_mean": _pairwise_cosine_mean(fuser_input),
+        "fuser_input_effective_rank": _effective_rank(fuser_input),
+        "fuser_output_pairwise_cosine_mean": _pairwise_cosine_mean(memory_short),
+        "fuser_output_effective_rank": _effective_rank(memory_short),
+        "fuser_short_query_pairwise_cosine_mean": _pairwise_cosine_mean(
+            None if short_queries is None else short_queries.unsqueeze(0)
+        ),
+        "fuser_linear_output_singular_value_top1": linear_singular_values[0],
+        "fuser_linear_output_singular_value_top2": linear_singular_values[1],
+        "fuser_linear_output_singular_value_top3": linear_singular_values[2],
+    }
+
+
 def _reader_attention_stats(
     reader_attention: torch.Tensor | None,
     *,
     memory_long_slots: int,
+    reader_readouts: torch.Tensor | None = None,
 ) -> dict[str, Any]:
     if reader_attention is None or reader_attention.numel() == 0:
         return {
@@ -717,6 +978,12 @@ def _reader_attention_stats(
             "reader_attention_entropy_max": 0.0,
             "reader_attention_pairwise_cosine_mean": 0.0,
             "reader_slot_coverage_fraction": 0.0,
+            "reader_argmax_mass_mean": 0.0,
+            "reader_argmax_mass_std": 0.0,
+            "reader_readout_pairwise_cosine_mean": 0.0,
+            "reader_readout_effective_rank": 0.0,
+            "reader_query_to_slot_top1_agreement_rate": 0.0,
+            "reader_query_to_slot_top2_coverage_fraction": 0.0,
             "reader_query_entropy_by_query": [],
         }
     attention = reader_attention.detach().to(dtype=torch.float32)
@@ -726,6 +993,7 @@ def _reader_attention_stats(
     slot_attention = attention.max(dim=1).values
     coverage_threshold = max(0.05, 1.0 / max(1, int(memory_long_slots)))
     coverage_fraction = float((slot_attention > coverage_threshold).to(dtype=torch.float32).mean().item())
+    argmax_mass = attention.max(dim=-1).values
     return {
         "reader_num_queries": float(attention.shape[1]),
         "reader_slot_count": float(memory_long_slots),
@@ -734,6 +1002,12 @@ def _reader_attention_stats(
         "reader_attention_entropy_max": float(query_entropy.max().item()),
         "reader_attention_pairwise_cosine_mean": pairwise,
         "reader_slot_coverage_fraction": coverage_fraction,
+        "reader_argmax_mass_mean": float(argmax_mass.mean().item()),
+        "reader_argmax_mass_std": float(argmax_mass.std(unbiased=False).item()),
+        "reader_readout_pairwise_cosine_mean": _pairwise_cosine_mean(reader_readouts),
+        "reader_readout_effective_rank": _effective_rank(reader_readouts),
+        "reader_query_to_slot_top1_agreement_rate": _reader_top1_agreement_rate(attention),
+        "reader_query_to_slot_top2_coverage_fraction": _reader_top2_coverage_fraction(attention),
         "reader_query_entropy_by_query": [
             float(value)
             for value in query_entropy.mean(dim=0).detach().to(device="cpu").tolist()
@@ -743,42 +1017,8 @@ def _reader_attention_stats(
 
 def _prefix_scalar_summary(prefix_stats: dict[str, Any]) -> dict[str, float]:
     return {
-        "prefix_tokens": float(prefix_stats.get("prefix_tokens", 0.0)),
-        "prefix_l2": float(prefix_stats.get("prefix_l2", 0.0)),
-        "prefix_slot_norm_mean": float(prefix_stats.get("prefix_slot_norm_mean", 0.0)),
-        "prefix_slot_norm_std": float(prefix_stats.get("prefix_slot_norm_std", 0.0)),
-        "prefix_slot_norm_max": float(prefix_stats.get("prefix_slot_norm_max", 0.0)),
-        "writer_memory_l2": float(prefix_stats.get("writer_memory_l2", 0.0)),
-        "writer_slot_norm_mean": float(prefix_stats.get("writer_slot_norm_mean", 0.0)),
-        "writer_slot_norm_std": float(prefix_stats.get("writer_slot_norm_std", 0.0)),
-        "writer_slot_norm_max": float(prefix_stats.get("writer_slot_norm_max", 0.0)),
-        "support_item_count": float(prefix_stats.get("support_item_count", 0.0)),
-        "support_item_hidden_l2": float(prefix_stats.get("support_item_hidden_l2", 0.0)),
-        "support_item_hidden_norm_mean": float(prefix_stats.get("support_item_hidden_norm_mean", 0.0)),
-        "support_item_hidden_norm_std": float(prefix_stats.get("support_item_hidden_norm_std", 0.0)),
-        "support_item_hidden_norm_max": float(prefix_stats.get("support_item_hidden_norm_max", 0.0)),
-        "memory_long_l2": float(prefix_stats.get("memory_long_l2", 0.0)),
-        "memory_long_slots": float(prefix_stats.get("memory_long_slots", 0.0)),
-        "memory_long_slot_norm_mean": float(prefix_stats.get("memory_long_slot_norm_mean", 0.0)),
-        "memory_long_slot_norm_std": float(prefix_stats.get("memory_long_slot_norm_std", 0.0)),
-        "memory_long_slot_norm_max": float(prefix_stats.get("memory_long_slot_norm_max", 0.0)),
-        "memory_short_l2": float(prefix_stats.get("memory_short_l2", 0.0)),
-        "memory_short_slots": float(prefix_stats.get("memory_short_slots", 0.0)),
-        "memory_short_slot_norm_mean": float(prefix_stats.get("memory_short_slot_norm_mean", 0.0)),
-        "memory_short_slot_norm_std": float(prefix_stats.get("memory_short_slot_norm_std", 0.0)),
-        "memory_short_slot_norm_max": float(prefix_stats.get("memory_short_slot_norm_max", 0.0)),
-        "memory_short_pairwise_cosine_mean": float(
-            prefix_stats.get("memory_short_pairwise_cosine_mean", 0.0)
-        ),
-        "reader_attention_entropy_mean": float(prefix_stats.get("reader_attention_entropy_mean", 0.0)),
-        "reader_attention_entropy_min": float(prefix_stats.get("reader_attention_entropy_min", 0.0)),
-        "reader_attention_entropy_max": float(prefix_stats.get("reader_attention_entropy_max", 0.0)),
-        "reader_attention_pairwise_cosine_mean": float(
-            prefix_stats.get("reader_attention_pairwise_cosine_mean", 0.0)
-        ),
-        "reader_slot_coverage_fraction": float(prefix_stats.get("reader_slot_coverage_fraction", 0.0)),
-        "reader_num_queries": float(prefix_stats.get("reader_num_queries", 0.0)),
-        "reader_slot_count": float(prefix_stats.get("reader_slot_count", 0.0)),
+        key: float(prefix_stats.get(key, 0.0))
+        for key in PREFIX_SCALAR_KEYS
     }
 
 
@@ -791,6 +1031,11 @@ def _prefix_stats(
     memory_short: torch.Tensor | None = None,
     support_item_states: torch.Tensor | None = None,
     reader_attention: torch.Tensor | None = None,
+    reader_base_queries: torch.Tensor | None = None,
+    reader_conditioned_queries: torch.Tensor | None = None,
+    reader_attention_logits: torch.Tensor | None = None,
+    reader_readouts: torch.Tensor | None = None,
+    fuser: MemoryFuser | None = None,
     memory_path_variant: str = "single_level",
     projector_token_source: str = "writer_slots",
 ) -> dict[str, Any]:
@@ -860,9 +1105,21 @@ def _prefix_stats(
             "support_item_hidden_norm_std": float(support_summary["slot_norm_std"]),
             "support_item_hidden_norm_max": float(support_summary["slot_norm_max"]),
         }
+    reader_pre_stats = _reader_pre_attention_stats(
+        base_queries=reader_base_queries,
+        conditioned_queries=reader_conditioned_queries,
+        attention_logits=reader_attention_logits,
+    )
     reader_stats = _reader_attention_stats(
         reader_attention,
         memory_long_slots=0 if memory_long is None else int(memory_long.shape[1]),
+        reader_readouts=reader_readouts,
+    )
+    memory_long_geometry_stats = _memory_long_geometry_stats(memory_long)
+    fuser_geometry_stats = _fuser_stats(
+        fuser=fuser,
+        fuser_input=reader_readouts,
+        memory_short=memory_short,
     )
     if layer_prefix_hidden_by_layer is not None:
         if not layer_prefix_hidden_by_layer:
@@ -885,9 +1142,12 @@ def _prefix_stats(
                 "prefix_slot_norm_max": 0.0,
                 **writer_stats,
                 **memory_long_stats,
+                **memory_long_geometry_stats,
                 **memory_short_stats,
                 **support_stats,
+                **reader_pre_stats,
                 **reader_stats,
+                **fuser_geometry_stats,
             }
         ordered_layers = sorted(int(layer_index) for layer_index in layer_prefix_hidden_by_layer)
         stacked = torch.stack(
@@ -928,9 +1188,12 @@ def _prefix_stats(
             "prefix_slot_norm_max": float(slot_norms.max().item()),
             **writer_stats,
             **memory_long_stats,
+            **memory_long_geometry_stats,
             **memory_short_stats,
             **support_stats,
+            **reader_pre_stats,
             **reader_stats,
+            **fuser_geometry_stats,
         }
     if prefix_embeddings is None or prefix_embeddings.numel() == 0:
         return {
@@ -954,9 +1217,12 @@ def _prefix_stats(
             "prefix_slot_norm_max": 0.0,
             **writer_stats,
             **memory_long_stats,
+            **memory_long_geometry_stats,
             **memory_short_stats,
             **support_stats,
+            **reader_pre_stats,
             **reader_stats,
+            **fuser_geometry_stats,
         }
     prefix_summary = _slot_norm_summary(prefix_embeddings)
     return {
@@ -980,9 +1246,12 @@ def _prefix_stats(
         "prefix_slot_norm_max": float(prefix_summary["slot_norm_max"]),
         **writer_stats,
         **memory_long_stats,
+        **memory_long_geometry_stats,
         **memory_short_stats,
         **support_stats,
+        **reader_pre_stats,
         **reader_stats,
+        **fuser_geometry_stats,
     }
 
 
@@ -1806,18 +2075,22 @@ class SharedInjectionPilotRuntime(nn.Module):
         *,
         memory_long: torch.Tensor,
         prompt_text: str | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    ) -> dict[str, torch.Tensor | None]:
         if self.reader is None or self.fuser is None:
             raise RuntimeError("two_level runtime requires reader and fuser modules.")
         reader_context = self._prompt_summary(prompt_text)
         reader_outputs = self.reader.read(memory_long, context=reader_context)
         memory_short = self.fuser.fuse(reader_outputs["readouts"])
-        return (
-            memory_short,
-            reader_outputs["attention"],
-            reader_outputs["gates"],
-            reader_context,
-        )
+        return {
+            "memory_short": memory_short,
+            "reader_attention": reader_outputs["attention"],
+            "reader_gates": reader_outputs["gates"],
+            "reader_context": reader_context,
+            "reader_base_queries": reader_outputs.get("base_queries"),
+            "reader_conditioned_queries": reader_outputs.get("conditioned_queries"),
+            "reader_attention_logits": reader_outputs.get("attention_logits"),
+            "reader_readouts": reader_outputs.get("readouts"),
+        }
 
     def build_prefix_artifacts(
         self,
@@ -1834,6 +2107,10 @@ class SharedInjectionPilotRuntime(nn.Module):
         reader_attention = None
         reader_gates = None
         reader_context = None
+        reader_base_queries = None
+        reader_conditioned_queries = None
+        reader_attention_logits = None
+        reader_readouts = None
         projector_source = memory_long
         if self.memory_path_variant == "two_level":
             if self.writer_memory_control == "zero":
@@ -1858,10 +2135,18 @@ class SharedInjectionPilotRuntime(nn.Module):
                     device=self.backbone.device,
                 )
             else:
-                memory_short, reader_attention, reader_gates, reader_context = self._two_level_memory_short(
+                two_level_outputs = self._two_level_memory_short(
                     memory_long=memory_long,
                     prompt_text=prompt_text,
                 )
+                memory_short = two_level_outputs["memory_short"]
+                reader_attention = two_level_outputs["reader_attention"]
+                reader_gates = two_level_outputs["reader_gates"]
+                reader_context = two_level_outputs["reader_context"]
+                reader_base_queries = two_level_outputs["reader_base_queries"]
+                reader_conditioned_queries = two_level_outputs["reader_conditioned_queries"]
+                reader_attention_logits = two_level_outputs["reader_attention_logits"]
+                reader_readouts = two_level_outputs["reader_readouts"]
             projector_source = memory_long if self.projector_token_source == "writer_slots" else memory_short
             if projector_source is None:
                 raise RuntimeError("two_level projector source resolved to None.")
@@ -1874,6 +2159,11 @@ class SharedInjectionPilotRuntime(nn.Module):
                 memory_short=memory_short,
                 support_item_states=support_item_states,
                 reader_attention=reader_attention,
+                reader_base_queries=reader_base_queries,
+                reader_conditioned_queries=reader_conditioned_queries,
+                reader_attention_logits=reader_attention_logits,
+                reader_readouts=reader_readouts,
+                fuser=self.fuser,
                 memory_path_variant=self.memory_path_variant,
                 projector_token_source=self.projector_token_source,
             )
@@ -1898,6 +2188,11 @@ class SharedInjectionPilotRuntime(nn.Module):
             memory_short=memory_short,
             support_item_states=support_item_states,
             reader_attention=reader_attention,
+            reader_base_queries=reader_base_queries,
+            reader_conditioned_queries=reader_conditioned_queries,
+            reader_attention_logits=reader_attention_logits,
+            reader_readouts=reader_readouts,
+            fuser=self.fuser,
             memory_path_variant=self.memory_path_variant,
             projector_token_source=self.projector_token_source,
         )
@@ -2635,6 +2930,7 @@ def run_shared_injection_pilot(
                 "support_item_hidden_norm_std": snapshot_payload["support_item_hidden_norm_std"],
                 "support_item_hidden_norm_max": snapshot_payload["support_item_hidden_norm_max"],
                 "prefix_artifact_stats": snapshot_payload["prefix_artifact_stats"],
+                **_prefix_scalar_summary(snapshot_payload),
             }
         )
 

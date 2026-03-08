@@ -26,6 +26,7 @@ from memtotal.training.m4_shared_injection import (
     _evaluate_examples,
     _merge_example_lookup,
     _prefix_stats,
+    _prefix_scalar_summary,
     _resolve_support_rows_for_memory_control,
     _resolve_support_lookup_dataset_paths,
 )
@@ -1671,6 +1672,7 @@ def _collect_prefix_norm_rows_for_metrics(
             "support_item_hidden_norm_mean": float(metrics.get("support_item_hidden_norm_mean", 0.0)),
             "support_item_hidden_norm_std": float(metrics.get("support_item_hidden_norm_std", 0.0)),
             "support_item_hidden_norm_max": float(metrics.get("support_item_hidden_norm_max", 0.0)),
+            **_prefix_scalar_summary(metrics),
         }
     ]
     layer_indices = sorted(
@@ -1794,6 +1796,7 @@ def _collect_train_event_norm_rows(
                 "writer_to_projector_grad_ratio": float(event.get("writer_to_projector_grad_ratio", 0.0)),
                 "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
                 "loss": float(event.get("loss", 0.0)),
+                **_prefix_scalar_summary(event),
             }
         )
     return rows
@@ -2615,6 +2618,9 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
             "final_memory_short_effective_rank": 0.0,
             "final_reader_attention_pairwise_cosine_mean": 0.0,
             "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+            "final_reader_context_overwrite_ratio": 0.0,
+            "final_reader_readout_effective_rank": 0.0,
+            "final_fuser_output_effective_rank": 0.0,
         }
     path = Path(train_events_json)
     if not path.exists():
@@ -2623,6 +2629,9 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
             "final_memory_short_effective_rank": 0.0,
             "final_reader_attention_pairwise_cosine_mean": 0.0,
             "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+            "final_reader_context_overwrite_ratio": 0.0,
+            "final_reader_readout_effective_rank": 0.0,
+            "final_fuser_output_effective_rank": 0.0,
         }
     payload = json.loads(path.read_text())
     if isinstance(payload, dict):
@@ -2635,6 +2644,9 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
             "final_memory_short_effective_rank": 0.0,
             "final_reader_attention_pairwise_cosine_mean": 0.0,
             "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+            "final_reader_context_overwrite_ratio": 0.0,
+            "final_reader_readout_effective_rank": 0.0,
+            "final_fuser_output_effective_rank": 0.0,
         }
     event = events[-1]
     return {
@@ -2645,6 +2657,15 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
         ),
         "final_writer_slot_basis_pairwise_cosine_mean": float(
             event.get("writer_slot_basis_pairwise_cosine_mean", 0.0)
+        ),
+        "final_reader_context_overwrite_ratio": float(
+            event.get("reader_context_overwrite_ratio", 0.0)
+        ),
+        "final_reader_readout_effective_rank": float(
+            event.get("reader_readout_effective_rank", 0.0)
+        ),
+        "final_fuser_output_effective_rank": float(
+            event.get("fuser_output_effective_rank", 0.0)
         ),
     }
 

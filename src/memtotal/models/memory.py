@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -211,8 +212,57 @@ class MemoryReader(ManagedMemoryModule):
         if memory_mask.shape != memory.shape[:2]:
             raise ValueError(
                 "memory_mask must have shape [batch, memory_slots] matching memory."
-            )
+        )
         return ~memory_mask.to(dtype=torch.bool, device=memory.device)
+
+    def _project_attention_logits(
+        self,
+        queries: torch.Tensor,
+        memory: torch.Tensor,
+        *,
+        key_padding_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        num_heads = int(self.cross_attn.num_heads)
+        head_dim = self.embed_dim // max(1, num_heads)
+        if head_dim * num_heads != self.embed_dim:
+            raise ValueError(
+                f"Reader embed_dim={self.embed_dim} must be divisible by num_heads={num_heads}."
+            )
+        if self.cross_attn._qkv_same_embed_dim:
+            q_proj_weight, k_proj_weight, _ = self.cross_attn.in_proj_weight.chunk(3, dim=0)
+            if self.cross_attn.in_proj_bias is None:
+                q_proj_bias = None
+                k_proj_bias = None
+            else:
+                q_proj_bias, k_proj_bias, _ = self.cross_attn.in_proj_bias.chunk(3, dim=0)
+        else:
+            q_proj_weight = self.cross_attn.q_proj_weight
+            k_proj_weight = self.cross_attn.k_proj_weight
+            if self.cross_attn.in_proj_bias is None:
+                q_proj_bias = None
+                k_proj_bias = None
+            else:
+                q_proj_bias, k_proj_bias, _ = self.cross_attn.in_proj_bias.chunk(3, dim=0)
+
+        projected_queries = F.linear(queries, q_proj_weight, q_proj_bias)
+        projected_keys = F.linear(memory, k_proj_weight, k_proj_bias)
+        projected_queries = projected_queries.view(
+            queries.shape[0],
+            queries.shape[1],
+            num_heads,
+            head_dim,
+        ).transpose(1, 2)
+        projected_keys = projected_keys.view(
+            memory.shape[0],
+            memory.shape[1],
+            num_heads,
+            head_dim,
+        ).transpose(1, 2)
+        logits = torch.matmul(projected_queries, projected_keys.transpose(-2, -1))
+        logits = logits * (1.0 / math.sqrt(head_dim))
+        if key_padding_mask is not None:
+            logits = logits.masked_fill(key_padding_mask[:, None, None, :], float("-inf"))
+        return logits
 
     def read(
         self,
@@ -227,7 +277,8 @@ class MemoryReader(ManagedMemoryModule):
                 f"Reader expected memory hidden size {self.embed_dim}, got {memory.shape[-1]}."
             )
         batch_size = memory.shape[0]
-        queries = self.queries.unsqueeze(0).expand(batch_size, -1, -1)
+        base_queries = self.queries.unsqueeze(0).expand(batch_size, -1, -1)
+        conditioned_queries = base_queries
         pooled_context = self._pool_context(context)
         if pooled_context is not None and pooled_context.shape[-1] != self.embed_dim:
             raise ValueError(
@@ -239,13 +290,19 @@ class MemoryReader(ManagedMemoryModule):
                 f"Reader expected candidate_state hidden size {self.embed_dim}, got {pooled_candidate_state.shape[-1]}."
             )
         if self.context_proj is not None and pooled_context is not None:
-            queries = queries + self.context_proj(pooled_context).unsqueeze(1)
+            conditioned_queries = conditioned_queries + self.context_proj(pooled_context).unsqueeze(1)
         if pooled_candidate_state is not None:
-            queries = queries + pooled_candidate_state.unsqueeze(1)
+            conditioned_queries = conditioned_queries + pooled_candidate_state.unsqueeze(1)
+        context_shift = conditioned_queries - base_queries
 
         key_padding_mask = self._build_key_padding_mask(memory, memory_mask)
+        attention_logits = self._project_attention_logits(
+            conditioned_queries,
+            memory,
+            key_padding_mask=key_padding_mask,
+        )
         readouts, attention = self.cross_attn(
-            query=queries,
+            query=conditioned_queries,
             key=memory,
             value=memory,
             key_padding_mask=key_padding_mask,
@@ -254,7 +311,9 @@ class MemoryReader(ManagedMemoryModule):
         )
         attention = attention.mean(dim=1)
         if self.gating_mode == "learned":
-            gate_source = pooled_context if pooled_context is not None else queries.mean(dim=1)
+            gate_source = (
+                pooled_context if pooled_context is not None else conditioned_queries.mean(dim=1)
+            )
             gates = torch.sigmoid(self.gate(gate_source))
             readouts = readouts * gates.unsqueeze(-1)
         elif self.gating_mode == "random":
@@ -267,13 +326,18 @@ class MemoryReader(ManagedMemoryModule):
         normalized_readouts = self.readout_norm(readouts)
         if self.query_residual_scale != 0.0:
             normalized_readouts = normalized_readouts + (
-                self.query_residual_scale * queries * gates.unsqueeze(-1)
+                self.query_residual_scale * conditioned_queries * gates.unsqueeze(-1)
             )
         return {
             "readouts": normalized_readouts,
+            "raw_readouts": readouts,
             "attention": attention,
             "gates": gates,
-            "queries": queries,
+            "queries": conditioned_queries,
+            "base_queries": base_queries,
+            "conditioned_queries": conditioned_queries,
+            "context_shift": context_shift,
+            "attention_logits": attention_logits,
         }
 
 

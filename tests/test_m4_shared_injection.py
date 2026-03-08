@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 import unittest
@@ -26,7 +27,7 @@ from memtotal.analysis.m4_shared_injection import (
     run_m4_shared_injection_dynamics_audit,
     run_m4_writer_information_audit,
 )
-from memtotal.models.memory import MemoryWriter
+from memtotal.models.memory import MemoryFuser, MemoryWriter
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     SharedLowRankDeepPrefixProjector,
@@ -551,11 +552,21 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         memory_long = torch.randn(1, 8, 6)
         memory_short = torch.randn(1, 4, 6)
         reader_attention = torch.softmax(torch.randn(1, 4, 8), dim=-1)
+        base_queries = torch.randn(1, 4, 6)
+        conditioned_queries = base_queries + 0.5
+        attention_logits = torch.randn(1, 2, 4, 8)
+        reader_readouts = torch.randn(1, 4, 6)
+        fuser = MemoryFuser(embed_dim=6, num_queries=4, short_slots=4, arch="linear", hidden_dim=12)
         stats = _prefix_stats(
             layer_prefix_hidden_by_layer={0: torch.randn(1, 4, 6)},
             memory_long=memory_long,
             memory_short=memory_short,
             reader_attention=reader_attention,
+            reader_base_queries=base_queries,
+            reader_conditioned_queries=conditioned_queries,
+            reader_attention_logits=attention_logits,
+            reader_readouts=reader_readouts,
+            fuser=fuser,
             memory_path_variant="two_level",
             projector_token_source="short_slots",
         )
@@ -565,6 +576,11 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertEqual(stats["memory_short_slots"], 4.0)
         self.assertEqual(stats["reader_num_queries"], 4.0)
         self.assertGreaterEqual(stats["reader_attention_entropy_mean"], 0.0)
+        self.assertGreaterEqual(stats["reader_context_overwrite_ratio"], 0.0)
+        self.assertGreater(stats["reader_readout_effective_rank"], 0.0)
+        self.assertGreaterEqual(stats["fuser_output_effective_rank"], 0.0)
+        self.assertEqual(len(stats["memory_long_slot_norm_histogram_counts"]), 4)
+        self.assertGreaterEqual(stats["memory_long_singular_value_top1"], 0.0)
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_runtime_uses_prompt_summary_cache_and_short_slots(self, mock_backbone_cls) -> None:
@@ -629,6 +645,8 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         )
         self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 8, 6])
         self.assertEqual(list(prefix_artifacts.memory_short.shape), [1, 4, 6])
+        self.assertIn("reader_context_overwrite_ratio", prefix_artifacts.prefix_stats)
+        self.assertIn("fuser_output_effective_rank", prefix_artifacts.prefix_stats)
         prompt_calls = [call for call in fake_backbone._calls if call == ("Claim: cached prompt",)]
         self.assertEqual(len(prompt_calls), 1)
 
@@ -1178,6 +1196,11 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(selection["selected_suite"], "triad6")
             self.assertEqual(selection["selected_step"], 16)
             self.assertEqual(selection["i_real_checkpoint_path"], "/tmp/i_real_16.pt")
+            with (output_dir / "prefix_norm_drift.csv").open() as handle:
+                fieldnames = list(next(iter(csv.DictReader(handle))).keys())
+            self.assertIn("reader_context_overwrite_ratio", fieldnames)
+            self.assertIn("fuser_output_effective_rank", fieldnames)
+            self.assertIn("memory_long_slot_energy_cv", fieldnames)
 
     def test_summarize_m4_support_bank_run_marks_brittle_when_both_heldouts_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
