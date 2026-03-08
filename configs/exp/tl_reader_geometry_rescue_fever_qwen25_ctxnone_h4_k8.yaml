@@ -1,0 +1,18 @@
+includes:
+  - m5_fever_qwen25_phase2_val_objective_dense_teacher_control_common.yaml
+  - ../method/memory_bootstrap_transformer_real_twolevel_h4_k8_slot_basis_ctxnone.yaml
+
+experiment:
+  name: tl_reader_geometry_rescue_fever_qwen25_ctxnone_h4_k8
+  stage: TL-Reader-Geometry-RG1
+  method_variant: fever-tl-reader-geometry-rg1-ctxnone-h4-k8
+
+runtime:
+  pilot_memory_path_variant: two_level
+  pilot_reader_context_mode: none
+  pilot_projector_token_source: short_slots
+  pilot_memory_long_diversity_weight: 0.0
+  pilot_memory_short_diversity_weight: 0.0
+  pilot_reader_attention_diversity_weight: 0.0
+  pilot_writer_slot_basis_orthogonality_weight: 0.05
+  pilot_writer_orthogonalize_slot_basis: true

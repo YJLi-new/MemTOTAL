@@ -1,0 +1,5 @@
+{
+  "rg1a-ctxoff-h4-k8": "/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/phase2-selected/pilot-I-real/snapshot_evals/step_0002/checkpoint.pt",
+  "rg1b-ctxoff-h4-k4": "/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/phase2-selected/pilot-I-real/snapshot_evals/step_0002/checkpoint.pt",
+  "rg1c-ctxoff-h4-k4-linear": "/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/phase2-selected/pilot-I-real/snapshot_evals/step_0002/checkpoint.pt"
+}

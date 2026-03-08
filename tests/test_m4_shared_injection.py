@@ -14,6 +14,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_alignment_runs,
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
+    compare_tl_reader_geometry_runs,
     compare_tl_bridge_rescue_runs,
     compare_tl_slot_basis_runs,
     compare_tl_poc_runs,
@@ -1970,6 +1971,208 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(summary["comparison_conclusion"], "success")
             self.assertTrue(summary["basis_geometry_improved"])
             self.assertTrue(summary["basis_reader_specialization_improved"])
+
+    def test_compare_tl_reader_geometry_runs_prefers_rg1a_when_ctx_off_moves_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_reader_csv(name: str, rows: list[dict[str, object]]) -> Path:
+                path = root / name
+                fieldnames = sorted({key for row in rows for key in row})
+                with path.open("w") as handle:
+                    handle.write(",".join(fieldnames) + "\n")
+                    for row in rows:
+                        handle.write(",".join(str(row.get(field, "")) for field in fieldnames) + "\n")
+                return path
+
+            def write_train_events(name: str, event: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": [event]}))
+                return path
+
+            baseline_summary = write_payload("baseline.json", {"selection_passed": False, "selected_step": None})
+            baseline_reader = write_reader_csv(
+                "baseline_reader.csv",
+                [
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.08, "reader_slot_coverage_fraction": 0.2},
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.08, "reader_slot_coverage_fraction": 0.2},
+                ],
+            )
+            baseline_events = write_train_events(
+                "baseline_events.json",
+                {
+                    "memory_short_effective_rank": 1.2,
+                    "reader_attention_pairwise_cosine_mean": 1.0,
+                    "reader_context_overwrite_ratio": 12.0,
+                    "reader_readout_effective_rank": 1.05,
+                    "fuser_output_effective_rank": 1.2,
+                },
+            )
+            rg1a_summary = write_payload("rg1a.json", {"selection_passed": True, "selected_step": 8})
+            rg1a_reader = write_reader_csv(
+                "rg1a_reader.csv",
+                [
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 1.95, "reader_slot_coverage_fraction": 0.3},
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 1, "reader_attention_entropy": 1.92, "reader_slot_coverage_fraction": 0.3},
+                ],
+            )
+            rg1a_events = write_train_events(
+                "rg1a_events.json",
+                {
+                    "memory_short_effective_rank": 1.6,
+                    "reader_attention_pairwise_cosine_mean": 0.9,
+                    "reader_context_overwrite_ratio": 0.0,
+                    "reader_readout_effective_rank": 1.4,
+                    "fuser_output_effective_rank": 1.5,
+                },
+            )
+            rg1b_summary = write_payload("rg1b.json", {"selection_passed": False, "selected_step": None})
+            rg1b_reader = write_reader_csv(
+                "rg1b_reader.csv",
+                [
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.06, "reader_slot_coverage_fraction": 0.2},
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.05, "reader_slot_coverage_fraction": 0.2},
+                ],
+            )
+            rg1b_events = write_train_events(
+                "rg1b_events.json",
+                {
+                    "memory_short_effective_rank": 1.25,
+                    "reader_attention_pairwise_cosine_mean": 0.98,
+                    "reader_context_overwrite_ratio": 0.0,
+                    "reader_readout_effective_rank": 1.08,
+                    "fuser_output_effective_rank": 1.22,
+                },
+            )
+            rg1c_summary = write_payload("rg1c.json", {"selection_passed": False, "selected_step": None})
+            rg1c_reader = write_reader_csv(
+                "rg1c_reader.csv",
+                [
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.04, "reader_slot_coverage_fraction": 0.2},
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.03, "reader_slot_coverage_fraction": 0.2},
+                ],
+            )
+            rg1c_events = write_train_events(
+                "rg1c_events.json",
+                {
+                    "memory_short_effective_rank": 1.22,
+                    "reader_attention_pairwise_cosine_mean": 0.97,
+                    "reader_context_overwrite_ratio": 0.0,
+                    "reader_readout_effective_rank": 1.10,
+                    "fuser_output_effective_rank": 1.25,
+                },
+            )
+
+            summary = compare_tl_reader_geometry_runs(
+                baseline_summary_json=str(baseline_summary),
+                rg1a_summary_json=str(rg1a_summary),
+                rg1b_summary_json=str(rg1b_summary),
+                rg1c_summary_json=str(rg1c_summary),
+                baseline_reader_query_csv=str(baseline_reader),
+                rg1a_reader_query_csv=str(rg1a_reader),
+                rg1b_reader_query_csv=str(rg1b_reader),
+                rg1c_reader_query_csv=str(rg1c_reader),
+                baseline_train_events_json=str(baseline_events),
+                rg1a_train_events_json=str(rg1a_events),
+                rg1b_train_events_json=str(rg1b_events),
+                rg1c_train_events_json=str(rg1c_events),
+            )
+            self.assertEqual(summary["comparison_conclusion"], "informative")
+            self.assertEqual(summary["primary_interpretation"], "B-1a_context_overwrite")
+            self.assertTrue(summary["context_overwrite_supported"])
+            self.assertTrue(summary["rg1a_meaningful_movement"])
+            self.assertEqual(summary["recommended_control_arm"], "rg1a_ctxoff_h4_k8")
+
+    def test_compare_tl_reader_geometry_runs_moves_to_rg2_when_no_probe_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            def write_reader_csv(name: str, rows: list[dict[str, object]]) -> Path:
+                path = root / name
+                fieldnames = sorted({key for row in rows for key in row})
+                with path.open("w") as handle:
+                    handle.write(",".join(fieldnames) + "\n")
+                    for row in rows:
+                        handle.write(",".join(str(row.get(field, "")) for field in fieldnames) + "\n")
+                return path
+
+            def write_train_events(name: str, event: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps({"events": [event]}))
+                return path
+
+            baseline_summary = write_payload("baseline.json", {"selection_passed": False, "selected_step": None})
+            baseline_reader = write_reader_csv(
+                "baseline_reader.csv",
+                [
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.08},
+                    {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.08},
+                ],
+            )
+            baseline_events = write_train_events(
+                "baseline_events.json",
+                {
+                    "memory_short_effective_rank": 1.2,
+                    "reader_attention_pairwise_cosine_mean": 1.0,
+                    "reader_context_overwrite_ratio": 12.0,
+                    "reader_readout_effective_rank": 1.05,
+                    "fuser_output_effective_rank": 1.2,
+                },
+            )
+
+            def same_probe(name: str) -> tuple[Path, Path, Path]:
+                return (
+                    write_payload(f"{name}.json", {"selection_passed": False, "selected_step": None}),
+                    write_reader_csv(
+                        f"{name}_reader.csv",
+                        [
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.07},
+                            {"arm_alias": "I_real", "step": 8, "example_id": "1", "reader_argmax_slot": 0, "reader_attention_entropy": 2.07},
+                        ],
+                    ),
+                    write_train_events(
+                        f"{name}_events.json",
+                        {
+                            "memory_short_effective_rank": 1.22,
+                            "reader_attention_pairwise_cosine_mean": 0.98,
+                            "reader_context_overwrite_ratio": 0.0,
+                            "reader_readout_effective_rank": 1.06,
+                            "fuser_output_effective_rank": 1.21,
+                        },
+                    ),
+                )
+
+            rg1a_summary, rg1a_reader, rg1a_events = same_probe("rg1a")
+            rg1b_summary, rg1b_reader, rg1b_events = same_probe("rg1b")
+            rg1c_summary, rg1c_reader, rg1c_events = same_probe("rg1c")
+
+            summary = compare_tl_reader_geometry_runs(
+                baseline_summary_json=str(baseline_summary),
+                rg1a_summary_json=str(rg1a_summary),
+                rg1b_summary_json=str(rg1b_summary),
+                rg1c_summary_json=str(rg1c_summary),
+                baseline_reader_query_csv=str(baseline_reader),
+                rg1a_reader_query_csv=str(rg1a_reader),
+                rg1b_reader_query_csv=str(rg1b_reader),
+                rg1c_reader_query_csv=str(rg1c_reader),
+                baseline_train_events_json=str(baseline_events),
+                rg1a_train_events_json=str(rg1a_events),
+                rg1b_train_events_json=str(rg1b_events),
+                rg1c_train_events_json=str(rg1c_events),
+            )
+            self.assertEqual(summary["comparison_conclusion"], "failure")
+            self.assertTrue(summary["move_to_rg2"])
+            self.assertEqual(summary["primary_interpretation"], "B-1_undetermined_move_to_rg2")
 
 
 if __name__ == "__main__":

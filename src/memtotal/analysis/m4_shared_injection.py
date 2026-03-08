@@ -3063,3 +3063,208 @@ def compare_tl_slot_basis_runs(
         "comparison_conclusion": conclusion,
         "failure_reason": failure_reason,
     }
+
+
+def _rg1_probe_metrics(
+    *,
+    summary_json: str,
+    reader_query_csv: str | None = None,
+    train_events_json: str | None = None,
+) -> dict[str, float | bool | int | None]:
+    summary = json.loads(Path(summary_json).read_text())
+    reader = _reader_query_summary(reader_query_csv)
+    geometry = _train_geometry_summary(train_events_json)
+    return {
+        "selection_passed": bool(summary.get("selection_passed", False)),
+        "selected_step": summary.get("selected_step"),
+        "reader_query_rows": reader["reader_query_rows"],
+        "reader_query_argmax_unique_mean": reader["reader_query_argmax_unique_mean"],
+        "reader_query_entropy_mean": reader["reader_query_entropy_mean"],
+        "reader_query_coverage_mean": reader["reader_query_coverage_mean"],
+        "final_memory_short_effective_rank": geometry["final_memory_short_effective_rank"],
+        "final_reader_attention_pairwise_cosine_mean": geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "final_reader_context_overwrite_ratio": geometry["final_reader_context_overwrite_ratio"],
+        "final_reader_readout_effective_rank": geometry["final_reader_readout_effective_rank"],
+        "final_fuser_output_effective_rank": geometry["final_fuser_output_effective_rank"],
+    }
+
+
+def _rg1_arm_delta(baseline: dict[str, float | bool | int | None], arm: dict[str, float | bool | int | None]) -> dict[str, float | bool]:
+    entropy_delta = float(arm["reader_query_entropy_mean"]) - float(baseline["reader_query_entropy_mean"])
+    pairwise_delta = float(arm["final_reader_attention_pairwise_cosine_mean"]) - float(
+        baseline["final_reader_attention_pairwise_cosine_mean"]
+    )
+    short_rank_delta = float(arm["final_memory_short_effective_rank"]) - float(
+        baseline["final_memory_short_effective_rank"]
+    )
+    selection_alive = bool(arm["selection_passed"]) and not bool(baseline["selection_passed"])
+    meaningful_movement = bool(
+        entropy_delta <= -0.05
+        or pairwise_delta <= -0.05
+        or short_rank_delta >= 0.30
+        or selection_alive
+    )
+    return {
+        "entropy_delta": entropy_delta,
+        "pairwise_delta": pairwise_delta,
+        "short_rank_delta": short_rank_delta,
+        "selection_alive": selection_alive,
+        "meaningful_movement": meaningful_movement,
+    }
+
+
+def compare_tl_reader_geometry_runs(
+    *,
+    baseline_summary_json: str,
+    rg1a_summary_json: str,
+    rg1b_summary_json: str,
+    rg1c_summary_json: str,
+    baseline_reader_query_csv: str | None = None,
+    rg1a_reader_query_csv: str | None = None,
+    rg1b_reader_query_csv: str | None = None,
+    rg1c_reader_query_csv: str | None = None,
+    baseline_train_events_json: str | None = None,
+    rg1a_train_events_json: str | None = None,
+    rg1b_train_events_json: str | None = None,
+    rg1c_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    baseline = _rg1_probe_metrics(
+        summary_json=baseline_summary_json,
+        reader_query_csv=baseline_reader_query_csv,
+        train_events_json=baseline_train_events_json,
+    )
+    rg1a = _rg1_probe_metrics(
+        summary_json=rg1a_summary_json,
+        reader_query_csv=rg1a_reader_query_csv,
+        train_events_json=rg1a_train_events_json,
+    )
+    rg1b = _rg1_probe_metrics(
+        summary_json=rg1b_summary_json,
+        reader_query_csv=rg1b_reader_query_csv,
+        train_events_json=rg1b_train_events_json,
+    )
+    rg1c = _rg1_probe_metrics(
+        summary_json=rg1c_summary_json,
+        reader_query_csv=rg1c_reader_query_csv,
+        train_events_json=rg1c_train_events_json,
+    )
+
+    rg1a_delta = _rg1_arm_delta(baseline, rg1a)
+    rg1b_delta = _rg1_arm_delta(baseline, rg1b)
+    rg1c_delta = _rg1_arm_delta(baseline, rg1c)
+
+    def arm_score(
+        arm_metrics: dict[str, float | bool | int | None],
+        arm_delta: dict[str, float | bool],
+    ) -> tuple[float, float, float, float]:
+        return (
+            1.0 if bool(arm_delta["selection_alive"]) else 0.0,
+            float(max(0.0, -float(arm_delta["entropy_delta"]))),
+            float(max(0.0, -float(arm_delta["pairwise_delta"]))),
+            float(max(0.0, float(arm_delta["short_rank_delta"]))),
+        )
+
+    arms = {
+        "rg1a_ctxoff_h4_k8": (rg1a, rg1a_delta),
+        "rg1b_ctxoff_h4_k4": (rg1b, rg1b_delta),
+        "rg1c_ctxoff_h4_k4_linear": (rg1c, rg1c_delta),
+    }
+    meaningful_arms = {
+        name: values for name, values in arms.items() if bool(values[1]["meaningful_movement"])
+    }
+
+    recommended_control_arm = "baseline_slot_basis"
+    if meaningful_arms:
+        recommended_control_arm = max(
+            meaningful_arms.items(),
+            key=lambda item: arm_score(item[1][0], item[1][1]),
+        )[0]
+
+    if bool(rg1a_delta["meaningful_movement"]):
+        primary_interpretation = "B-1a_context_overwrite"
+        comparison_conclusion = "informative"
+        failure_reason = ""
+    elif bool(rg1b_delta["meaningful_movement"]):
+        primary_interpretation = "B-1b_h_equals_k"
+        comparison_conclusion = "informative"
+        failure_reason = ""
+    elif bool(rg1c_delta["meaningful_movement"]):
+        primary_interpretation = "B-1c_linear_fuser"
+        comparison_conclusion = "informative"
+        failure_reason = ""
+    else:
+        primary_interpretation = "B-1_undetermined_move_to_rg2"
+        comparison_conclusion = "failure"
+        failure_reason = "no_meaningful_movement"
+
+    return {
+        "baseline_selection_passed": bool(baseline["selection_passed"]),
+        "baseline_selected_step": baseline["selected_step"],
+        "baseline_reader_query_entropy_mean": baseline["reader_query_entropy_mean"],
+        "baseline_reader_query_argmax_unique_mean": baseline["reader_query_argmax_unique_mean"],
+        "baseline_final_memory_short_effective_rank": baseline["final_memory_short_effective_rank"],
+        "baseline_final_reader_attention_pairwise_cosine_mean": baseline[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "baseline_final_reader_context_overwrite_ratio": baseline["final_reader_context_overwrite_ratio"],
+        "baseline_final_reader_readout_effective_rank": baseline["final_reader_readout_effective_rank"],
+        "baseline_final_fuser_output_effective_rank": baseline["final_fuser_output_effective_rank"],
+        "rg1a_selection_passed": bool(rg1a["selection_passed"]),
+        "rg1a_selected_step": rg1a["selected_step"],
+        "rg1a_reader_query_entropy_mean": rg1a["reader_query_entropy_mean"],
+        "rg1a_reader_query_argmax_unique_mean": rg1a["reader_query_argmax_unique_mean"],
+        "rg1a_final_memory_short_effective_rank": rg1a["final_memory_short_effective_rank"],
+        "rg1a_final_reader_attention_pairwise_cosine_mean": rg1a[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "rg1a_final_reader_context_overwrite_ratio": rg1a["final_reader_context_overwrite_ratio"],
+        "rg1a_final_reader_readout_effective_rank": rg1a["final_reader_readout_effective_rank"],
+        "rg1a_final_fuser_output_effective_rank": rg1a["final_fuser_output_effective_rank"],
+        "rg1a_entropy_delta": rg1a_delta["entropy_delta"],
+        "rg1a_pairwise_delta": rg1a_delta["pairwise_delta"],
+        "rg1a_short_rank_delta": rg1a_delta["short_rank_delta"],
+        "rg1a_selection_alive": rg1a_delta["selection_alive"],
+        "rg1a_meaningful_movement": rg1a_delta["meaningful_movement"],
+        "rg1b_selection_passed": bool(rg1b["selection_passed"]),
+        "rg1b_selected_step": rg1b["selected_step"],
+        "rg1b_reader_query_entropy_mean": rg1b["reader_query_entropy_mean"],
+        "rg1b_reader_query_argmax_unique_mean": rg1b["reader_query_argmax_unique_mean"],
+        "rg1b_final_memory_short_effective_rank": rg1b["final_memory_short_effective_rank"],
+        "rg1b_final_reader_attention_pairwise_cosine_mean": rg1b[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "rg1b_final_reader_context_overwrite_ratio": rg1b["final_reader_context_overwrite_ratio"],
+        "rg1b_final_reader_readout_effective_rank": rg1b["final_reader_readout_effective_rank"],
+        "rg1b_final_fuser_output_effective_rank": rg1b["final_fuser_output_effective_rank"],
+        "rg1b_entropy_delta": rg1b_delta["entropy_delta"],
+        "rg1b_pairwise_delta": rg1b_delta["pairwise_delta"],
+        "rg1b_short_rank_delta": rg1b_delta["short_rank_delta"],
+        "rg1b_selection_alive": rg1b_delta["selection_alive"],
+        "rg1b_meaningful_movement": rg1b_delta["meaningful_movement"],
+        "rg1c_selection_passed": bool(rg1c["selection_passed"]),
+        "rg1c_selected_step": rg1c["selected_step"],
+        "rg1c_reader_query_entropy_mean": rg1c["reader_query_entropy_mean"],
+        "rg1c_reader_query_argmax_unique_mean": rg1c["reader_query_argmax_unique_mean"],
+        "rg1c_final_memory_short_effective_rank": rg1c["final_memory_short_effective_rank"],
+        "rg1c_final_reader_attention_pairwise_cosine_mean": rg1c[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "rg1c_final_reader_context_overwrite_ratio": rg1c["final_reader_context_overwrite_ratio"],
+        "rg1c_final_reader_readout_effective_rank": rg1c["final_reader_readout_effective_rank"],
+        "rg1c_final_fuser_output_effective_rank": rg1c["final_fuser_output_effective_rank"],
+        "rg1c_entropy_delta": rg1c_delta["entropy_delta"],
+        "rg1c_pairwise_delta": rg1c_delta["pairwise_delta"],
+        "rg1c_short_rank_delta": rg1c_delta["short_rank_delta"],
+        "rg1c_selection_alive": rg1c_delta["selection_alive"],
+        "rg1c_meaningful_movement": rg1c_delta["meaningful_movement"],
+        "context_overwrite_supported": bool(rg1a_delta["meaningful_movement"]),
+        "k_eq_h_supported": bool(rg1b_delta["meaningful_movement"]),
+        "linear_fuser_supported": bool(rg1c_delta["meaningful_movement"]),
+        "primary_interpretation": primary_interpretation,
+        "recommended_control_arm": recommended_control_arm,
+        "move_to_rg2": not bool(meaningful_arms),
+        "comparison_conclusion": comparison_conclusion,
+        "failure_reason": failure_reason,
+    }

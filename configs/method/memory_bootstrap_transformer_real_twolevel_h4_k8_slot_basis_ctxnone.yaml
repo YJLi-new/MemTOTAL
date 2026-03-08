@@ -1,0 +1,2 @@
+includes:
+  - memory_bootstrap_transformer_real_twolevel_h4_k8_slot_basis.yaml

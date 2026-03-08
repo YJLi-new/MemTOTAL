@@ -1,0 +1,11 @@
+includes:
+  - tl_reader_geometry_rescue_fever_qwen25_ctxnone_linear_h4_k4.yaml
+
+experiment:
+  name: tl_reader_geometry_rescue_fever_qwen25_dynamics_recovery_ctxnone_linear_h4_k4
+  stage: TL-Reader-Geometry-RG1
+  method_variant: fever-tl-reader-geometry-rg1-dynamics-ctxnone-linear-h4-k4
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl
