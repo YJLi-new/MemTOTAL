@@ -11,7 +11,7 @@ from torch import nn
 from memtotal.utils.repro import validate_backbone_name
 
 
-class ReceiverMicroLoRALinear(nn.Module):
+class MicroLoRALinear(nn.Module):
     def __init__(
         self,
         base_linear: nn.Linear,
@@ -22,11 +22,11 @@ class ReceiverMicroLoRALinear(nn.Module):
     ) -> None:
         super().__init__()
         if rank <= 0:
-            raise ValueError(f"Receiver micro-LoRA rank must be positive, got {rank}.")
+            raise ValueError(f"Micro-LoRA rank must be positive, got {rank}.")
         if dropout < 0.0 or dropout >= 1.0:
-            raise ValueError(f"Receiver micro-LoRA dropout must be in [0, 1), got {dropout}.")
+            raise ValueError(f"Micro-LoRA dropout must be in [0, 1), got {dropout}.")
         if not isinstance(base_linear, nn.Linear):
-            raise TypeError("Receiver micro-LoRA can wrap only nn.Linear modules.")
+            raise TypeError("Micro-LoRA can wrap only nn.Linear modules.")
         self.base_linear = base_linear
         for parameter in self.base_linear.parameters():
             parameter.requires_grad_(False)
@@ -44,6 +44,22 @@ class ReceiverMicroLoRALinear(nn.Module):
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         delta = self.up(self.down(self.dropout(inputs)))
         return self.base_linear(inputs) + (self.scale * delta)
+
+    @property
+    def weight(self) -> torch.nn.Parameter:
+        return self.base_linear.weight
+
+    @property
+    def bias(self) -> torch.nn.Parameter | None:
+        return self.base_linear.bias
+
+    @property
+    def in_features(self) -> int:
+        return int(self.base_linear.in_features)
+
+    @property
+    def out_features(self) -> int:
+        return int(self.base_linear.out_features)
 
     def lora_parameters(self) -> list[nn.Parameter]:
         return [self.down.weight, self.up.weight]
@@ -108,6 +124,9 @@ class ReceiverMicroLoRALinear(nn.Module):
             )
 
 
+ReceiverMicroLoRALinear = MicroLoRALinear
+
+
 class BackboneWrapper(nn.Module):
     def __init__(
         self,
@@ -136,7 +155,7 @@ class BackboneWrapper(nn.Module):
         self.max_new_tokens = int(max_new_tokens)
         self.tokenizer = None
         self.model = None
-        self._receiver_lora_targets: dict[str, ReceiverMicroLoRALinear] = {}
+        self._receiver_lora_targets: dict[str, MicroLoRALinear] = {}
         self._receiver_lora_config: dict[str, Any] = {
             "enabled": False,
             "target_layers": [],
@@ -492,7 +511,7 @@ class BackboneWrapper(nn.Module):
                         f"Receiver micro-LoRA target '{module_name}' is missing on decoder layer {layer_index}."
                     )
                 target_path = f"layers.{layer_index}.self_attn.{module_name}"
-                if isinstance(target_module, ReceiverMicroLoRALinear):
+                if isinstance(target_module, MicroLoRALinear):
                     adapter = target_module
                     if (
                         adapter.rank != int(rank)
@@ -509,7 +528,7 @@ class BackboneWrapper(nn.Module):
                             f"Receiver micro-LoRA target '{target_path}' must be nn.Linear, "
                             f"got {type(target_module).__name__}."
                         )
-                    adapter = ReceiverMicroLoRALinear(
+                    adapter = MicroLoRALinear(
                         target_module,
                         rank=int(rank),
                         alpha=float(alpha),

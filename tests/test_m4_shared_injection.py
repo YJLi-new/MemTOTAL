@@ -35,6 +35,7 @@ from memtotal.analysis.m4_shared_injection import (
     run_m4_writer_information_audit,
     _v0_forensics_summary,
 )
+from memtotal.models.backbone import MicroLoRALinear
 from memtotal.models.memory import MemoryFuser, MemoryWriter, WriterWeaverHead
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
@@ -148,6 +149,43 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertEqual(writer.conditioning_layers, 3)
         self.assertEqual(len(writer.extra_conditioning_blocks), 2)
         self.assertEqual(list(outputs.shape), [1, 4, 6])
+
+    def test_writer_weaver_head_supports_writer_micro_lora(self) -> None:
+        writer = WriterWeaverHead(
+            embed_dim=6,
+            memory_slots=4,
+            hidden_dim=12,
+            num_heads=2,
+            transformer_layers=2,
+            conditioning_layers=3,
+        )
+        writer.enable_writer_micro_lora(
+            target_modules=("conditioning_out_proj", "encoder_self_attn_out_proj"),
+            rank=2,
+            alpha=4.0,
+            dropout=0.0,
+        )
+        outputs = writer.write(
+            context_states=torch.randn(1, 3, 6),
+            support_states=torch.randn(1, 2, 6),
+            stimulus_mode="support_and_context",
+        )
+        metadata = writer.writer_lora_metadata()
+        self.assertEqual(list(outputs.shape), [1, 4, 6])
+        self.assertTrue(writer.writer_lora_enabled())
+        self.assertEqual(
+            metadata["target_modules"],
+            ["conditioning_out_proj", "encoder_self_attn_out_proj"],
+        )
+        self.assertGreater(writer.writer_lora_parameter_count(), 0)
+        self.assertIsInstance(writer.context_cross_attn.out_proj, MicroLoRALinear)
+        self.assertIsInstance(writer.support_cross_attn.out_proj, MicroLoRALinear)
+        self.assertIsInstance(writer.extra_conditioning_blocks[0].context_cross_attn.out_proj, MicroLoRALinear)
+        self.assertIsInstance(writer.encoder.layers[0].self_attn.out_proj, MicroLoRALinear)
+        writer.set_base_trainable(False)
+        writer.set_writer_lora_trainable(True)
+        self.assertFalse(writer.slot_embeddings.requires_grad)
+        self.assertTrue(all(parameter.requires_grad for parameter in writer.writer_lora_parameters()))
 
     def test_support_text_block_respects_modes_and_triad_variant(self) -> None:
         support_rows = [
@@ -998,6 +1036,77 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertGreater(prefix_artifacts.prefix_stats["writer_context_token_count"], 0.0)
         self.assertGreater(prefix_artifacts.prefix_stats["writer_support_state_count"], 0.0)
         self.assertEqual(fake_backbone.prompt_slice_calls, [("Need context now", 3)])
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_enables_writer_micro_lora(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {}
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                hidden = torch.ones(len(texts), max_tokens, self.hidden_size, dtype=torch.float32)
+                mask = torch.ones(len(texts), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 2,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+                "writer_adapter": {
+                    "enabled": True,
+                    "target_modules": ["conditioning_out_proj", "encoder_self_attn_out_proj"],
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 3,
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "shallow_prefix",
+                "pilot_trainable_variant": "writer_adapter_only",
+            },
+        }
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=19,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        self.assertTrue(runtime.writer_adapter_enabled)
+        self.assertEqual(
+            runtime.writer_adapter_target_modules,
+            ("conditioning_out_proj", "encoder_self_attn_out_proj"),
+        )
+        self.assertGreater(runtime.writer_adapter_trainable_params, 0)
+        runtime.set_writer_base_trainable(False)
+        runtime.set_writer_adapter_trainable(True)
+        self.assertFalse(runtime.writer.slot_embeddings.requires_grad)
+        self.assertTrue(all(parameter.requires_grad for parameter in runtime.writer_adapter_parameters()))
 
     def test_update_writer_weaver_summary_reports_move_to_w1(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

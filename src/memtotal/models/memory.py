@@ -7,6 +7,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from memtotal.models.backbone import MicroLoRALinear
+
 
 def _ensure_rank(name: str, tensor: torch.Tensor, expected_rank: int) -> None:
     if tensor.ndim != expected_rank:
@@ -326,6 +328,14 @@ class WriterWeaverHead(ManagedMemoryModule):
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=int(transformer_layers))
         self.output_norm = nn.LayerNorm(self.embed_dim)
+        self._writer_lora_targets: dict[str, MicroLoRALinear] = {}
+        self._writer_lora_config: dict[str, object] = {
+            "enabled": False,
+            "target_modules": [],
+            "rank": 0,
+            "alpha": 0.0,
+            "dropout": 0.0,
+        }
 
     @staticmethod
     def common_mode_vector(slots: torch.Tensor) -> torch.Tensor:
@@ -346,6 +356,156 @@ class WriterWeaverHead(ManagedMemoryModule):
             nn.init.orthogonal_(orthogonal)
             orthogonal = orthogonal * original_mean_norm
             self.slot_embeddings.copy_(orthogonal)
+
+    def _iter_writer_lora_candidate_targets(
+        self,
+        target_modules: tuple[str, ...],
+    ) -> list[tuple[nn.Module, str, str]]:
+        targets: list[tuple[nn.Module, str, str]] = []
+        requested = set(target_modules)
+        if "conditioning_out_proj" in requested:
+            targets.extend(
+                [
+                    (self.context_cross_attn, "out_proj", "context_cross_attn.out_proj"),
+                    (self.support_cross_attn, "out_proj", "support_cross_attn.out_proj"),
+                ]
+            )
+            for block_index, block in enumerate(self.extra_conditioning_blocks):
+                prefix = f"extra_conditioning_blocks.{block_index}"
+                targets.extend(
+                    [
+                        (
+                            block.context_cross_attn,
+                            "out_proj",
+                            f"{prefix}.context_cross_attn.out_proj",
+                        ),
+                        (
+                            block.support_cross_attn,
+                            "out_proj",
+                            f"{prefix}.support_cross_attn.out_proj",
+                        ),
+                    ]
+                )
+        if "encoder_self_attn_out_proj" in requested:
+            for layer_index, layer in enumerate(getattr(self.encoder, "layers", [])):
+                targets.append(
+                    (
+                        layer.self_attn,
+                        "out_proj",
+                        f"encoder.layers.{layer_index}.self_attn.out_proj",
+                    )
+                )
+        if "encoder_ffn" in requested:
+            for layer_index, layer in enumerate(getattr(self.encoder, "layers", [])):
+                targets.extend(
+                    [
+                        (layer, "linear1", f"encoder.layers.{layer_index}.linear1"),
+                        (layer, "linear2", f"encoder.layers.{layer_index}.linear2"),
+                    ]
+                )
+        return targets
+
+    def enable_writer_micro_lora(
+        self,
+        *,
+        target_modules: tuple[str, ...],
+        rank: int,
+        alpha: float,
+        dropout: float,
+    ) -> None:
+        normalized_targets = tuple(str(module_name) for module_name in target_modules)
+        unsupported = sorted(
+            set(normalized_targets)
+            - {"conditioning_out_proj", "encoder_self_attn_out_proj", "encoder_ffn"}
+        )
+        if unsupported:
+            raise ValueError(
+                "Unsupported WriterWeaverHead writer micro-LoRA targets: "
+                f"{unsupported}. Expected only conditioning_out_proj, "
+                "encoder_self_attn_out_proj, and/or encoder_ffn."
+            )
+        if not normalized_targets:
+            raise ValueError("WriterWeaverHead writer micro-LoRA requires at least one target module.")
+        if rank <= 0:
+            raise ValueError(f"WriterWeaverHead writer micro-LoRA rank must be positive, got {rank}.")
+        if alpha <= 0.0:
+            raise ValueError(f"WriterWeaverHead writer micro-LoRA alpha must be positive, got {alpha}.")
+        candidate_targets = self._iter_writer_lora_candidate_targets(normalized_targets)
+        if not candidate_targets:
+            raise ValueError(
+                "WriterWeaverHead writer micro-LoRA found no addressable target modules for the requested targets."
+            )
+        for parent_module, module_name, target_path in candidate_targets:
+            target_module = getattr(parent_module, module_name)
+            if isinstance(target_module, MicroLoRALinear):
+                adapter = target_module
+                if (
+                    adapter.rank != int(rank)
+                    or abs(adapter.alpha - float(alpha)) > 1e-8
+                    or type(adapter.dropout) is not (nn.Dropout if dropout > 0.0 else nn.Identity)
+                ):
+                    raise ValueError(
+                        f"WriterWeaverHead writer micro-LoRA target '{target_path}' is already configured "
+                        "with a different adapter shape."
+                    )
+            else:
+                if not isinstance(target_module, nn.Linear):
+                    raise TypeError(
+                        f"WriterWeaverHead writer micro-LoRA target '{target_path}' must be nn.Linear, "
+                        f"got {type(target_module)!r}."
+                    )
+                adapter = MicroLoRALinear(
+                    target_module,
+                    rank=int(rank),
+                    alpha=float(alpha),
+                    dropout=float(dropout),
+                )
+                adapter.train(bool(self.training))
+                setattr(parent_module, module_name, adapter)
+            self._writer_lora_targets[target_path] = adapter
+        self._writer_lora_config = {
+            "enabled": True,
+            "target_modules": list(normalized_targets),
+            "rank": int(rank),
+            "alpha": float(alpha),
+            "dropout": float(dropout),
+        }
+
+    def writer_lora_enabled(self) -> bool:
+        return bool(self._writer_lora_targets)
+
+    def writer_lora_parameters(self) -> list[nn.Parameter]:
+        parameters: list[nn.Parameter] = []
+        for target_path in sorted(self._writer_lora_targets):
+            parameters.extend(self._writer_lora_targets[target_path].lora_parameters())
+        return parameters
+
+    def writer_base_parameters(self) -> list[nn.Parameter]:
+        adapter_parameter_ids = {id(parameter) for parameter in self.writer_lora_parameters()}
+        for adapter in self._writer_lora_targets.values():
+            adapter_parameter_ids.update(id(parameter) for parameter in adapter.base_linear.parameters())
+        return [
+            parameter
+            for parameter in self.parameters()
+            if id(parameter) not in adapter_parameter_ids
+        ]
+
+    def set_base_trainable(self, enabled: bool) -> None:
+        for parameter in self.writer_base_parameters():
+            parameter.requires_grad_(enabled)
+
+    def set_writer_lora_trainable(self, enabled: bool) -> None:
+        for parameter in self.writer_lora_parameters():
+            parameter.requires_grad_(enabled)
+
+    def writer_lora_parameter_count(self) -> int:
+        return int(sum(parameter.numel() for parameter in self.writer_lora_parameters()))
+
+    def writer_lora_metadata(self) -> dict[str, object]:
+        metadata = dict(self._writer_lora_config)
+        metadata["target_paths"] = sorted(self._writer_lora_targets)
+        metadata["trainable_params"] = self.writer_lora_parameter_count()
+        return metadata
 
     def _normalize_sequence(self, name: str, states: torch.Tensor | None) -> torch.Tensor | None:
         if states is None:

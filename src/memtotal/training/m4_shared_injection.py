@@ -467,10 +467,10 @@ def _resolve_support_encoder_mode(config: dict[str, Any]) -> str:
 
 def _resolve_trainable_variant(config: dict[str, Any]) -> str:
     variant = str(config["runtime"].get("pilot_trainable_variant", "full"))
-    if variant not in {"full", "projector_only"}:
+    if variant not in {"full", "projector_only", "writer_adapter_only"}:
         raise ValueError(
             f"Unsupported runtime.pilot_trainable_variant={variant}. "
-            "Expected one of full, projector_only."
+            "Expected one of full, projector_only, writer_adapter_only."
         )
     return variant
 
@@ -618,6 +618,47 @@ def _resolve_writer_gain_margin_weight(config: dict[str, Any]) -> float:
 
 def _resolve_writer_covariance_diversity_weight(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_writer_covariance_diversity_weight", 0.0))
+
+
+def _resolve_writer_adapter_enabled(config: dict[str, Any]) -> bool:
+    return bool(config.get("method", {}).get("writer_adapter", {}).get("enabled", False))
+
+
+def _resolve_writer_adapter_target_modules(config: dict[str, Any]) -> tuple[str, ...]:
+    target_modules = config.get("method", {}).get("writer_adapter", {}).get(
+        "target_modules",
+        ("conditioning_out_proj",),
+    )
+    normalized = tuple(str(module_name) for module_name in target_modules)
+    unsupported = sorted(
+        set(normalized) - {"conditioning_out_proj", "encoder_self_attn_out_proj", "encoder_ffn"}
+    )
+    if unsupported:
+        raise ValueError(
+            f"Unsupported method.writer_adapter.target_modules={unsupported}. "
+            "Expected only conditioning_out_proj, encoder_self_attn_out_proj, and/or encoder_ffn."
+        )
+    return normalized
+
+
+def _resolve_writer_adapter_rank(config: dict[str, Any]) -> int:
+    return int(config.get("method", {}).get("writer_adapter", {}).get("rank", 0))
+
+
+def _resolve_writer_adapter_alpha(config: dict[str, Any]) -> float:
+    return float(config.get("method", {}).get("writer_adapter", {}).get("alpha", 4.0))
+
+
+def _resolve_writer_adapter_dropout(config: dict[str, Any]) -> float:
+    return float(config.get("method", {}).get("writer_adapter", {}).get("dropout", 0.0))
+
+
+def _resolve_writer_adapter_learning_rate(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_adapter_learning_rate", 5e-4))
+
+
+def _resolve_writer_adapter_weight_decay(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_adapter_weight_decay", 0.0))
 
 
 def _resolve_receiver_lora_enabled(config: dict[str, Any]) -> bool:
@@ -1709,6 +1750,12 @@ def _save_shared_injection_checkpoint(
             ),
             "pilot_writer_stimulus_mode": str(runtime.writer_stimulus_mode),
             "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
+            "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
+            "pilot_writer_adapter_target_modules": list(runtime.writer_adapter_target_modules),
+            "pilot_writer_adapter_rank": int(runtime.writer_adapter_rank),
+            "pilot_writer_adapter_alpha": float(runtime.writer_adapter_alpha),
+            "pilot_writer_adapter_dropout": float(runtime.writer_adapter_dropout),
+            "pilot_writer_adapter_trainable_params": int(runtime.writer_adapter_trainable_params),
             "receiver_lora_state": (
                 None
                 if not hasattr(runtime.backbone, "receiver_lora_state_dict")
@@ -2159,6 +2206,11 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
         self.support_serialization_variant = _resolve_support_serialization_variant(config)
+        self.writer_adapter_enabled = _resolve_writer_adapter_enabled(config)
+        self.writer_adapter_target_modules = _resolve_writer_adapter_target_modules(config)
+        self.writer_adapter_rank = _resolve_writer_adapter_rank(config)
+        self.writer_adapter_alpha = _resolve_writer_adapter_alpha(config)
+        self.writer_adapter_dropout = _resolve_writer_adapter_dropout(config)
         self.receiver_lora_enabled = _resolve_receiver_lora_enabled(config)
         self.receiver_lora_target_layers = _resolve_receiver_lora_target_layers(config)
         self.receiver_lora_target_modules = _resolve_receiver_lora_target_modules(config)
@@ -2170,6 +2222,22 @@ class SharedInjectionPilotRuntime(nn.Module):
                 raise ValueError("runtime.pilot_bridge_mode=writer_direct requires pilot_memory_path_variant=single_level.")
             if self.receiver_lora_enabled:
                 raise ValueError("runtime.pilot_bridge_mode=writer_direct requires receiver micro-LoRA to stay disabled.")
+        if self.writer_adapter_enabled:
+            if self.bridge_mode != "writer_direct":
+                raise ValueError(
+                    "method.writer_adapter.enabled=true currently requires runtime.pilot_bridge_mode=writer_direct."
+                )
+            if not hasattr(self.writer, "enable_writer_micro_lora"):
+                raise RuntimeError("Configured writer micro-LoRA, but the active writer lacks support.")
+            self.writer.enable_writer_micro_lora(
+                target_modules=self.writer_adapter_target_modules,
+                rank=self.writer_adapter_rank,
+                alpha=self.writer_adapter_alpha,
+                dropout=self.writer_adapter_dropout,
+            )
+        self.writer_adapter_trainable_params = int(
+            getattr(self.writer, "writer_lora_parameter_count", lambda: 0)()
+        )
         if self.receiver_lora_enabled:
             if not hasattr(self.backbone, "enable_receiver_micro_lora"):
                 raise RuntimeError("Configured receiver micro-LoRA, but BackboneWrapper lacks support.")
@@ -2365,6 +2433,49 @@ class SharedInjectionPilotRuntime(nn.Module):
                     f"{checkpoint_writer_conditioning_layers}, expected "
                     f"{getattr(self.writer, 'conditioning_layers', 1)}."
                 )
+            checkpoint_writer_adapter_enabled = bool(
+                checkpoint.get("pilot_writer_adapter_enabled", False)
+            )
+            if checkpoint_writer_adapter_enabled != self.writer_adapter_enabled:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_adapter_enabled="
+                    f"{checkpoint_writer_adapter_enabled}, expected {self.writer_adapter_enabled}."
+                )
+            if self.writer_adapter_enabled:
+                checkpoint_writer_adapter_target_modules = tuple(
+                    str(module_name)
+                    for module_name in checkpoint.get("pilot_writer_adapter_target_modules", [])
+                )
+                if checkpoint_writer_adapter_target_modules != self.writer_adapter_target_modules:
+                    raise ValueError(
+                        f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_adapter_target_modules="
+                        f"{list(checkpoint_writer_adapter_target_modules)}, expected "
+                        f"{list(self.writer_adapter_target_modules)}."
+                    )
+                checkpoint_writer_adapter_rank = int(
+                    checkpoint.get("pilot_writer_adapter_rank", self.writer_adapter_rank)
+                )
+                checkpoint_writer_adapter_alpha = float(
+                    checkpoint.get("pilot_writer_adapter_alpha", self.writer_adapter_alpha)
+                )
+                checkpoint_writer_adapter_dropout = float(
+                    checkpoint.get("pilot_writer_adapter_dropout", self.writer_adapter_dropout)
+                )
+                if checkpoint_writer_adapter_rank != int(self.writer_adapter_rank):
+                    raise ValueError(
+                        f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_adapter_rank="
+                        f"{checkpoint_writer_adapter_rank}, expected {self.writer_adapter_rank}."
+                    )
+                if abs(checkpoint_writer_adapter_alpha - float(self.writer_adapter_alpha)) > 1e-8:
+                    raise ValueError(
+                        f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_adapter_alpha="
+                        f"{checkpoint_writer_adapter_alpha}, expected {self.writer_adapter_alpha}."
+                    )
+                if abs(checkpoint_writer_adapter_dropout - float(self.writer_adapter_dropout)) > 1e-8:
+                    raise ValueError(
+                        f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_adapter_dropout="
+                        f"{checkpoint_writer_adapter_dropout}, expected {self.writer_adapter_dropout}."
+                    )
         checkpoint_projector_prefix_tokens = int(
             checkpoint.get("pilot_projector_prefix_tokens", checkpoint_slots)
         )
@@ -2599,8 +2710,33 @@ class SharedInjectionPilotRuntime(nn.Module):
         return checkpoint
 
     def set_writer_trainable(self, enabled: bool) -> None:
+        self.set_writer_base_trainable(enabled)
+        self.set_writer_adapter_trainable(enabled)
+
+    def writer_base_parameters(self) -> list[nn.Parameter]:
+        parameter_getter = getattr(self.writer, "writer_base_parameters", None)
+        if callable(parameter_getter):
+            return list(parameter_getter())
+        return list(self.writer.parameters())
+
+    def writer_adapter_parameters(self) -> list[nn.Parameter]:
+        parameter_getter = getattr(self.writer, "writer_lora_parameters", None)
+        if callable(parameter_getter):
+            return list(parameter_getter())
+        return []
+
+    def set_writer_base_trainable(self, enabled: bool) -> None:
+        setter = getattr(self.writer, "set_base_trainable", None)
+        if callable(setter):
+            setter(enabled)
+            return
         for parameter in self.writer.parameters():
             parameter.requires_grad_(enabled)
+
+    def set_writer_adapter_trainable(self, enabled: bool) -> None:
+        setter = getattr(self.writer, "set_writer_lora_trainable", None)
+        if callable(setter):
+            setter(enabled)
 
     def set_support_encoder_trainable(self, enabled: bool) -> None:
         if self.support_encoder is None:
@@ -3594,6 +3730,7 @@ def run_shared_injection_pilot(
     projector_token_source = _resolve_projector_token_source(config)
     support_encoder_mode = _resolve_support_encoder_mode(config)
     trainable_variant = _resolve_trainable_variant(config)
+    writer_adapter_enabled = _resolve_writer_adapter_enabled(config)
     alignment_aux_mode = _resolve_alignment_aux_mode(config)
     alignment_aux_weight_max = _resolve_alignment_aux_weight_max(config)
     alignment_aux_start_step = _resolve_alignment_aux_start_step(config)
@@ -3636,9 +3773,11 @@ def run_shared_injection_pilot(
     train_steps = int(config["runtime"].get("pilot_train_steps", 96))
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
     writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 1e-4))
+    writer_adapter_learning_rate = _resolve_writer_adapter_learning_rate(config)
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
     receiver_lora_learning_rate = _resolve_receiver_lora_learning_rate(config)
     writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
+    writer_adapter_weight_decay = _resolve_writer_adapter_weight_decay(config)
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
     receiver_lora_weight_decay = _resolve_receiver_lora_weight_decay(config)
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
@@ -3652,6 +3791,10 @@ def run_shared_injection_pilot(
         raise ValueError("runtime.pilot_bridge_mode=writer_direct forbids pilot_init_checkpoint_path; use fresh Writer init.")
     if bridge_mode == "writer_direct" and injection_checkpoint_path:
         raise ValueError("runtime.pilot_bridge_mode=writer_direct forbids pilot_checkpoint_path during W0 fresh-init runs.")
+    if trainable_variant == "writer_adapter_only" and not writer_adapter_enabled:
+        raise ValueError(
+            "runtime.pilot_trainable_variant=writer_adapter_only requires method.writer_adapter.enabled=true."
+        )
     if arm in {"base_only", "teacher_text"} or writer_memory_control == "zero":
         train_steps = 0
         projector_warmup_steps = 0
@@ -3896,18 +4039,31 @@ def run_shared_injection_pilot(
         runtime.prefix_projector.train()
         runtime.set_writer_trainable(False)
         runtime.set_support_encoder_trainable(False)
+        writer_base_parameters = runtime.writer_base_parameters()
+        writer_adapter_parameters = runtime.writer_adapter_parameters()
         optimizer_groups = [
             {
                 "params": list(runtime.prefix_projector.parameters()),
                 "lr": projector_learning_rate,
                 "weight_decay": projector_weight_decay,
             },
-            {
-                "params": list(runtime.writer.parameters()),
-                "lr": writer_learning_rate,
-                "weight_decay": writer_weight_decay,
-            },
         ]
+        if writer_base_parameters:
+            optimizer_groups.append(
+                {
+                    "params": writer_base_parameters,
+                    "lr": writer_learning_rate,
+                    "weight_decay": writer_weight_decay,
+                }
+            )
+        if writer_adapter_parameters:
+            optimizer_groups.append(
+                {
+                    "params": writer_adapter_parameters,
+                    "lr": writer_adapter_learning_rate,
+                    "weight_decay": writer_adapter_weight_decay,
+                }
+            )
         if runtime.support_encoder is not None:
             optimizer_groups.append(
                 {
@@ -3951,14 +4107,22 @@ def run_shared_injection_pilot(
                 current_step=step + 1,
                 bootstrap_steps=reader_fuser_bootstrap_steps,
             )
-            writer_frozen = bool(
+            writer_adapter_frozen = bool(
                 trainable_variant == "projector_only"
                 or step < projector_warmup_steps
                 or bootstrap_active
             )
+            writer_base_frozen = bool(
+                writer_adapter_frozen
+                or (
+                    runtime.writer_adapter_enabled
+                    and trainable_variant == "writer_adapter_only"
+                )
+            )
             projector_frozen = bool(bootstrap_active)
-            runtime.set_writer_trainable(not writer_frozen)
-            runtime.set_support_encoder_trainable(not writer_frozen)
+            runtime.set_writer_base_trainable(not writer_base_frozen)
+            runtime.set_writer_adapter_trainable(not writer_adapter_frozen)
+            runtime.set_support_encoder_trainable(not writer_base_frozen)
             runtime.set_prefix_projector_trainable(not projector_frozen)
             train_example = train_caches[step % len(train_caches)]
             selected_episode_id = ""
@@ -4210,6 +4374,7 @@ def run_shared_injection_pilot(
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
             writer_grad_norm = _grad_norm(runtime.writer)
+            writer_adapter_grad_norm = _parameters_grad_norm(runtime.writer_adapter_parameters())
             reader_grad_norm = _grad_norm(runtime.reader)
             fuser_grad_norm = _grad_norm(runtime.fuser)
             receiver_lora_grad_norm = _parameters_grad_norm(
@@ -4355,7 +4520,9 @@ def run_shared_injection_pilot(
                         else None
                     ),
                     "train_example_id": str(train_example.example["id"]),
-                    "writer_frozen": writer_frozen,
+                    "writer_frozen": writer_base_frozen and writer_adapter_frozen,
+                    "writer_base_frozen": writer_base_frozen,
+                    "writer_adapter_frozen": writer_adapter_frozen,
                     "projector_frozen": projector_frozen,
                     "reader_fuser_bootstrap_active": bootstrap_active,
                     "train_support_mode": train_support_mode,
@@ -4369,6 +4536,12 @@ def run_shared_injection_pilot(
                     "pilot_trainable_variant": trainable_variant,
                     "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
                     "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
+                    "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
+                    "pilot_writer_adapter_target_modules": list(runtime.writer_adapter_target_modules),
+                    "pilot_writer_adapter_rank": int(runtime.writer_adapter_rank),
+                    "pilot_writer_adapter_alpha": float(runtime.writer_adapter_alpha),
+                    "pilot_writer_adapter_dropout": float(runtime.writer_adapter_dropout),
+                    "pilot_writer_adapter_trainable_params": int(runtime.writer_adapter_trainable_params),
                     "alignment_aux_mode": alignment_aux_mode,
                     "alignment_aux_active": bool(alignment_aux_active),
                     "alignment_aux_loss": (
@@ -4443,17 +4616,28 @@ def run_shared_injection_pilot(
                     "grad_norm_reader": reader_grad_norm,
                     "grad_norm_fuser": fuser_grad_norm,
                     "grad_norm_writer": writer_grad_norm,
+                    "grad_norm_writer_adapter": writer_adapter_grad_norm,
                     "grad_norm_receiver_lora": receiver_lora_grad_norm,
                     "reader_to_support_grad_ratio": reader_to_support_grad_ratio,
                     "fuser_to_support_grad_ratio": fuser_to_support_grad_ratio,
                     "receiver_lora_to_reader_grad_ratio": receiver_lora_to_reader_grad_ratio,
                     "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
                     "writer_trainable": _module_trainable(runtime.writer),
+                    "writer_adapter_trainable": bool(
+                        any(parameter.requires_grad for parameter in runtime.writer_adapter_parameters())
+                    ),
                     "support_encoder_trainable": _module_trainable(runtime.support_encoder),
                     "reader_trainable": _module_trainable(runtime.reader),
                     "fuser_trainable": _module_trainable(runtime.fuser),
                     "prefix_projector_trainable": _module_trainable(runtime.prefix_projector),
                     "writer_trainable_params": _trainable_parameter_count(runtime.writer),
+                    "writer_adapter_trainable_params": int(
+                        sum(
+                            parameter.numel()
+                            for parameter in runtime.writer_adapter_parameters()
+                            if parameter.requires_grad
+                        )
+                    ),
                     "support_encoder_trainable_params": _trainable_parameter_count(runtime.support_encoder),
                     "reader_trainable_params": _trainable_parameter_count(runtime.reader),
                     "fuser_trainable_params": _trainable_parameter_count(runtime.fuser),
@@ -4579,6 +4763,12 @@ def run_shared_injection_pilot(
         step_start=1,
         step_end=4,
     )
+    train_grad_norm_writer_adapter_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer_adapter",
+        step_start=1,
+        step_end=4,
+    )
     train_reader_to_support_grad_ratio_steps_5_8_median = _median_train_event_metric(
         train_events,
         key="reader_to_support_grad_ratio",
@@ -4615,6 +4805,12 @@ def run_shared_injection_pilot(
         step_start=5,
         step_end=8,
     )
+    train_grad_norm_writer_adapter_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer_adapter",
+        step_start=5,
+        step_end=8,
+    )
     metrics = {
         "mode": "train",
         "training_stage": "shared_injection_pilot",
@@ -4646,6 +4842,12 @@ def run_shared_injection_pilot(
         "pilot_trainable_variant": trainable_variant,
         "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
         "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
+        "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
+        "pilot_writer_adapter_target_modules": list(runtime.writer_adapter_target_modules),
+        "pilot_writer_adapter_rank": int(runtime.writer_adapter_rank),
+        "pilot_writer_adapter_alpha": float(runtime.writer_adapter_alpha),
+        "pilot_writer_adapter_dropout": float(runtime.writer_adapter_dropout),
+        "pilot_writer_adapter_trainable_params": int(runtime.writer_adapter_trainable_params),
         "pilot_writer_support_query_residual_scale": float(
             config["method"].get("writer", {}).get("support_query_residual_scale", 0.0)
         ),
@@ -4874,6 +5076,9 @@ def run_shared_injection_pilot(
         ),
         "train_grad_norm_reader_steps_1_4_median": train_grad_norm_reader_steps_1_4_median,
         "train_grad_norm_fuser_steps_1_4_median": train_grad_norm_fuser_steps_1_4_median,
+        "train_grad_norm_writer_adapter_steps_1_4_median": (
+            train_grad_norm_writer_adapter_steps_1_4_median
+        ),
         "train_grad_norm_receiver_lora_steps_1_4_median": (
             train_grad_norm_receiver_lora_steps_1_4_median
         ),
@@ -4888,6 +5093,9 @@ def run_shared_injection_pilot(
         ),
         "train_grad_norm_reader_steps_5_8_median": train_grad_norm_reader_steps_5_8_median,
         "train_grad_norm_fuser_steps_5_8_median": train_grad_norm_fuser_steps_5_8_median,
+        "train_grad_norm_writer_adapter_steps_5_8_median": (
+            train_grad_norm_writer_adapter_steps_5_8_median
+        ),
         "train_grad_norm_receiver_lora_steps_5_8_median": (
             train_grad_norm_receiver_lora_steps_5_8_median
         ),
@@ -4901,6 +5109,9 @@ def run_shared_injection_pilot(
             train_events[-1]["receiver_lora_to_reader_grad_ratio"] if train_events else None
         ),
         "train_final_writer_trainable": train_events[-1]["writer_trainable"] if train_events else None,
+        "train_final_writer_adapter_trainable": (
+            train_events[-1]["writer_adapter_trainable"] if train_events else None
+        ),
         "train_final_support_encoder_trainable": (
             train_events[-1]["support_encoder_trainable"] if train_events else None
         ),
@@ -4911,6 +5122,9 @@ def run_shared_injection_pilot(
         ),
         "train_final_writer_trainable_params": (
             train_events[-1]["writer_trainable_params"] if train_events else None
+        ),
+        "train_final_writer_adapter_trainable_params": (
+            train_events[-1]["writer_adapter_trainable_params"] if train_events else None
         ),
         "train_final_support_encoder_trainable_params": (
             train_events[-1]["support_encoder_trainable_params"] if train_events else None
