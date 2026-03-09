@@ -1,0 +1,195 @@
+{
+  "_meta": {
+    "config_path": "/root/mydir/MemTOTAL/configs/exp/tl_multitask_qwen25_microlora_r2_late3_narrativeqa_real_smoke_template.yaml",
+    "includes": [
+      "/root/mydir/MemTOTAL/configs/exp/tl_micro_lora_fever_qwen25_microlora_r2_late3_partition_none_linear_h4_k4.yaml"
+    ]
+  },
+  "backbone": {
+    "attn_implementation": "eager",
+    "cache_dir": "/root/autodl-tmp/hf-cache",
+    "dtype": "bfloat16",
+    "load_mode": "hf_causal_lm",
+    "model_id": "/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct",
+    "name": "Qwen2.5-1.5B-Instruct"
+  },
+  "experiment": {
+    "method_variant": "qwen25-tl-bridge-v4-microlora-r2-late3-narrativeqa",
+    "name": "tl_multitask_qwen25_microlora_r2_late3_narrativeqa_real_smoke_template",
+    "stage": "TL-Bridge-MultiTask-V4"
+  },
+  "method": {
+    "embed_dim": "auto",
+    "fuser": {
+      "arch": "linear",
+      "dropout": 0.0,
+      "hidden_dim": null,
+      "num_heads": 4,
+      "short_slots": 4
+    },
+    "injector": {
+      "enabled": true,
+      "mode": "prefix",
+      "position": "segment"
+    },
+    "name": "general-writer-adaptable-reader-transformer-bootstrap",
+    "reader": {
+      "attention_mode": "masked_partition",
+      "condition_on_context": true,
+      "conditioning": {
+        "domain_key": "domain",
+        "include_task_name": true
+      },
+      "conditioning_mode": "none",
+      "dropout": 0.0,
+      "gated_add_scale": 0.1,
+      "gating_mode": false,
+      "masked_partition": [
+        [
+          0,
+          1
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "num_heads": 4,
+      "num_queries": 4,
+      "query_residual_scale": 1.0
+    },
+    "receiver_lora": {
+      "alpha": 4.0,
+      "dropout": 0.0,
+      "enabled": true,
+      "rank": 2,
+      "target_layers": [
+        14,
+        21,
+        27
+      ],
+      "target_modules": [
+        "k_proj",
+        "v_proj"
+      ]
+    },
+    "segmenter": {
+      "delimiter": "||",
+      "mode": "delimiter"
+    },
+    "writer": {
+      "arch": "transformer",
+      "dropout": 0.0,
+      "hidden_dim": null,
+      "memory_slots": 8,
+      "num_heads": 4,
+      "output_slot_basis_scale": 1.0,
+      "support_query_residual_scale": 1.0,
+      "transformer_layers": 2
+    }
+  },
+  "runtime": {
+    "device": "cuda",
+    "pilot_alignment_aux_advantage_center": 0.0,
+    "pilot_alignment_aux_advantage_scale": 0.25,
+    "pilot_alignment_aux_apply_only_to_real_memory": true,
+    "pilot_alignment_aux_mode": false,
+    "pilot_alignment_aux_ramp_steps": 0,
+    "pilot_alignment_aux_start_step": 0,
+    "pilot_alignment_aux_temperature": 2.0,
+    "pilot_alignment_aux_weight_max": 0.0,
+    "pilot_arm_alias": "A",
+    "pilot_choice_ce_weight": 1.0,
+    "pilot_competitor_hinge_ramp_steps": 12,
+    "pilot_competitor_hinge_start_step": 12,
+    "pilot_competitor_hinge_weight_max": 0.05,
+    "pilot_deep_prefix_layers": [
+      0,
+      7,
+      14,
+      21,
+      27
+    ],
+    "pilot_deep_prefix_rank": 16,
+    "pilot_gradient_clip_norm": 1.0,
+    "pilot_init_checkpoint_path": "/root/autodl-tmp/runs/verify/tl-micro-lora-fever-qwen25/v2-microlora-r2-late3-partition-none-linear-h4-k4/phase2-selected/pilot-I-real/checkpoint.pt",
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "pilot_latent_anchor_decay_steps": 16,
+    "pilot_latent_anchor_weight_end": 0.02,
+    "pilot_latent_anchor_weight_start": 0.1,
+    "pilot_memory_long_diversity_weight": 0.0,
+    "pilot_memory_path_variant": "two_level",
+    "pilot_memory_short_diversity_weight": 0.0,
+    "pilot_prefix_slot_max_norm": 48.0,
+    "pilot_prefix_total_max_norm": 192.0,
+    "pilot_projector_learning_rate": 0.0001,
+    "pilot_projector_token_source": "short_slots",
+    "pilot_projector_warmup_steps": 0,
+    "pilot_projector_weight_decay": 0.0001,
+    "pilot_prompt_variant": "task_native",
+    "pilot_reader_attention_diversity_weight": 0.0,
+    "pilot_reader_conditioned_query_orthogonality_weight": 0.0,
+    "pilot_reader_context_mode": "none",
+    "pilot_reader_fuser_bootstrap_steps": 0,
+    "pilot_reader_short_reconstruction_weight": 0.0,
+    "pilot_receiver_lora_learning_rate": 5e-05,
+    "pilot_receiver_lora_weight_decay": 0.0,
+    "pilot_snapshot_steps": [
+      0,
+      2,
+      4,
+      8
+    ],
+    "pilot_support_encoder_dropout": 0.0,
+    "pilot_support_encoder_layers": 1,
+    "pilot_support_encoder_max_items": 8,
+    "pilot_support_encoder_mode": "structured_support_set",
+    "pilot_support_encoder_num_heads": 4,
+    "pilot_support_examples": 8,
+    "pilot_support_serialization": "example_blocks_raw8",
+    "pilot_train_steps": 8,
+    "pilot_train_support_mask_count": 5,
+    "pilot_train_support_mode": "static_support_rows",
+    "pilot_trainable_variant": "full",
+    "pilot_writer_common_mode_penalty_weight": 0.0,
+    "pilot_writer_learning_rate": 5e-05,
+    "pilot_writer_orthogonalize_slot_basis": true,
+    "pilot_writer_slot_basis_orthogonality_weight": 0.05,
+    "pilot_writer_slot_energy_balance_weight": 0.0,
+    "pilot_writer_weight_decay": 0.0001,
+    "shared_injection_arm": "base_only",
+    "stage_c_choice_margin": 0.1,
+    "training_stage": "shared_injection_pilot",
+    "writer_memory_control": "real"
+  },
+  "task": {
+    "benchmark_id": "narrativeqa",
+    "dataset_path": "/root/autodl-tmp/runs/verify/tl-bridge-multitask-qwen25/materialized-datasets/narrativeqa/eval.jsonl",
+    "domain": "narrative",
+    "evaluator": {
+      "type": "qa_f1"
+    },
+    "metric_name": "f1",
+    "name": "narrativeqa_real_smoke",
+    "narrativeqa_runtime": {
+      "segment_budget": 6,
+      "selector": "question_aware"
+    },
+    "pilot_split": "hf_real_smoke4_runtime_pool_qaware6x128",
+    "smoke_subset": "hf_real_smoke4_runtime_pool_qaware6x128",
+    "split": "eval",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/tl-bridge-multitask-qwen25/materialized-datasets/narrativeqa/support.jsonl",
+    "support_lookup_dataset_paths": [],
+    "train_dataset_path": "/root/autodl-tmp/runs/verify/tl-bridge-multitask-qwen25/materialized-datasets/narrativeqa/train.jsonl",
+    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/tl-bridge-multitask-qwen25/materialized-datasets/narrativeqa/support.jsonl",
+    "train_support_episode_bank_path": ""
+  }
+}

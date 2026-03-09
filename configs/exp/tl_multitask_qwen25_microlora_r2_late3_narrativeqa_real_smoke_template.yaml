@@ -1,0 +1,38 @@
+includes:
+  - tl_micro_lora_fever_qwen25_microlora_r2_late3_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_multitask_qwen25_microlora_r2_late3_narrativeqa_real_smoke_template
+  stage: TL-Bridge-MultiTask-V4
+  method_variant: qwen25-tl-bridge-v4-microlora-r2-late3-narrativeqa
+
+task:
+  name: narrativeqa_real_smoke
+  benchmark_id: narrativeqa
+  domain: narrative
+  split: eval
+  smoke_subset: hf_real_smoke4_runtime_pool_qaware6x128
+  dataset_path: ""
+  support_dataset_path: ""
+  train_dataset_path: ""
+  train_support_dataset_path: ""
+  metric_name: f1
+  evaluator:
+    type: qa_f1
+  narrativeqa_runtime:
+    selector: question_aware
+    segment_budget: 6
+
+runtime:
+  pilot_prompt_variant: task_native
+  pilot_support_serialization: example_blocks_raw8
+  pilot_support_examples: 8
+  pilot_support_encoder_mode: structured_support_set
+  pilot_train_support_mode: static_support_rows
+  pilot_train_steps: 8
+  pilot_snapshot_steps:
+    - 0
+    - 2
+    - 4
+    - 8
+  pilot_alignment_aux_mode: off

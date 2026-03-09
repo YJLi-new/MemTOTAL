@@ -148,7 +148,27 @@ class _FakeModel(torch.nn.Module):
                 attentions.append(layer_attention)
         return types.SimpleNamespace(logits=logits, hidden_states=[hidden, hidden], attentions=tuple(attentions) if attentions is not None else None)
 
-    def generate(self, input_ids, attention_mask=None, max_new_tokens=32, do_sample=False, pad_token_id=0, eos_token_id=1):
+    def generate(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        max_new_tokens=32,
+        do_sample=False,
+        pad_token_id=0,
+        eos_token_id=1,
+        inputs_embeds=None,
+        past_key_values=None,
+        cache_position=None,
+        use_cache=True,
+    ):
+        if input_ids is None:
+            assert inputs_embeds is not None
+            input_ids = torch.full(
+                (inputs_embeds.shape[0], inputs_embeds.shape[1]),
+                5,
+                dtype=torch.long,
+                device=inputs_embeds.device,
+            )
         append = torch.full((input_ids.shape[0], 2), 7, dtype=torch.long, device=input_ids.device)
         return torch.cat([input_ids, append], dim=1)
 
@@ -196,6 +216,12 @@ class BackboneRealModeTest(unittest.TestCase):
         generations = backbone.generate(["Prompt"])
         self.assertEqual(len(generations), 1)
         self.assertTrue(generations[0])
+        prefixed_generations = backbone.generate(["Prompt"], prefix_embeddings=prefix)
+        self.assertEqual(len(prefixed_generations), 1)
+        self.assertTrue(prefixed_generations[0])
+        deep_prefixed_generations = backbone.generate(["Prompt"], layer_prefix_hidden_by_layer=deep_prefix)
+        self.assertEqual(len(deep_prefixed_generations), 1)
+        self.assertTrue(deep_prefixed_generations[0])
 
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())

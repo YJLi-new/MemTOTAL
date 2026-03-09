@@ -43,8 +43,10 @@ from memtotal.training.m4_shared_injection import (
     _alignment_aux_loss,
     _alignment_aux_choice_loss,
     _build_support_text_block,
+    _candidate_payload,
     _class_entropy,
     _choice_task_loss,
+    _classification_metrics_from_rows,
     _conditioned_query_orthogonality_loss,
     _effective_rank,
     _latent_anchor_loss,
@@ -55,6 +57,7 @@ from memtotal.training.m4_shared_injection import (
     _scheduled_linear_decay_weight,
     _sample_support_examples_for_training,
     _slot_diversity_loss,
+    _task_training_loss,
     _teacher_advantage_weight,
     _writer_common_mode_penalty,
     _writer_slot_energy_balance_loss,
@@ -158,6 +161,53 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertIn("claim-s4", shuffled_block)
         self.assertEqual(zero_block, "")
 
+    def test_support_text_block_serializes_non_fever_examples(self) -> None:
+        support_rows = [
+            {
+                "id": "gsm8k-1",
+                "benchmark_id": "gsm8k",
+                "segment": "Question: 1+1?",
+                "continuation": "2",
+                "gold_answer": "2",
+                "label": "2",
+            },
+            {
+                "id": "gsm8k-2",
+                "benchmark_id": "gsm8k",
+                "segment": "Question: 2+2?",
+                "continuation": "4",
+                "gold_answer": "4",
+                "label": "4",
+            },
+        ]
+        lookup = {row["id"]: row for row in support_rows}
+        block = _build_support_text_block(
+            support_rows,
+            memory_control="real",
+            example_lookup=lookup,
+            support_serialization_variant="example_blocks_raw8",
+        )
+        self.assertIn("Prompt: Question: 1+1?", block)
+        self.assertIn("Answer: 4", block)
+
+    def test_candidate_payload_supports_task_native_generation_examples(self) -> None:
+        example = {
+            "id": "gsm8k-1",
+            "evaluator_type": "exact_match",
+            "segment": "Question: 1+1?",
+            "continuation": "2",
+            "gold_answer": "2",
+            "label": "2",
+        }
+        labels, texts, gold_index, task_mode = _candidate_payload(
+            example,
+            prompt_variant="task_native",
+        )
+        self.assertEqual(labels, ["2"])
+        self.assertEqual(texts, ["2"])
+        self.assertEqual(gold_index, 0)
+        self.assertEqual(task_mode, "generation")
+
     def test_choice_task_loss_backpropagates(self) -> None:
         scores = torch.tensor([0.2, 0.1, -0.3], dtype=torch.float32, requires_grad=True)
         loss, ce_loss, hinge_loss = _choice_task_loss(
@@ -172,6 +222,48 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertGreater(float(ce_loss.item()), 0.0)
         self.assertGreaterEqual(float(hinge_loss.item()), 0.0)
         self.assertIsNotNone(scores.grad)
+
+    def test_task_training_loss_uses_gold_score_for_generation(self) -> None:
+        scores = torch.tensor([1.25], dtype=torch.float32, requires_grad=True)
+        example_cache = mock.Mock(task_mode="generation", gold_index=0)
+        loss, ce_loss, hinge_loss = _task_training_loss(
+            scores,
+            example_cache,
+            margin_value=0.1,
+            ce_weight=1.0,
+            competitor_hinge_weight=0.2,
+        )
+        loss.backward()
+        self.assertAlmostEqual(float(loss.item()), -1.25, places=6)
+        self.assertAlmostEqual(float(ce_loss.item()), 0.0, places=6)
+        self.assertAlmostEqual(float(hinge_loss.item()), 0.0, places=6)
+        self.assertIsNotNone(scores.grad)
+
+    def test_classification_metrics_handle_generation_rows(self) -> None:
+        metrics = _classification_metrics_from_rows(
+            [
+                {
+                    "evaluator_type": "qa_f1",
+                    "predicted_text": "red apple",
+                    "normalized_prediction": "red apple",
+                    "predicted_correct": False,
+                    "task_score": 0.5,
+                    "final_margin": 1.0,
+                },
+                {
+                    "evaluator_type": "qa_f1",
+                    "predicted_text": "red apple",
+                    "normalized_prediction": "red apple",
+                    "predicted_correct": True,
+                    "task_score": 1.0,
+                    "final_margin": 2.0,
+                },
+            ]
+        )
+        self.assertAlmostEqual(metrics["accuracy"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["macro_f1"], 0.75, places=6)
+        self.assertAlmostEqual(metrics["exact_match"], 0.5, places=6)
+        self.assertAlmostEqual(metrics["dominant_label_fraction"], 1.0, places=6)
 
     def test_active_competitor_hinge_weight_delays_and_ramps(self) -> None:
         self.assertEqual(

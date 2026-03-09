@@ -793,22 +793,47 @@ class BackboneWrapper(nn.Module):
         }
         return score_tensor, diagnostics
 
-    def generate(self, prompts: Iterable[str], memory_tokens: torch.Tensor | None = None) -> list[str]:
+    def generate(
+        self,
+        prompts: Iterable[str],
+        memory_tokens: torch.Tensor | None = None,
+        *,
+        prefix_embeddings: torch.Tensor | None = None,
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
+    ) -> list[str]:
         if self.load_mode == "hf_causal_lm":
             if self.model is None or self.tokenizer is None:
                 raise RuntimeError("Real backbone is not initialized.")
             prompt_list = list(prompts)
-            encoded = self._prepare_hf_inputs(prompt_list)
+            if prefix_embeddings is not None and memory_tokens is not None:
+                raise ValueError("memory_tokens and prefix_embeddings are mutually exclusive.")
+            if layer_prefix_hidden_by_layer is not None and memory_tokens is not None:
+                raise ValueError("memory_tokens and layer_prefix_hidden_by_layer are mutually exclusive.")
+            model_kwargs: dict[str, Any]
+            prompt_attention_mask: torch.Tensor
+            if prefix_embeddings is not None or layer_prefix_hidden_by_layer is not None:
+                model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
+                    prompt_list,
+                    prefix_embeddings,
+                    layer_prefix_hidden_by_layer,
+                )
+                prompt_attention_mask = metadata["score_attention_mask"]
+                if "input_ids" not in model_kwargs:
+                    model_kwargs["input_ids"] = metadata["score_input_ids"]
+            else:
+                encoded = self._prepare_hf_inputs(prompt_list)
+                model_kwargs = dict(encoded)
+                prompt_attention_mask = encoded["attention_mask"]
             with torch.inference_mode():
                 generated = self.model.generate(
-                    **encoded,
+                    **model_kwargs,
                     max_new_tokens=self.max_new_tokens,
                     do_sample=False,
                     pad_token_id=self.tokenizer.pad_token_id,
                     eos_token_id=self.tokenizer.eos_token_id,
                 )
             completions = []
-            prompt_lengths = encoded["attention_mask"].sum(dim=1).tolist()
+            prompt_lengths = prompt_attention_mask.sum(dim=1).tolist()
             for row_index, prompt_length in enumerate(prompt_lengths):
                 new_tokens = generated[row_index, int(prompt_length):]
                 completions.append(

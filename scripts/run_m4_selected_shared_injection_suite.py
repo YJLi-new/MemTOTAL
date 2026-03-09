@@ -15,7 +15,7 @@ from memtotal.utils.repro import set_seed
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the selected M4 shared injection suite.")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--phase0_metrics", required=True)
+    parser.add_argument("--phase0_metrics")
     parser.add_argument("--resume", required=True)
     parser.add_argument("--output_root", required=True)
     parser.add_argument("--seed", required=True, type=int)
@@ -23,27 +23,57 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--support-serialization")
     parser.add_argument("--train-steps", type=int)
     parser.add_argument("--warmup-steps", type=int)
+    parser.add_argument(
+        "--arm-spec",
+        action="append",
+        default=[],
+        help=(
+            "Override the default suite arms. Format: "
+            "subdir:alias:arm:writer_memory_control:seed_offset"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
+
+
+def _parse_arm_specs(raw_specs: list[str]) -> list[tuple[str, str, str, str, int]]:
+    if not raw_specs:
+        return [
+            ("pilot-A-selected", "A", "base_only", "real", 0),
+            ("pilot-T-selected", "T", "teacher_text", "real", 2),
+            ("pilot-I-real", "I_real", "injected", "real", 10),
+            ("pilot-I-shuffle", "I_shuffle", "injected", "shuffled", 12),
+            ("pilot-I-zero", "I_zero", "injected", "zero", 14),
+        ]
+    parsed: list[tuple[str, str, str, str, int]] = []
+    for raw_spec in raw_specs:
+        parts = raw_spec.split(":")
+        if len(parts) != 5:
+            raise ValueError(
+                f"Invalid --arm-spec={raw_spec!r}. Expected subdir:alias:arm:writer_memory_control:seed_offset."
+            )
+        subdir, alias, arm, memory_control, seed_offset = parts
+        parsed.append((subdir, alias, arm, memory_control, int(seed_offset)))
+    return parsed
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
     config = load_config(args.config)
-    phase0_metrics = json.loads(Path(args.phase0_metrics).read_text())
-    prompt_variant = str(args.prompt_variant or phase0_metrics["selected_prompt_variant"])
+    phase0_metrics = json.loads(Path(args.phase0_metrics).read_text()) if args.phase0_metrics else {}
+    prompt_variant = str(
+        args.prompt_variant
+        or phase0_metrics.get("selected_prompt_variant")
+        or config.get("runtime", {}).get("pilot_prompt_variant", "inline_short_labels")
+    )
     support_serialization_variant = str(
-        args.support_serialization or phase0_metrics["selected_support_serialization"]
+        args.support_serialization
+        or phase0_metrics.get("selected_support_serialization")
+        or config.get("runtime", {}).get("pilot_support_serialization", "flat_raw8")
     )
     output_root = Path(args.output_root)
     output_root.mkdir(parents=True, exist_ok=True)
-    arm_specs = [
-        ("pilot-A-selected", "A", "base_only", "real", 0),
-        ("pilot-T-selected", "T", "teacher_text", "real", 2),
-        ("pilot-I-real", "I_real", "injected", "real", 10),
-        ("pilot-I-shuffle", "I_shuffle", "injected", "shuffled", 12),
-        ("pilot-I-zero", "I_zero", "injected", "zero", 14),
-    ]
+    arm_specs = _parse_arm_specs(args.arm_spec)
     suite_rows: list[dict[str, object]] = []
     for subdir, alias, arm, memory_control, seed_offset in arm_specs:
         arm_config = copy.deepcopy(config)

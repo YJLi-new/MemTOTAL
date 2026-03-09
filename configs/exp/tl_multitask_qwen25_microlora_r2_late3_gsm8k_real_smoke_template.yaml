@@ -1,0 +1,35 @@
+includes:
+  - tl_micro_lora_fever_qwen25_microlora_r2_late3_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_multitask_qwen25_microlora_r2_late3_gsm8k_real_smoke_template
+  stage: TL-Bridge-MultiTask-V4
+  method_variant: qwen25-tl-bridge-v4-microlora-r2-late3-gsm8k
+
+task:
+  name: gsm8k_real_smoke
+  benchmark_id: gsm8k
+  domain: math
+  split: eval
+  smoke_subset: hf_real_smoke8_split
+  dataset_path: ""
+  support_dataset_path: ""
+  train_dataset_path: ""
+  train_support_dataset_path: ""
+  metric_name: exact_match
+  evaluator:
+    type: exact_match
+
+runtime:
+  pilot_prompt_variant: task_native
+  pilot_support_serialization: example_blocks_raw8
+  pilot_support_examples: 8
+  pilot_support_encoder_mode: structured_support_set
+  pilot_train_support_mode: static_support_rows
+  pilot_train_steps: 8
+  pilot_snapshot_steps:
+    - 0
+    - 2
+    - 4
+    - 8
+  pilot_alignment_aux_mode: off

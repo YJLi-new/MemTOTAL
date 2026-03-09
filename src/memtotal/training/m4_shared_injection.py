@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from memtotal.models import BackboneWrapper, MemoryFuser, MemoryReader, MemoryWriter
-from memtotal.tasks import load_task_dataset
+from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.training.m3 import _resolve_artifact_path
 from memtotal.utils.io import write_json, write_jsonl
 from memtotal.utils.profiling import ProfileTracker
@@ -28,7 +28,21 @@ FEVER_SUPPORT_SERIALIZATION_VARIANTS = (
     "example_blocks_raw8",
     "triad_curated6",
 )
+GENERIC_SUPPORT_SERIALIZATION_VARIANTS = (
+    "flat_raw8",
+    "example_blocks_raw8",
+)
 FEVER_TRIAD_NEI_EVIDENCE = "insufficient evidence available"
+TASK_NATIVE_PROMPT_VARIANT = "task_native"
+TASK_CANDIDATE_SELECTION_EVALUATOR_TYPES = (
+    "dataset_label_classification",
+    "multiple_choice",
+)
+TASK_GENERATION_EVALUATOR_TYPES = (
+    "exact_match",
+    "qa_f1",
+    "memoryagentbench",
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +53,8 @@ class SharedInjectionExampleCache:
     gold_index: int
     prompt_text: str
     prompt_variant: str
+    evaluator_type: str
+    task_mode: str
 
 
 @dataclass(frozen=True)
@@ -314,7 +330,17 @@ def _resolve_pilot_arm_alias(config: dict[str, Any], *, arm: str, writer_memory_
     }[writer_memory_control]
 
 
+def _benchmark_id(config: dict[str, Any]) -> str:
+    return str(config.get("task", {}).get("benchmark_id", "")).strip().lower()
+
+
+def _is_fever_task(config: dict[str, Any]) -> bool:
+    return _benchmark_id(config) == "fever"
+
+
 def _resolve_prompt_variant(config: dict[str, Any]) -> str:
+    if not _is_fever_task(config):
+        return str(config["runtime"].get("pilot_prompt_variant", TASK_NATIVE_PROMPT_VARIANT))
     prompt_variant = str(config["runtime"].get("pilot_prompt_variant", "inline_short_labels"))
     if prompt_variant not in FEVER_PROMPT_VARIANTS:
         raise ValueError(
@@ -325,11 +351,17 @@ def _resolve_prompt_variant(config: dict[str, Any]) -> str:
 
 
 def _resolve_support_serialization_variant(config: dict[str, Any]) -> str:
-    support_variant = str(config["runtime"].get("pilot_support_serialization", "flat_raw8"))
-    if support_variant not in FEVER_SUPPORT_SERIALIZATION_VARIANTS:
+    default_variant = "flat_raw8" if _is_fever_task(config) else "example_blocks_raw8"
+    support_variant = str(config["runtime"].get("pilot_support_serialization", default_variant))
+    allowed_variants = (
+        FEVER_SUPPORT_SERIALIZATION_VARIANTS
+        if _is_fever_task(config)
+        else GENERIC_SUPPORT_SERIALIZATION_VARIANTS
+    )
+    if support_variant not in allowed_variants:
         raise ValueError(
             f"Unsupported runtime.pilot_support_serialization={support_variant}. "
-            f"Expected one of {', '.join(FEVER_SUPPORT_SERIALIZATION_VARIANTS)}."
+            f"Expected one of {', '.join(allowed_variants)}."
         )
     return support_variant
 
@@ -618,6 +650,28 @@ def _resolve_snapshot_steps(config: dict[str, Any], *, train_steps: int, warmup_
 
 
 def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    evaluator_type = str(rows[0].get("evaluator_type", "dataset_label_classification")) if rows else "dataset_label_classification"
+    if evaluator_type in TASK_GENERATION_EVALUATOR_TYPES:
+        total = max(1, len(rows))
+        task_score = sum(float(row.get("task_score", 0.0)) for row in rows) / total
+        exact_match = sum(int(bool(row.get("predicted_correct", False))) for row in rows) / total
+        prediction_keys = [
+            str(row.get("normalized_prediction", row.get("predicted_text", ""))).strip()
+            for row in rows
+        ]
+        predicted_counts: dict[str, int] = {}
+        for prediction_key in prediction_keys:
+            predicted_counts[prediction_key] = predicted_counts.get(prediction_key, 0) + 1
+        dominant_label_fraction = max(predicted_counts.values(), default=0) / total
+        mean_margin = sum(float(row.get("final_margin", 0.0)) for row in rows) / total
+        return {
+            "accuracy": float(task_score),
+            "macro_f1": float(task_score if evaluator_type == "qa_f1" else exact_match),
+            "dominant_label_fraction": float(dominant_label_fraction),
+            "label_recall_by_class": {},
+            "mean_margin": float(mean_margin),
+            "exact_match": float(exact_match),
+        }
     labels = [str(row["gold_label"]) for row in rows]
     unique_labels = sorted(set(labels))
     total = max(1, len(rows))
@@ -654,6 +708,7 @@ def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, A
         "dominant_label_fraction": float(dominant_label_fraction),
         "label_recall_by_class": recall_by_class,
         "mean_margin": float(mean_margin),
+        "exact_match": float(accuracy),
     }
 
 
@@ -693,8 +748,10 @@ def _write_snapshot_eval(
         "step": int(step),
         "task_case_dump_rows": len(case_rows),
         "task_case_dump_path": str(task_case_dump_path.resolve()),
+        "task_evaluator_type": str(case_rows[0].get("evaluator_type", "dataset_label_classification")) if case_rows else "dataset_label_classification",
         "best_adapt_task_score": float(metrics["accuracy"]),
         "best_adapt_macro_f1": float(metrics["macro_f1"]),
+        "best_adapt_exact_match": float(metrics.get("exact_match", 0.0)),
         "best_adapt_task_margin": float(metrics["mean_margin"]),
         "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
         "label_recall_by_class": metrics["label_recall_by_class"],
@@ -1612,6 +1669,8 @@ def _fever_candidate_texts(prompt_variant: str) -> tuple[list[str], list[str]]:
 
 
 def _resolve_prompt_text(example: dict[str, Any], *, prompt_variant: str) -> str:
+    if prompt_variant == TASK_NATIVE_PROMPT_VARIANT:
+        return str(example.get("segment", "")).strip()
     claim = str(example.get("claim", "")).strip()
     evidence = str(example.get("evidence", "")).strip()
     if prompt_variant == "inline_short_labels":
@@ -1632,14 +1691,41 @@ def _resolve_prompt_text(example: dict[str, Any], *, prompt_variant: str) -> str
     raise ValueError(f"Unsupported prompt_variant={prompt_variant}.")
 
 
-def _candidate_payload(example: dict[str, Any], *, prompt_variant: str) -> tuple[list[str], list[str], int]:
-    gold_label = str(example["label"])
-    candidate_labels, candidate_texts = _fever_candidate_texts(prompt_variant)
-    try:
-        gold_index = candidate_labels.index(gold_label)
-    except ValueError as exc:
-        raise ValueError(f"Gold label {gold_label!r} missing from FEVER labels.") from exc
-    return candidate_labels, candidate_texts, gold_index
+def _task_mode_for_evaluator_type(evaluator_type: str) -> str:
+    if evaluator_type in TASK_CANDIDATE_SELECTION_EVALUATOR_TYPES:
+        return "candidate_selection"
+    if evaluator_type in TASK_GENERATION_EVALUATOR_TYPES:
+        return "generation"
+    raise ValueError(f"Unsupported evaluator_type={evaluator_type!r} for shared injection pilot.")
+
+
+def _candidate_payload(example: dict[str, Any], *, prompt_variant: str) -> tuple[list[str], list[str], int, str]:
+    evaluator_type = str(example.get("evaluator_type", "dataset_label_classification"))
+    task_mode = _task_mode_for_evaluator_type(evaluator_type)
+    if prompt_variant != TASK_NATIVE_PROMPT_VARIANT:
+        gold_label = str(example["label"])
+        candidate_labels, candidate_texts = _fever_candidate_texts(prompt_variant)
+        try:
+            gold_index = candidate_labels.index(gold_label)
+        except ValueError as exc:
+            raise ValueError(f"Gold label {gold_label!r} missing from FEVER labels.") from exc
+        return candidate_labels, candidate_texts, gold_index, task_mode
+    if task_mode == "candidate_selection":
+        choices = list(example.get("choices", []))
+        if not choices:
+            raise ValueError("Candidate-selection shared-injection examples require non-empty choices.")
+        candidate_labels = [str(choice["label"]) for choice in choices]
+        candidate_texts = [str(choice["text"]) for choice in choices]
+        gold_label = str(example["label"])
+        try:
+            gold_index = candidate_labels.index(gold_label)
+        except ValueError as exc:
+            raise ValueError(f"Gold label {gold_label!r} missing from benchmark choices.") from exc
+        return candidate_labels, candidate_texts, gold_index, task_mode
+    gold_text = str(example.get("continuation", example.get("gold_answer", ""))).strip()
+    if not gold_text:
+        raise ValueError("Generative shared-injection examples require a non-empty continuation/gold_answer.")
+    return [str(example.get("label", gold_text))], [gold_text], 0, task_mode
 
 
 def _build_example_caches(
@@ -1649,7 +1735,7 @@ def _build_example_caches(
 ) -> list[SharedInjectionExampleCache]:
     caches: list[SharedInjectionExampleCache] = []
     for example in examples:
-        candidate_labels, candidate_texts, gold_index = _candidate_payload(
+        candidate_labels, candidate_texts, gold_index, task_mode = _candidate_payload(
             example,
             prompt_variant=prompt_variant,
         )
@@ -1661,6 +1747,8 @@ def _build_example_caches(
                 gold_index=gold_index,
                 prompt_text=_resolve_prompt_text(example, prompt_variant=prompt_variant),
                 prompt_variant=prompt_variant,
+                evaluator_type=str(example.get("evaluator_type", "dataset_label_classification")),
+                task_mode=task_mode,
             )
         )
     return caches
@@ -1672,6 +1760,21 @@ def _serialize_support_row(
     support_index: int,
     support_serialization_variant: str,
 ) -> str:
+    benchmark_id = str(row.get("benchmark_id", "")).strip().lower()
+    if benchmark_id and benchmark_id != "fever":
+        prompt = str(row.get("segment", "")).strip()
+        answer = str(row.get("gold_answer", row.get("continuation", ""))).strip()
+        if support_serialization_variant == "flat_raw8":
+            return f"Support {support_index}: Prompt: {prompt} || Answer: {answer}"
+        if support_serialization_variant == "example_blocks_raw8":
+            return (
+                f"Example {support_index}\n"
+                f"Prompt: {prompt}\n"
+                f"Answer: {answer}"
+            )
+        raise ValueError(
+            f"Unsupported support_serialization_variant={support_serialization_variant}."
+        )
     claim = str(row.get("claim", "")).strip()
     evidence = str(row.get("evidence", "")).strip()
     label = str(row.get("label", "")).strip()
@@ -1715,6 +1818,13 @@ def _select_support_rows_for_variant(
         raise ValueError(
             f"Unsupported support_serialization_variant={support_serialization_variant}."
         )
+    benchmark_ids = {
+        str(example.get("benchmark_id", "")).strip().lower()
+        for example in support_examples
+        if str(example.get("benchmark_id", "")).strip()
+    }
+    if benchmark_ids and benchmark_ids != {"fever"}:
+        raise ValueError("triad_curated6 is only supported for FEVER support banks.")
     by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
     for example in support_examples:
         label = str(example.get("label", "")).strip()
@@ -1801,10 +1911,12 @@ def _support_label_ids(
     label_ids = []
     for row in support_rows:
         label = str(row.get("label", "")).strip()
-        try:
+        if label in FEVER_LABEL_ORDER:
             label_ids.append(FEVER_LABEL_ORDER.index(label))
-        except ValueError as exc:
-            raise ValueError(f"Unsupported support label {label!r} for structured support-set encoding.") from exc
+        else:
+            # Non-FEVER support banks do not expose a small fixed label space; keep them in a shared bucket
+            # so the warm-started FEVER support encoder can still be reused.
+            label_ids.append(0)
     return torch.tensor([label_ids], dtype=torch.long, device=device)
 
 
@@ -2553,16 +2665,57 @@ class SharedInjectionPilotRuntime(nn.Module):
             return_diagnostics=return_diagnostics,
         )
 
+    def generate_text(
+        self,
+        *,
+        prompt_text: str,
+        support_text_block: str,
+        prefix_embeddings: torch.Tensor | None,
+        layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+    ) -> str:
+        if self.arm == "teacher_text":
+            prompt = _serialize_teacher_prompt(prompt_text, support_text_block)
+            return self.backbone.generate([prompt])[0]
+        return self.backbone.generate(
+            [prompt_text],
+            prefix_embeddings=prefix_embeddings,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+        )[0]
+
 
 def _strongest_competitor_index(scores: torch.Tensor, gold_index: int) -> int:
     competitor_indices = [index for index in range(scores.shape[0]) if index != gold_index]
+    if not competitor_indices:
+        return gold_index
     detached_scores = scores.detach()
     return max(competitor_indices, key=lambda index: float(detached_scores[index].item()))
 
 
 def _compute_margin(scores: torch.Tensor, gold_index: int) -> tuple[float, int]:
     competitor_index = _strongest_competitor_index(scores, gold_index)
+    if competitor_index == gold_index:
+        return float(scores[gold_index].item()), competitor_index
     return float(scores[gold_index].item() - scores[competitor_index].item()), competitor_index
+
+
+def _task_training_loss(
+    scores: torch.Tensor,
+    example_cache: SharedInjectionExampleCache,
+    *,
+    margin_value: float,
+    ce_weight: float = 1.0,
+    competitor_hinge_weight: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if example_cache.task_mode == "generation":
+        zero = torch.zeros((), dtype=scores.dtype, device=scores.device)
+        return -scores[example_cache.gold_index], zero, zero
+    return _choice_task_loss(
+        scores,
+        example_cache.gold_index,
+        margin_value=margin_value,
+        ce_weight=ce_weight,
+        competitor_hinge_weight=competitor_hinge_weight,
+    )
 
 
 def _choice_task_loss(
@@ -2593,6 +2746,8 @@ def _choice_task_loss(
 
 def _score_margin_tensor(scores: torch.Tensor, gold_index: int) -> torch.Tensor:
     competitor_index = _strongest_competitor_index(scores, gold_index)
+    if competitor_index == gold_index:
+        return scores[gold_index]
     return scores[gold_index] - scores[competitor_index]
 
 
@@ -2961,10 +3116,41 @@ def _prediction_row(
     example_cache: SharedInjectionExampleCache,
     scores: torch.Tensor,
     prefix_stats: dict[str, Any] | None,
+    task_evaluator: Any,
+    generated_text: str | None = None,
 ) -> dict[str, Any]:
-    predicted_index = int(torch.argmax(scores).item())
     margin, competitor_index = _compute_margin(scores, example_cache.gold_index)
     scalar_prefix_stats = _prefix_scalar_summary(prefix_stats or {})
+    if example_cache.task_mode == "generation":
+        predicted_text = str(generated_text or "")
+        score_payload = task_evaluator.evaluate_prediction({"text": predicted_text}, example_cache.example)
+        return {
+            "example_id": str(example_cache.example["id"]),
+            "arm_alias": arm_alias,
+            "arm": arm,
+            "writer_memory_control": writer_memory_control,
+            "prompt_variant": prompt_variant,
+            "support_serialization_variant": support_serialization_variant,
+            "support_text_block_chars": len(support_text_block),
+            "prefix_tokens": int(scalar_prefix_stats.get("prefix_tokens", 0.0)),
+            "prefix_l2": float(scalar_prefix_stats.get("prefix_l2", 0.0)),
+            "prompt_text": example_cache.prompt_text,
+            "evaluator_type": example_cache.evaluator_type,
+            "predicted_label": "",
+            "gold_label": str(example_cache.example.get("label", "")),
+            "predicted_text": predicted_text,
+            "gold_answer": str(example_cache.example.get("gold_answer", example_cache.candidate_texts[0])),
+            "predicted_correct": bool(score_payload["correct"]),
+            "task_score": float(score_payload["score"]),
+            "final_margin": margin,
+            "final_choice_scores": [float(value) for value in scores.tolist()],
+            "candidate_labels": list(example_cache.candidate_labels),
+            "candidate_texts": list(example_cache.candidate_texts),
+            "normalized_prediction": str(score_payload.get("normalized_prediction", "")),
+            "normalized_reference": str(score_payload.get("normalized_reference", "")),
+            "extra_metrics": dict(score_payload.get("extra_metrics", {})),
+        }
+    predicted_index = int(torch.argmax(scores).item())
     return {
         "example_id": str(example_cache.example["id"]),
         "arm_alias": arm_alias,
@@ -2976,6 +3162,7 @@ def _prediction_row(
         "prefix_tokens": int(scalar_prefix_stats.get("prefix_tokens", 0.0)),
         "prefix_l2": float(scalar_prefix_stats.get("prefix_l2", 0.0)),
         "prompt_text": example_cache.prompt_text,
+        "evaluator_type": example_cache.evaluator_type,
         "predicted_label": example_cache.candidate_labels[predicted_index],
         "gold_label": example_cache.candidate_labels[example_cache.gold_index],
         "predicted_correct": bool(predicted_index == example_cache.gold_index),
@@ -3002,6 +3189,7 @@ def _evaluate_examples(
     prefix_embeddings: torch.Tensor | None,
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
     prefix_stats: dict[str, Any] | None,
+    task_evaluator: Any,
     support_rows: list[dict[str, Any]] | None = None,
     profiler: ProfileTracker | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -3033,6 +3221,16 @@ def _evaluate_examples(
             prefix_embeddings=active_prefix_embeddings,
             layer_prefix_hidden_by_layer=active_layer_prefix_hidden_by_layer,
         ).detach().to(dtype=torch.float32).cpu()
+        generated_text = None
+        if example_cache.task_mode == "generation":
+            generated_text = runtime.generate_text(
+                prompt_text=example_cache.prompt_text,
+                support_text_block=teacher_support_text_block,
+                prefix_embeddings=active_prefix_embeddings,
+                layer_prefix_hidden_by_layer=active_layer_prefix_hidden_by_layer,
+            )
+            if profiler is not None and generated_text:
+                profiler.add_tokens(runtime.backbone.count_tokens(generated_text))
         case_rows.append(
             _prediction_row(
                 arm_alias=arm_alias,
@@ -3044,6 +3242,8 @@ def _evaluate_examples(
                 example_cache=example_cache,
                 scores=scores,
                 prefix_stats=active_prefix_stats,
+                task_evaluator=task_evaluator,
+                generated_text=generated_text,
             )
         )
     return case_rows, (_aggregate_prefix_stats(example_prefix_stats) if example_prefix_stats else (prefix_stats or _prefix_stats()))
@@ -3131,6 +3331,7 @@ def run_shared_injection_pilot(
         train_steps = min(train_steps, 2)
         projector_warmup_steps = min(projector_warmup_steps, train_steps)
 
+    task_evaluator = build_task_evaluator(config)
     support_examples = _load_task_dataset_with_path(config, support_dataset_path)
     train_examples = _load_task_dataset_with_path(config, train_dataset_path)
     eval_examples = load_task_dataset(config)
@@ -3294,6 +3495,7 @@ def run_shared_injection_pilot(
             prefix_embeddings=prefix_artifacts.prefix_embeddings,
             layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
             prefix_stats=prefix_artifacts.prefix_stats,
+            task_evaluator=task_evaluator,
             support_rows=support_rows_for_prefix,
             profiler=None,
         )
@@ -3482,9 +3684,9 @@ def run_shared_injection_pilot(
                 start_step=competitor_hinge_start_step,
                 ramp_steps=competitor_hinge_ramp_steps,
             )
-            loss, choice_ce_loss, competitor_hinge_loss = _choice_task_loss(
+            loss, choice_ce_loss, competitor_hinge_loss = _task_training_loss(
                 scores,
-                train_example.gold_index,
+                train_example,
                 margin_value=choice_margin,
                 ce_weight=choice_ce_weight,
                 competitor_hinge_weight=active_competitor_hinge_weight,
@@ -3593,15 +3795,6 @@ def run_shared_injection_pilot(
                 start_step=alignment_aux_start_step,
                 ramp_steps=alignment_aux_ramp_steps,
             )
-            with torch.no_grad():
-                base_scores = runtime.backbone.score_continuations(
-                    train_example.prompt_text,
-                    train_example.candidate_texts,
-                )
-                teacher_scores = runtime.backbone.score_continuations(
-                    _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
-                    train_example.candidate_texts,
-                )
             alignment_aux_loss = None
             alignment_aux_active = False
             alignment_aux_diagnostics = {
@@ -3615,27 +3808,37 @@ def run_shared_injection_pilot(
                 "teacher_class_entropy": 0.0,
                 "base_class_entropy": 0.0,
             }
-            alignment_aux_allowed = not (
-                alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
-            )
-            requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
-            alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
-                mode=requested_alignment_mode,
-                active_scores=scores,
-                base_scores=base_scores,
-                teacher_scores=teacher_scores,
-                gold_index=train_example.gold_index,
-                temperature=alignment_aux_temperature,
-                advantage_center=alignment_aux_advantage_center,
-                advantage_scale=alignment_aux_advantage_scale,
-            )
-            if (
-                alignment_aux_mode != "off"
-                and alignment_aux_allowed
-                and active_alignment_aux_weight > 0.0
-                and alignment_aux_loss is not None
-            ):
-                loss = loss + (active_alignment_aux_weight * alignment_aux_loss)
+            if train_example.task_mode == "candidate_selection":
+                with torch.no_grad():
+                    base_scores = runtime.backbone.score_continuations(
+                        train_example.prompt_text,
+                        train_example.candidate_texts,
+                    )
+                    teacher_scores = runtime.backbone.score_continuations(
+                        _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
+                        train_example.candidate_texts,
+                    )
+                alignment_aux_allowed = not (
+                    alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
+                )
+                requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
+                alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
+                    mode=requested_alignment_mode,
+                    active_scores=scores,
+                    base_scores=base_scores,
+                    teacher_scores=teacher_scores,
+                    gold_index=train_example.gold_index,
+                    temperature=alignment_aux_temperature,
+                    advantage_center=alignment_aux_advantage_center,
+                    advantage_scale=alignment_aux_advantage_scale,
+                )
+                if (
+                    alignment_aux_mode != "off"
+                    and alignment_aux_allowed
+                    and active_alignment_aux_weight > 0.0
+                    and alignment_aux_loss is not None
+                ):
+                    loss = loss + (active_alignment_aux_weight * alignment_aux_loss)
             loss.backward()
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
@@ -3908,6 +4111,7 @@ def run_shared_injection_pilot(
         prefix_embeddings=prefix_artifacts.prefix_embeddings,
         layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
         prefix_stats=prefix_artifacts.prefix_stats,
+        task_evaluator=task_evaluator,
         support_rows=support_rows_for_prefix,
         profiler=profiler,
     )
@@ -4089,8 +4293,10 @@ def run_shared_injection_pilot(
         "teacher_text_block_chars": len(teacher_support_text_block),
         "support_text_block_chars": len(support_text_block),
         "task_metric_name": str(config["task"].get("metric_name", "accuracy")),
+        "task_evaluator_type": task_evaluator.evaluator_type,
         "best_adapt_task_score": float(class_metrics["accuracy"]),
         "best_adapt_macro_f1": float(class_metrics["macro_f1"]),
+        "best_adapt_exact_match": float(class_metrics.get("exact_match", 0.0)),
         "best_adapt_task_margin": float(class_metrics["mean_margin"]),
         "dominant_label_fraction": float(class_metrics["dominant_label_fraction"]),
         "label_recall_by_class": class_metrics["label_recall_by_class"],
