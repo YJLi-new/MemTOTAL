@@ -264,6 +264,84 @@ class BackboneWrapper(nn.Module):
         hidden_states = self.encode_texts(texts)
         return hidden_states.mean(dim=1)
 
+    def _tail_hidden_state_window(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        max_tokens: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if hidden_states.ndim != 3:
+            raise ValueError("hidden_states must have shape [batch, tokens, hidden_size].")
+        if attention_mask.ndim != 2:
+            raise ValueError("attention_mask must have shape [batch, tokens].")
+        if hidden_states.shape[:2] != attention_mask.shape:
+            raise ValueError("hidden_states and attention_mask must agree on [batch, tokens].")
+        window_tokens = max(1, int(max_tokens))
+        batch_size, _, hidden_size = hidden_states.shape
+        window = torch.zeros(
+            batch_size,
+            window_tokens,
+            hidden_size,
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        window_mask = torch.zeros(
+            batch_size,
+            window_tokens,
+            dtype=torch.bool,
+            device=hidden_states.device,
+        )
+        lengths = attention_mask.to(dtype=torch.long, device=hidden_states.device).sum(dim=1)
+        for row_index in range(batch_size):
+            valid_tokens = int(lengths[row_index].item())
+            tail_length = max(1, min(window_tokens, valid_tokens))
+            if valid_tokens > 0:
+                tail_hidden = hidden_states[row_index, valid_tokens - tail_length : valid_tokens, :]
+            else:
+                tail_hidden = hidden_states[row_index, :1, :]
+            window[row_index, :tail_length, :] = tail_hidden
+            window_mask[row_index, :tail_length] = True
+        return window, window_mask
+
+    def extract_prompt_hidden_state_slice(
+        self,
+        texts: Iterable[str],
+        *,
+        max_tokens: int = 8,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        text_list = list(texts)
+        if self.load_mode == "hf_causal_lm":
+            encoded = self._prepare_hf_inputs(text_list)
+            with torch.inference_mode():
+                outputs = self.model(
+                    **encoded,
+                    output_hidden_states=True,
+                    use_cache=False,
+                )
+            hidden_states = outputs.hidden_states[-1].to(dtype=torch.float32)
+            return self._tail_hidden_state_window(
+                hidden_states,
+                encoded["attention_mask"],
+                max_tokens=max_tokens,
+            )
+        encoded = self.encode_texts(text_list)
+        lengths = [max(1, len(self._tokenize(text))) for text in text_list]
+        max_length = encoded.shape[1]
+        attention_mask = torch.zeros(
+            len(text_list),
+            max_length,
+            dtype=torch.bool,
+            device=encoded.device,
+        )
+        for row_index, length in enumerate(lengths):
+            attention_mask[row_index, : min(length, max_length)] = True
+        return self._tail_hidden_state_window(
+            encoded.to(dtype=torch.float32),
+            attention_mask,
+            max_tokens=max_tokens,
+        )
+
     def _encode_texts_hf(self, texts: list[str]) -> torch.Tensor:
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("Real backbone is not initialized.")

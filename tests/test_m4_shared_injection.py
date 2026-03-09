@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,7 +35,7 @@ from memtotal.analysis.m4_shared_injection import (
     run_m4_writer_information_audit,
     _v0_forensics_summary,
 )
-from memtotal.models.memory import MemoryFuser, MemoryWriter
+from memtotal.models.memory import MemoryFuser, MemoryWriter, WriterWeaverHead
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     SharedLowRankDeepPrefixProjector,
@@ -92,6 +94,41 @@ def _classification_rows(
 
 
 class SharedInjectionHelpersTest(unittest.TestCase):
+    def test_writer_weaver_head_supports_stimulus_modes(self) -> None:
+        writer = WriterWeaverHead(
+            embed_dim=6,
+            memory_slots=4,
+            hidden_dim=12,
+            num_heads=2,
+            transformer_layers=1,
+        )
+        context_states = torch.randn(1, 3, 6)
+        support_states = torch.randn(1, 2, 6)
+        support_only = writer.write(
+            context_states=None,
+            support_states=support_states,
+            stimulus_mode="support_only",
+        )
+        context_only = writer.write(
+            context_states=context_states,
+            support_states=None,
+            stimulus_mode="context_only",
+        )
+        support_and_context = writer.write(
+            context_states=context_states,
+            support_states=support_states,
+            stimulus_mode="support_and_context",
+        )
+        self.assertEqual(list(support_only.shape), [1, 4, 6])
+        self.assertEqual(list(context_only.shape), [1, 4, 6])
+        self.assertEqual(list(support_and_context.shape), [1, 4, 6])
+        with self.assertRaisesRegex(ValueError, "requires non-empty context_states"):
+            writer.write(
+                context_states=None,
+                support_states=support_states,
+                stimulus_mode="support_and_context",
+            )
+
     def test_support_text_block_respects_modes_and_triad_variant(self) -> None:
         support_rows = [
             {
@@ -868,6 +905,297 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertIn("fuser_output_effective_rank", prefix_artifacts.prefix_stats)
         prompt_calls = [call for call in fake_backbone._calls if call == ("Claim: cached prompt",)]
         self.assertEqual(len(prompt_calls), 1)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_builds_context_conditioned_prefix(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.prompt_slice_calls: list[tuple[str, int]] = []
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0},
+                }
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                prompt_list = list(texts)
+                self.prompt_slice_calls.append((prompt_list[0], int(max_tokens)))
+                hidden = torch.full((len(prompt_list), max_tokens, self.hidden_size), 0.5, dtype=torch.float32)
+                mask = torch.ones(len(prompt_list), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 3,
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "shallow_prefix",
+            },
+        }
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=19,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            "Support bank",
+            prompt_text="Need context now",
+        )
+        self.assertEqual(runtime.bridge_mode, "writer_direct")
+        self.assertIsInstance(runtime.writer, WriterWeaverHead)
+        self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 4, 6])
+        self.assertEqual(list(prefix_artifacts.writer_context_states.shape), [1, 3, 6])
+        self.assertEqual(list(prefix_artifacts.writer_context_mask.shape), [1, 3])
+        self.assertGreater(prefix_artifacts.prefix_stats["writer_context_token_count"], 0.0)
+        self.assertGreater(prefix_artifacts.prefix_stats["writer_support_state_count"], 0.0)
+        self.assertEqual(fake_backbone.prompt_slice_calls, [("Need context now", 3)])
+
+    def test_update_writer_weaver_summary_reports_move_to_w1(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script_path = repo_root / "scripts" / "update_writer_weaver_summary.py"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            def write_metrics(name: str, payload: dict[str, object]) -> Path:
+                path = tmp_path / name
+                path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+                return path
+
+            def task_metrics(
+                *,
+                benchmark_id: str,
+                task_name: str,
+                metric_name: str,
+                task_score: float,
+                exact_match: float,
+                delta_answer_logprob: float,
+                writer_context_token_count: float,
+                common_mode_ratio: float,
+                centered_rank: float,
+                top1_top2_ratio: float,
+            ) -> dict[str, object]:
+                return {
+                    "benchmark_id": benchmark_id,
+                    "task_name": task_name,
+                    "task_metric_name": metric_name,
+                    "best_adapt_task_score": task_score,
+                    "best_adapt_exact_match": exact_match,
+                    "delta_answer_logprob": delta_answer_logprob,
+                    "writer_context_token_count": writer_context_token_count,
+                    "memory_long_common_mode_energy_ratio": common_mode_ratio,
+                    "memory_long_centered_effective_rank": centered_rank,
+                    "memory_long_top1_top2_ratio": top1_top2_ratio,
+                    "projected_memory_effective_rank": 2.5,
+                    "memory_long_pairwise_cosine_mean": 0.15,
+                }
+
+            gsm8k_control = write_metrics(
+                "gsm8k-control.json",
+                task_metrics(
+                    benchmark_id="gsm8k",
+                    task_name="gsm8k",
+                    metric_name="exact_match",
+                    task_score=0.0,
+                    exact_match=0.0,
+                    delta_answer_logprob=0.0,
+                    writer_context_token_count=0.0,
+                    common_mode_ratio=0.98,
+                    centered_rank=1.1,
+                    top1_top2_ratio=21.0,
+                ),
+            )
+            gsm8k_support_only = write_metrics(
+                "gsm8k-support-only.json",
+                task_metrics(
+                    benchmark_id="gsm8k",
+                    task_name="gsm8k",
+                    metric_name="exact_match",
+                    task_score=0.0,
+                    exact_match=0.0,
+                    delta_answer_logprob=-0.3,
+                    writer_context_token_count=0.0,
+                    common_mode_ratio=0.99,
+                    centered_rank=1.0,
+                    top1_top2_ratio=22.0,
+                ),
+            )
+            gsm8k_support_context = write_metrics(
+                "gsm8k-support-context.json",
+                task_metrics(
+                    benchmark_id="gsm8k",
+                    task_name="gsm8k",
+                    metric_name="exact_match",
+                    task_score=0.5,
+                    exact_match=0.5,
+                    delta_answer_logprob=0.2,
+                    writer_context_token_count=8.0,
+                    common_mode_ratio=0.94,
+                    centered_rank=1.3,
+                    top1_top2_ratio=18.0,
+                ),
+            )
+            narrativeqa_control = write_metrics(
+                "narrativeqa-control.json",
+                task_metrics(
+                    benchmark_id="narrativeqa",
+                    task_name="narrativeqa",
+                    metric_name="qa_f1",
+                    task_score=0.2,
+                    exact_match=0.0,
+                    delta_answer_logprob=0.0,
+                    writer_context_token_count=0.0,
+                    common_mode_ratio=0.96,
+                    centered_rank=1.2,
+                    top1_top2_ratio=16.0,
+                ),
+            )
+            narrativeqa_support_only = write_metrics(
+                "narrativeqa-support-only.json",
+                task_metrics(
+                    benchmark_id="narrativeqa",
+                    task_name="narrativeqa",
+                    metric_name="qa_f1",
+                    task_score=0.2,
+                    exact_match=0.0,
+                    delta_answer_logprob=-0.1,
+                    writer_context_token_count=0.0,
+                    common_mode_ratio=0.95,
+                    centered_rank=1.2,
+                    top1_top2_ratio=16.0,
+                ),
+            )
+            narrativeqa_support_context = write_metrics(
+                "narrativeqa-support-context.json",
+                task_metrics(
+                    benchmark_id="narrativeqa",
+                    task_name="narrativeqa",
+                    metric_name="qa_f1",
+                    task_score=0.25,
+                    exact_match=0.0,
+                    delta_answer_logprob=0.05,
+                    writer_context_token_count=8.0,
+                    common_mode_ratio=0.95,
+                    centered_rank=1.2,
+                    top1_top2_ratio=16.0,
+                ),
+            )
+            fever_control = write_metrics(
+                "fever-control.json",
+                task_metrics(
+                    benchmark_id="fever",
+                    task_name="fever",
+                    metric_name="accuracy",
+                    task_score=0.3,
+                    exact_match=0.3,
+                    delta_answer_logprob=0.0,
+                    writer_context_token_count=0.0,
+                    common_mode_ratio=0.98,
+                    centered_rank=1.1,
+                    top1_top2_ratio=19.0,
+                ),
+            )
+            fever_support_only = write_metrics(
+                "fever-support-only.json",
+                task_metrics(
+                    benchmark_id="fever",
+                    task_name="fever",
+                    metric_name="accuracy",
+                    task_score=0.3,
+                    exact_match=0.3,
+                    delta_answer_logprob=-0.02,
+                    writer_context_token_count=0.0,
+                    common_mode_ratio=0.98,
+                    centered_rank=1.1,
+                    top1_top2_ratio=19.0,
+                ),
+            )
+            fever_support_context = write_metrics(
+                "fever-support-context.json",
+                task_metrics(
+                    benchmark_id="fever",
+                    task_name="fever",
+                    metric_name="accuracy",
+                    task_score=0.31,
+                    exact_match=0.31,
+                    delta_answer_logprob=-0.01,
+                    writer_context_token_count=8.0,
+                    common_mode_ratio=0.98,
+                    centered_rank=1.1,
+                    top1_top2_ratio=19.0,
+                ),
+            )
+
+            output_json = tmp_path / "w0-summary.json"
+            output_report = tmp_path / "w0-summary.md"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--gsm8k_control_metrics_json",
+                    str(gsm8k_control),
+                    "--gsm8k_support_only_metrics_json",
+                    str(gsm8k_support_only),
+                    "--gsm8k_support_context_metrics_json",
+                    str(gsm8k_support_context),
+                    "--narrativeqa_control_metrics_json",
+                    str(narrativeqa_control),
+                    "--narrativeqa_support_only_metrics_json",
+                    str(narrativeqa_support_only),
+                    "--narrativeqa_support_context_metrics_json",
+                    str(narrativeqa_support_context),
+                    "--fever_control_metrics_json",
+                    str(fever_control),
+                    "--fever_support_only_metrics_json",
+                    str(fever_support_only),
+                    "--fever_support_context_metrics_json",
+                    str(fever_support_context),
+                    "--output_json",
+                    str(output_json),
+                    "--output_report",
+                    str(output_report),
+                ],
+                cwd=repo_root,
+                check=True,
+            )
+
+            summary = json.loads(output_json.read_text())
+            report = output_report.read_text()
+            self.assertEqual(summary["comparison_conclusion"], "move_to_w1")
+            self.assertTrue(summary["move_to_w1"])
+            self.assertFalse(summary["stop_after_w0"])
+            self.assertTrue(summary["all_tasks_completed"])
+            self.assertTrue(summary["all_support_context_wired"])
+            self.assertTrue(summary["all_support_only_context_free"])
+            self.assertTrue(summary["geometry_move_any"])
+            self.assertTrue(summary["nonfever_positive_delta_any"])
+            self.assertIn("comparison_conclusion: move_to_w1", report)
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_runtime_accepts_single_level_warm_start_but_rejects_strict_load(self, mock_backbone_cls) -> None:

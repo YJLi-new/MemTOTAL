@@ -222,6 +222,15 @@ class BackboneRealModeTest(unittest.TestCase):
         deep_prefixed_generations = backbone.generate(["Prompt"], layer_prefix_hidden_by_layer=deep_prefix)
         self.assertEqual(len(deep_prefixed_generations), 1)
         self.assertTrue(deep_prefixed_generations[0])
+        prompt_hidden, prompt_mask = backbone.extract_prompt_hidden_state_slice(
+            ["Prompt alpha", "B"],
+            max_tokens=3,
+        )
+        self.assertEqual(list(prompt_hidden.shape), [2, 3, 8])
+        self.assertEqual(list(prompt_mask.shape), [2, 3])
+        self.assertEqual(prompt_mask.dtype, torch.bool)
+        self.assertTrue(bool(prompt_mask[0].any().item()))
+        self.assertTrue(bool(prompt_mask[1].any().item()))
 
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())

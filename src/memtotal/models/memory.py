@@ -207,6 +207,141 @@ class MemoryWriter(ManagedMemoryModule):
         return self._encode_slots(support_slots, slots)
 
 
+class WriterWeaverHead(ManagedMemoryModule):
+    def __init__(
+        self,
+        embed_dim: int,
+        memory_slots: int,
+        *,
+        hidden_dim: int | None = None,
+        num_heads: int = 4,
+        transformer_layers: int = 1,
+        dropout: float = 0.0,
+        context_query_residual_scale: float = 1.0,
+        support_query_residual_scale: float = 1.0,
+        output_slot_basis_scale: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.embed_dim = int(embed_dim)
+        self.memory_slots = int(memory_slots)
+        self.arch = "weaver"
+        self.context_query_residual_scale = float(context_query_residual_scale)
+        self.support_query_residual_scale = float(support_query_residual_scale)
+        self.output_slot_basis_scale = float(output_slot_basis_scale)
+        self.slot_conditioning_mode = "writer_weaver"
+        self.shared_state_scale = 1.0
+        resolved_hidden_dim = int(hidden_dim or (2 * self.embed_dim))
+        self.slot_embeddings = nn.Parameter(torch.randn(self.memory_slots, self.embed_dim) * 0.02)
+        self.context_cross_attn = nn.MultiheadAttention(
+            embed_dim=self.embed_dim,
+            num_heads=int(num_heads),
+            dropout=float(dropout),
+            batch_first=True,
+        )
+        self.support_cross_attn = nn.MultiheadAttention(
+            embed_dim=self.embed_dim,
+            num_heads=int(num_heads),
+            dropout=float(dropout),
+            batch_first=True,
+        )
+        layer = nn.TransformerEncoderLayer(
+            d_model=self.embed_dim,
+            nhead=int(num_heads),
+            dim_feedforward=resolved_hidden_dim,
+            dropout=float(dropout),
+            activation="gelu",
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=int(transformer_layers))
+        self.output_norm = nn.LayerNorm(self.embed_dim)
+
+    @staticmethod
+    def common_mode_vector(slots: torch.Tensor) -> torch.Tensor:
+        return MemoryWriter.common_mode_vector(slots)
+
+    @staticmethod
+    def center_slots(slots: torch.Tensor) -> torch.Tensor:
+        return MemoryWriter.center_slots(slots)
+
+    @staticmethod
+    def slot_norms(slots: torch.Tensor) -> torch.Tensor:
+        return MemoryWriter.slot_norms(slots)
+
+    def orthogonalize_slot_embeddings_(self) -> None:
+        with torch.no_grad():
+            original_mean_norm = self.slot_embeddings.norm(dim=-1).mean().clamp_min(1e-6)
+            orthogonal = torch.empty_like(self.slot_embeddings)
+            nn.init.orthogonal_(orthogonal)
+            orthogonal = orthogonal * original_mean_norm
+            self.slot_embeddings.copy_(orthogonal)
+
+    def _normalize_sequence(self, name: str, states: torch.Tensor | None) -> torch.Tensor | None:
+        if states is None:
+            return None
+        if states.ndim == 2:
+            states = states.unsqueeze(1)
+        if states.ndim != 3:
+            raise ValueError(f"{name} must have shape [batch, tokens, hidden_size].")
+        if states.shape[-1] != self.embed_dim:
+            raise ValueError(
+                f"{name} expected hidden size {self.embed_dim}, got {states.shape[-1]}."
+            )
+        return states
+
+    def write(
+        self,
+        *,
+        context_states: torch.Tensor | None,
+        support_states: torch.Tensor | None,
+        stimulus_mode: str = "support_and_context",
+        context_key_padding_mask: torch.Tensor | None = None,
+        support_key_padding_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if stimulus_mode not in {"support_only", "context_only", "support_and_context"}:
+            raise ValueError(
+                f"Unsupported WriterWeaverHead stimulus_mode={stimulus_mode}. "
+                "Expected one of support_only, context_only, support_and_context."
+            )
+        normalized_context = self._normalize_sequence("context_states", context_states)
+        normalized_support = self._normalize_sequence("support_states", support_states)
+        if stimulus_mode in {"context_only", "support_and_context"} and normalized_context is None:
+            raise ValueError(
+                f"WriterWeaverHead stimulus_mode={stimulus_mode} requires non-empty context_states."
+            )
+        if stimulus_mode in {"support_only", "support_and_context"} and normalized_support is None:
+            raise ValueError(
+                f"WriterWeaverHead stimulus_mode={stimulus_mode} requires non-empty support_states."
+            )
+        source_state = normalized_context if normalized_context is not None else normalized_support
+        if source_state is None:
+            raise ValueError("WriterWeaverHead requires at least one stimulus source.")
+        batch_size = int(source_state.shape[0])
+        slots = self.slot_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        current_slots = slots
+        if normalized_context is not None and stimulus_mode in {"context_only", "support_and_context"}:
+            context_attended, _ = self.context_cross_attn(
+                query=current_slots,
+                key=normalized_context,
+                value=normalized_context,
+                key_padding_mask=context_key_padding_mask,
+                need_weights=False,
+            )
+            current_slots = context_attended + (self.context_query_residual_scale * current_slots)
+        if normalized_support is not None and stimulus_mode in {"support_only", "support_and_context"}:
+            support_attended, _ = self.support_cross_attn(
+                query=current_slots,
+                key=normalized_support,
+                value=normalized_support,
+                key_padding_mask=support_key_padding_mask,
+                need_weights=False,
+            )
+            current_slots = support_attended + (self.support_query_residual_scale * current_slots)
+        encoded = self.output_norm(self.encoder(current_slots))
+        if self.output_slot_basis_scale != 0.0:
+            encoded = encoded + (self.output_slot_basis_scale * slots)
+        return encoded
+
+
 class MemoryReader(ManagedMemoryModule):
     def __init__(
         self,

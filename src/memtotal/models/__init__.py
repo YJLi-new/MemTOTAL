@@ -1,5 +1,11 @@
 from memtotal.models.backbone import BackboneWrapper
-from memtotal.models.memory import MemoryFuser, MemoryInjector, MemoryReader, MemoryWriter
+from memtotal.models.memory import (
+    MemoryFuser,
+    MemoryInjector,
+    MemoryReader,
+    MemoryWriter,
+    WriterWeaverHead,
+)
 from memtotal.models.segmenter import Segmenter
 
 __all__ = [
@@ -8,6 +14,6 @@ __all__ = [
     "MemoryInjector",
     "MemoryReader",
     "MemoryWriter",
+    "WriterWeaverHead",
     "Segmenter",
 ]
-
