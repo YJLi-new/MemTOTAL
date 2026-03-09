@@ -107,6 +107,15 @@ def _snapshot_rows(arm_dir: Path) -> list[dict[str, Any]]:
     rows = _load_jsonl(live_path)
     if rows:
         return rows
+    snapshot_root = arm_dir / "snapshot_evals"
+    if snapshot_root.exists():
+        discovered: list[dict[str, Any]] = []
+        for metrics_path in sorted(snapshot_root.glob("step_*/metrics.json")):
+            payload = _load_json(metrics_path)
+            payload.setdefault("step", int(metrics_path.parent.name.split("_")[-1]))
+            discovered.append(payload)
+        if discovered:
+            return discovered
     final_train_events_path = arm_dir / "train_events.json"
     if final_train_events_path.exists():
         payload = _load_json(final_train_events_path)
