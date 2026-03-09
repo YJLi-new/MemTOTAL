@@ -1,0 +1,38 @@
+includes:
+  - memory_bootstrap_transformer_real.yaml
+
+method:
+  writer:
+    arch: transformer
+    memory_slots: 8
+    hidden_dim: 128
+    num_heads: 4
+    transformer_layers: 2
+    dropout: 0.0
+  receiver_lora:
+    enabled: true
+    target_layers:
+      - 0
+      - 7
+      - 14
+      - 21
+      - 27
+    target_modules:
+      - k_proj
+      - v_proj
+    rank: 2
+    alpha: 4.0
+    dropout: 0.0
+
+runtime:
+  pilot_bridge_mode: writer_direct
+  pilot_memory_path_variant: single_level
+  pilot_injection_mode: sparse_deep_prefix
+  pilot_projector_token_source: writer_slots
+  pilot_deep_prefix_layers:
+    - 0
+    - 7
+    - 14
+    - 21
+    - 27
+  pilot_deep_prefix_init_mode: kv_stat_match

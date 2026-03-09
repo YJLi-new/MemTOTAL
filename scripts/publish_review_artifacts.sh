@@ -111,6 +111,9 @@ sync_first_available "runs/review/writer-weaver-qwen25-f1a" \
 sync_first_available "runs/review/writer-weaver-qwen25-f1b" \
   "runs/verify/writer-weaver-qwen25-f1b" \
   "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-f1b"
+sync_first_available "runs/review/writer-circuit-opening-qwen25" \
+  "runs/verify/writer-circuit-opening-qwen25" \
+  "/root/autodl-tmp/runs/verify/writer-circuit-opening-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -175,6 +178,9 @@ sync_first_available "results/generated/review/writer-weaver-qwen25-f1a" \
 sync_first_available "results/generated/review/writer-weaver-qwen25-f1b" \
   "results/generated/writer-weaver-qwen25-f1b" \
   "/root/autodl-tmp/results/generated/writer-weaver-qwen25-f1b"
+sync_first_available "results/generated/review/writer-circuit-opening-qwen25" \
+  "results/generated/writer-circuit-opening-qwen25" \
+  "/root/autodl-tmp/results/generated/writer-circuit-opening-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

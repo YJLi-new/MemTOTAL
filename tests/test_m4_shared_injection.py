@@ -1108,6 +1108,305 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertFalse(runtime.writer.slot_embeddings.requires_grad)
         self.assertTrue(all(parameter.requires_grad for parameter in runtime.writer_adapter_parameters()))
 
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_allows_receiver_lora_under_sparse_deep_prefix(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.enable_calls: list[dict[str, object]] = []
+                self.receiver_lora_trainable_enabled = False
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def enable_receiver_micro_lora(self, **kwargs):
+                self.enable_calls.append(dict(kwargs))
+
+            def receiver_lora_parameter_count(self) -> int:
+                return 24
+
+            def set_receiver_lora_trainable(self, enabled: bool) -> None:
+                self.receiver_lora_trainable_enabled = bool(enabled)
+
+            def receiver_lora_state_dict(self):
+                return None
+
+            def load_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def validate_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                prompt_list = list(texts)
+                hidden = torch.ones(len(prompt_list), max_tokens, self.hidden_size, dtype=torch.float32)
+                mask = torch.ones(len(prompt_list), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [0, 1],
+                    "target_modules": ["k_proj", "v_proj"],
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 3,
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=23,
+            arm="injected",
+            writer_memory_control="real",
+        )
+
+        self.assertTrue(runtime.receiver_lora_enabled)
+        self.assertEqual(runtime.receiver_lora_target_layers, (0, 1))
+        self.assertEqual(runtime.receiver_lora_target_modules, ("k_proj", "v_proj"))
+        self.assertEqual(runtime.receiver_lora_trainable_params, 24)
+        self.assertTrue(fake_backbone.receiver_lora_trainable_enabled)
+        self.assertEqual(
+            fake_backbone.enable_calls,
+            [
+                {
+                    "layer_indices": (0, 1),
+                    "target_modules": ("k_proj", "v_proj"),
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                }
+            ],
+        )
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_rejects_receiver_lora_under_shallow_prefix(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {}
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [0, 1],
+                    "target_modules": ["k_proj", "v_proj"],
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 3,
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "shallow_prefix",
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "receiver micro-LoRA only when .*sparse_deep_prefix"):
+            SharedInjectionPilotRuntime(
+                config=config,
+                seed=29,
+                arm="injected",
+                writer_memory_control="real",
+            )
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_source_stub_builds_deep_prefix_and_records_init_mode(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.calibration_calls: list[tuple[tuple[str, ...], tuple[int, ...], int]] = []
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.full((len(texts), self.hidden_size), 0.25, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, layer_prefix_hidden_by_layer, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in layer_prefix_hidden_by_layer.items()
+                    },
+                    "layer_value_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in layer_prefix_hidden_by_layer.items()
+                    },
+                    "layer_hidden_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in layer_prefix_hidden_by_layer.items()
+                    },
+                }
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                prompt_list = list(texts)
+                hidden = torch.full((len(prompt_list), max_tokens, self.hidden_size), 0.5, dtype=torch.float32)
+                mask = torch.ones(len(prompt_list), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def collect_deep_prefix_calibration(self, texts, *, layer_indices, max_tokens=8):
+                text_list = tuple(str(text) for text in texts)
+                self.calibration_calls.append((text_list, tuple(int(layer) for layer in layer_indices), int(max_tokens)))
+                semantic_anchor = torch.full((1, self.hidden_size), 0.25, dtype=torch.float32)
+                hidden_state_anchor = torch.full((1, max_tokens, self.hidden_size), 0.5, dtype=torch.float32)
+                layer_hidden_anchor_by_layer = {
+                    int(layer_index): torch.full(
+                        (1, max_tokens, self.hidden_size),
+                        0.75 + float(layer_index),
+                        dtype=torch.float32,
+                    )
+                    for layer_index in layer_indices
+                }
+                return {
+                    "semantic_anchor": semantic_anchor,
+                    "hidden_state_anchor": hidden_state_anchor,
+                    "hidden_state_mask": torch.ones(1, max_tokens, dtype=torch.bool),
+                    "layer_hidden_anchor_by_layer": layer_hidden_anchor_by_layer,
+                    "layer_hidden_mask": torch.ones(1, max_tokens, dtype=torch.bool),
+                    "layer_key_l2_by_layer": {str(layer): 1.0 for layer in layer_indices},
+                    "layer_value_l2_by_layer": {str(layer): 1.0 for layer in layer_indices},
+                    "layer_hidden_l2_by_layer": {str(layer): 1.0 for layer in layer_indices},
+                }
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+                "pilot_prefix_source_mode": "source_stub",
+                "pilot_deep_prefix_init_mode": "kv_stat_match",
+                "pilot_writer_context_tokens": 4,
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=31,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            "Support bank",
+            prompt_text="Need context now",
+        )
+
+        self.assertIsNotNone(runtime.source_stub)
+        self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 4, 6])
+        assert prefix_artifacts.layer_prefix_hidden_by_layer is not None
+        self.assertEqual(sorted(prefix_artifacts.layer_prefix_hidden_by_layer), [0, 1])
+        self.assertEqual(prefix_artifacts.prefix_stats["pilot_prefix_source_mode"], "source_stub")
+        self.assertEqual(prefix_artifacts.prefix_stats["pilot_deep_prefix_init_mode"], "kv_stat_match")
+        self.assertEqual(len(fake_backbone.calibration_calls), 1)
+        calibration_texts, calibration_layers, calibration_tokens = fake_backbone.calibration_calls[0]
+        self.assertEqual(calibration_texts, ("Need context now", "Support bank"))
+        self.assertEqual(calibration_layers, (0, 1))
+        self.assertEqual(calibration_tokens, 4)
+        checkpoint = {
+            "writer_state": runtime.writer.state_dict(),
+            "source_stub_state": runtime.source_stub.state_dict(),
+            "support_encoder_state": None,
+            "reader_state": None,
+            "fuser_state": None,
+            "prefix_projector_state": runtime.prefix_projector.state_dict(),
+            "pilot_memory_path_variant": "single_level",
+            "pilot_support_encoder_mode": "pooled_block",
+            "pilot_injection_mode": "sparse_deep_prefix",
+            "pilot_bridge_mode": "writer_direct",
+            "pilot_prefix_source_mode": "source_stub",
+            "pilot_deep_prefix_init_mode": "kv_stat_match",
+            "pilot_deep_prefix_layers": [0, 1],
+            "backbone_hidden_size": 6,
+            "writer_memory_slots": 4,
+            "pilot_projector_prefix_tokens": 4,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "source_stub_checkpoint.pt"
+            torch.save(checkpoint, checkpoint_path)
+            loaded = runtime.load_injection_checkpoint(checkpoint_path)
+            self.assertIn("source_stub_state", loaded)
+
     def test_update_writer_weaver_summary_reports_move_to_w1(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script_path = repo_root / "scripts" / "update_writer_weaver_summary.py"
@@ -1327,6 +1626,139 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             self.assertTrue(summary["geometry_move_any"])
             self.assertTrue(summary["nonfever_positive_delta_any"])
             self.assertIn("comparison_conclusion: move_to_w1", report)
+
+    def test_update_writer_circuit_opening_summary_prefers_p1a(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script_path = repo_root / "scripts" / "update_writer_circuit_opening_summary.py"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            def write_metrics(name: str, payload: dict[str, object]) -> Path:
+                path = tmp_path / name
+                path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+                return path
+
+            def task_metrics(
+                *,
+                benchmark_id: str,
+                task_name: str,
+                task_score: float,
+                exact_match: float,
+                delta_answer_logprob: float,
+                source_grad: float,
+                receiver_grad: float,
+                receiver_enabled: bool,
+                prefix_attention_by_layer: dict[str, float],
+            ) -> dict[str, object]:
+                return {
+                    "benchmark_id": benchmark_id,
+                    "task_name": task_name,
+                    "task_metric_name": "accuracy",
+                    "best_adapt_task_score": task_score,
+                    "best_adapt_exact_match": exact_match,
+                    "delta_answer_logprob": delta_answer_logprob,
+                    "train_grad_norm_source_stub_steps_1_4_median": source_grad,
+                    "train_grad_norm_receiver_lora_steps_1_4_median": receiver_grad,
+                    "pilot_receiver_lora_enabled": receiver_enabled,
+                    "prefix_attention_mass_mean": (
+                        sum(prefix_attention_by_layer.values()) / max(1, len(prefix_attention_by_layer))
+                    ),
+                    "prefix_to_content_attention_ratio_mean": 0.05,
+                    "prefix_attention_mass_mean_by_layer": prefix_attention_by_layer,
+                    "prefix_attention_nontrivial_layer_count": sum(
+                        1 for value in prefix_attention_by_layer.values() if value > 1e-3
+                    ),
+                    "projected_memory_effective_rank": 2.0,
+                    "memory_long_common_mode_energy_ratio": 0.8,
+                }
+
+            control: dict[str, Path] = {}
+            p1a: dict[str, Path] = {}
+            p2a: dict[str, Path] = {}
+            for task_name, benchmark_id in (
+                ("gsm8k", "gsm8k"),
+                ("narrativeqa", "narrativeqa"),
+                ("fever", "fever"),
+            ):
+                control[task_name] = write_metrics(
+                    f"{task_name}-control.json",
+                    task_metrics(
+                        benchmark_id=benchmark_id,
+                        task_name=task_name,
+                        task_score=0.2,
+                        exact_match=0.2,
+                        delta_answer_logprob=0.0,
+                        source_grad=0.0,
+                        receiver_grad=0.0,
+                        receiver_enabled=False,
+                        prefix_attention_by_layer={},
+                    ),
+                )
+                p1a[task_name] = write_metrics(
+                    f"{task_name}-p1a.json",
+                    task_metrics(
+                        benchmark_id=benchmark_id,
+                        task_name=task_name,
+                        task_score=0.25 if benchmark_id != "fever" else 0.2,
+                        exact_match=0.25 if benchmark_id != "fever" else 0.2,
+                        delta_answer_logprob=0.08 if benchmark_id != "fever" else 0.0,
+                        source_grad=1e-4 if benchmark_id != "fever" else 1e-5,
+                        receiver_grad=0.0,
+                        receiver_enabled=False,
+                        prefix_attention_by_layer={"0": 0.02, "1": 0.01} if benchmark_id != "fever" else {"0": 0.0},
+                    ),
+                )
+                p2a[task_name] = write_metrics(
+                    f"{task_name}-p2a.json",
+                    task_metrics(
+                        benchmark_id=benchmark_id,
+                        task_name=task_name,
+                        task_score=0.22,
+                        exact_match=0.22,
+                        delta_answer_logprob=0.01,
+                        source_grad=1e-4,
+                        receiver_grad=1e-4,
+                        receiver_enabled=True,
+                        prefix_attention_by_layer={"0": 0.01},
+                    ),
+                )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--gsm8k_control_metrics_json",
+                    str(control["gsm8k"]),
+                    "--gsm8k_p1a_metrics_json",
+                    str(p1a["gsm8k"]),
+                    "--gsm8k_p2a_metrics_json",
+                    str(p2a["gsm8k"]),
+                    "--narrativeqa_control_metrics_json",
+                    str(control["narrativeqa"]),
+                    "--narrativeqa_p1a_metrics_json",
+                    str(p1a["narrativeqa"]),
+                    "--narrativeqa_p2a_metrics_json",
+                    str(p2a["narrativeqa"]),
+                    "--fever_control_metrics_json",
+                    str(control["fever"]),
+                    "--fever_p1a_metrics_json",
+                    str(p1a["fever"]),
+                    "--fever_p2a_metrics_json",
+                    str(p2a["fever"]),
+                    "--output_json",
+                    str(tmp_path / "summary.json"),
+                    "--output_report",
+                    str(tmp_path / "summary.md"),
+                ],
+                cwd=repo_root,
+                check=True,
+            )
+
+            summary = json.loads((tmp_path / "summary.json").read_text())
+            self.assertEqual(summary["comparison_conclusion"], "move_to_p1b")
+            self.assertEqual(summary["recommended_substrate"], "p1a_source_stub_no_lora")
+            self.assertTrue(summary["move_to_p1b"])
+            self.assertFalse(summary["move_to_p2b"])
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_runtime_accepts_single_level_warm_start_but_rejects_strict_load(self, mock_backbone_cls) -> None:

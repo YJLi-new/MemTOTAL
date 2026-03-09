@@ -88,7 +88,7 @@ class _FakeDecoderLayer(torch.nn.Module):
 class _FakeModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.config = types.SimpleNamespace(hidden_size=8, num_hidden_layers=2)
+        self.config = types.SimpleNamespace(hidden_size=8, num_hidden_layers=2, _attn_implementation="sdpa")
         self.embedding = torch.nn.Embedding(64, 8)
         self.model = types.SimpleNamespace(
             layers=torch.nn.ModuleList([_FakeDecoderLayer(), _FakeDecoderLayer()]),
@@ -133,20 +133,30 @@ class _FakeModel(torch.nn.Module):
         )
         attentions = None
         if output_attentions:
-            attentions = []
-            for layer_index in range(self.config.num_hidden_layers):
-                layer_past = 0
-                if past_key_values is not None and layer_index < len(past_key_values.layers):
-                    layer = past_key_values.layers[layer_index]
-                    if layer.keys is not None:
-                        layer_past = int(layer.keys.shape[-2])
-                total_kv = layer_past + seq
-                layer_attention = torch.full((batch, 1, seq, total_kv), 1.0 / max(1, total_kv), dtype=torch.float32)
-                if layer_past > 0:
-                    layer_attention[:, :, :, :layer_past] += 0.05
-                    layer_attention = layer_attention / layer_attention.sum(dim=-1, keepdim=True)
-                attentions.append(layer_attention)
-        return types.SimpleNamespace(logits=logits, hidden_states=[hidden, hidden], attentions=tuple(attentions) if attentions is not None else None)
+            if self.config._attn_implementation == "eager":
+                attentions = []
+                for layer_index in range(self.config.num_hidden_layers):
+                    layer_past = 0
+                    if past_key_values is not None and layer_index < len(past_key_values.layers):
+                        layer = past_key_values.layers[layer_index]
+                        if layer.keys is not None:
+                            layer_past = int(layer.keys.shape[-2])
+                    total_kv = layer_past + seq
+                    layer_attention = torch.full((batch, 1, seq, total_kv), 1.0 / max(1, total_kv), dtype=torch.float32)
+                    if layer_past > 0:
+                        layer_attention[:, :, :, :layer_past] += 0.05
+                        layer_attention = layer_attention / layer_attention.sum(dim=-1, keepdim=True)
+                    attentions.append(layer_attention)
+        hidden_states = [
+            hidden,
+            hidden + 0.1,
+            hidden + 0.2,
+        ]
+        return types.SimpleNamespace(
+            logits=logits,
+            hidden_states=hidden_states,
+            attentions=tuple(attentions) if attentions is not None else None,
+        )
 
     def generate(
         self,
@@ -211,6 +221,7 @@ class BackboneRealModeTest(unittest.TestCase):
         self.assertEqual(list(deep_scores.shape), [2])
         self.assertEqual(diagnostics["diagnostic_layers"], [0, 1])
         self.assertEqual(sorted(diagnostics["prefix_attention_mass_by_candidate_by_layer"]), [0, 1])
+        self.assertEqual(backbone.model.config._attn_implementation, "sdpa")
         projection = backbone.summarize_layer_prefix_projection(deep_prefix)
         self.assertEqual(sorted(projection["layer_key_l2_by_layer"]), ["0", "1"])
         generations = backbone.generate(["Prompt"])
@@ -231,6 +242,24 @@ class BackboneRealModeTest(unittest.TestCase):
         self.assertEqual(prompt_mask.dtype, torch.bool)
         self.assertTrue(bool(prompt_mask[0].any().item()))
         self.assertTrue(bool(prompt_mask[1].any().item()))
+        layer_hidden, layer_mask = backbone.extract_layer_hidden_state_slices(
+            ["Prompt alpha", "B"],
+            layer_indices=[0, 1],
+            max_tokens=3,
+        )
+        self.assertEqual(sorted(layer_hidden), [0, 1])
+        self.assertEqual(list(layer_hidden[0].shape), [2, 3, 8])
+        self.assertEqual(list(layer_mask.shape), [2, 3])
+        calibration = backbone.collect_deep_prefix_calibration(
+            ["Prompt alpha", "B"],
+            layer_indices=[0, 1],
+            max_tokens=3,
+        )
+        self.assertEqual(list(calibration["semantic_anchor"].shape), [1, 8])
+        self.assertEqual(list(calibration["hidden_state_anchor"].shape), [1, 3, 8])
+        self.assertEqual(sorted(calibration["layer_hidden_anchor_by_layer"]), [0, 1])
+        self.assertEqual(sorted(calibration["layer_key_l2_by_layer"]), ["0", "1"])
+        self.assertEqual(sorted(calibration["layer_value_l2_by_layer"]), ["0", "1"])
 
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())

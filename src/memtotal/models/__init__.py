@@ -4,6 +4,8 @@ from memtotal.models.memory import (
     MemoryInjector,
     MemoryReader,
     MemoryWriter,
+    SourceStubMemory,
+    WriterDeepPrefixProjector,
     WriterWeaverHead,
 )
 from memtotal.models.segmenter import Segmenter
@@ -14,6 +16,8 @@ __all__ = [
     "MemoryInjector",
     "MemoryReader",
     "MemoryWriter",
+    "SourceStubMemory",
+    "WriterDeepPrefixProjector",
     "WriterWeaverHead",
     "Segmenter",
 ]

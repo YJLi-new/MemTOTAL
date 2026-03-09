@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import hashlib
 import os
 from typing import Any, Iterable
@@ -224,6 +224,33 @@ class BackboneWrapper(nn.Module):
         self.model.eval()
         self.hidden_size = int(self.model.config.hidden_size)
 
+    @contextmanager
+    def _temporary_attention_implementation(self, implementation: str):
+        if self.model is None:
+            yield
+            return
+        config_targets: list[tuple[Any, Any]] = []
+        seen_configs: set[int] = set()
+        for module in self.model.modules():
+            config = getattr(module, "config", None)
+            if config is None or not hasattr(config, "_attn_implementation"):
+                continue
+            config_id = id(config)
+            if config_id in seen_configs:
+                continue
+            seen_configs.add(config_id)
+            config_targets.append((config, getattr(config, "_attn_implementation")))
+        if not config_targets:
+            yield
+            return
+        try:
+            for config, _previous in config_targets:
+                setattr(config, "_attn_implementation", implementation)
+            yield
+        finally:
+            for config, previous in config_targets:
+                setattr(config, "_attn_implementation", previous)
+
     def _tokenize(self, text: str) -> list[str]:
         if self.load_mode == "hf_causal_lm":
             if self.tokenizer is None:
@@ -360,6 +387,108 @@ class BackboneWrapper(nn.Module):
             attention_mask,
             max_tokens=max_tokens,
         )
+
+    def extract_layer_hidden_state_slices(
+        self,
+        texts: Iterable[str],
+        *,
+        layer_indices: Iterable[int],
+        max_tokens: int = 8,
+    ) -> tuple[dict[int, torch.Tensor], torch.Tensor]:
+        normalized_layers = tuple(sorted({int(layer_index) for layer_index in layer_indices}))
+        if not normalized_layers:
+            raise ValueError("extract_layer_hidden_state_slices requires at least one layer index.")
+        text_list = list(texts)
+        if self.load_mode == "hf_causal_lm":
+            encoded = self._prepare_hf_inputs(text_list)
+            with torch.inference_mode():
+                outputs = self.model(
+                    **encoded,
+                    output_hidden_states=True,
+                    use_cache=False,
+                )
+            hidden_state_stack = outputs.hidden_states
+            max_layer_index = len(hidden_state_stack) - 2
+            window_by_layer: dict[int, torch.Tensor] = {}
+            shared_mask = None
+            for layer_index in normalized_layers:
+                if layer_index < 0 or layer_index > max_layer_index:
+                    raise ValueError(
+                        f"Requested layer {layer_index}, but backbone exposes layers [0, {max_layer_index}]."
+                    )
+                layer_hidden = hidden_state_stack[layer_index + 1].to(dtype=torch.float32)
+                window, window_mask = self._tail_hidden_state_window(
+                    layer_hidden,
+                    encoded["attention_mask"],
+                    max_tokens=max_tokens,
+                )
+                window_by_layer[layer_index] = window
+                if shared_mask is None:
+                    shared_mask = window_mask
+            if shared_mask is None:
+                raise RuntimeError("extract_layer_hidden_state_slices failed to collect any layer windows.")
+            return window_by_layer, shared_mask
+        encoded = self.encode_texts(text_list)
+        lengths = [max(1, len(self._tokenize(text))) for text in text_list]
+        max_length = encoded.shape[1]
+        attention_mask = torch.zeros(
+            len(text_list),
+            max_length,
+            dtype=torch.bool,
+            device=encoded.device,
+        )
+        for row_index, length in enumerate(lengths):
+            attention_mask[row_index, : min(length, max_length)] = True
+        window, window_mask = self._tail_hidden_state_window(
+            encoded.to(dtype=torch.float32),
+            attention_mask,
+            max_tokens=max_tokens,
+        )
+        return {
+            layer_index: window.clone()
+            for layer_index in normalized_layers
+        }, window_mask
+
+    def collect_deep_prefix_calibration(
+        self,
+        texts: Iterable[str],
+        *,
+        layer_indices: Iterable[int],
+        max_tokens: int = 8,
+    ) -> dict[str, Any]:
+        text_list = list(texts)
+        if not text_list:
+            raise ValueError("collect_deep_prefix_calibration requires at least one text.")
+        semantic_anchor = self.summarize_texts(text_list).mean(dim=0, keepdim=True).to(dtype=torch.float32)
+        hidden_state_anchor, hidden_state_mask = self.extract_prompt_hidden_state_slice(
+            text_list,
+            max_tokens=max_tokens,
+        )
+        hidden_state_anchor = hidden_state_anchor.mean(dim=0, keepdim=True).to(dtype=torch.float32)
+        hidden_state_mask = hidden_state_mask.any(dim=0, keepdim=True).to(dtype=torch.bool)
+        layer_hidden_windows, layer_hidden_mask = self.extract_layer_hidden_state_slices(
+            text_list,
+            layer_indices=layer_indices,
+            max_tokens=max_tokens,
+        )
+        averaged_layer_hidden_by_layer = {
+            int(layer_index): layer_hidden.mean(dim=0, keepdim=True).to(dtype=torch.float32)
+            for layer_index, layer_hidden in layer_hidden_windows.items()
+        }
+        projection_summary = self.summarize_layer_prefix_projection(
+            averaged_layer_hidden_by_layer,
+            batch_size=1,
+        )
+        return {
+            "semantic_anchor": semantic_anchor,
+            "hidden_state_anchor": hidden_state_anchor,
+            "hidden_state_mask": hidden_state_mask,
+            "layer_hidden_anchor_by_layer": averaged_layer_hidden_by_layer,
+            "layer_hidden_mask": layer_hidden_mask.any(dim=0, keepdim=True).to(dtype=torch.bool),
+            "layer_key_l2_by_layer": dict(projection_summary.get("layer_key_l2_by_layer", {})),
+            "layer_value_l2_by_layer": dict(projection_summary.get("layer_value_l2_by_layer", {})),
+            "layer_hidden_l2_by_layer": dict(projection_summary.get("layer_hidden_l2_by_layer", {})),
+        }
 
     def _encode_texts_hf(self, texts: list[str]) -> torch.Tensor:
         if self.model is None or self.tokenizer is None:
@@ -831,8 +960,12 @@ class BackboneWrapper(nn.Module):
             model_kwargs["use_cache"] = False
         if return_diagnostics:
             model_kwargs["output_attentions"] = True
-        with model_context():
-            outputs = self.model(**model_kwargs)
+        attention_context = nullcontext()
+        if return_diagnostics:
+            attention_context = self._temporary_attention_implementation("eager")
+        with attention_context:
+            with model_context():
+                outputs = self.model(**model_kwargs)
         logits = outputs.logits
         token_logit_slice_start = int(metadata["token_logit_slice_start"])
         log_probs = torch.log_softmax(

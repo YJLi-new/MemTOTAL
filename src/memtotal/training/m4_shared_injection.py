@@ -11,7 +11,15 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from memtotal.models import BackboneWrapper, MemoryFuser, MemoryReader, MemoryWriter, WriterWeaverHead
+from memtotal.models import (
+    BackboneWrapper,
+    MemoryFuser,
+    MemoryReader,
+    MemoryWriter,
+    SourceStubMemory,
+    WriterDeepPrefixProjector,
+    WriterWeaverHead,
+)
 from memtotal.tasks import build_task_evaluator, load_task_dataset
 from memtotal.training.m3 import _resolve_artifact_path
 from memtotal.utils.io import write_json, write_jsonl
@@ -184,63 +192,8 @@ class LatentPrefixProjector(nn.Module):
         return self._apply_norm_caps(projected)
 
 
-class SharedLowRankDeepPrefixProjector(nn.Module):
-    def __init__(
-        self,
-        hidden_size: int,
-        prefix_tokens: int,
-        layer_indices: list[int],
-        *,
-        bottleneck_rank: int = 32,
-        slot_max_norm: float | None = None,
-        total_max_norm: float | None = None,
-    ) -> None:
-        super().__init__()
-        self.hidden_size = int(hidden_size)
-        self.prefix_tokens = int(prefix_tokens)
-        self.layer_indices = tuple(int(layer_index) for layer_index in layer_indices)
-        self.bottleneck_rank = int(bottleneck_rank)
-        self.slot_max_norm = None if slot_max_norm is None else float(slot_max_norm)
-        self.total_max_norm = None if total_max_norm is None else float(total_max_norm)
-        self.prefix_norm = nn.LayerNorm(hidden_size)
-        self.down_proj = nn.Linear(hidden_size, self.bottleneck_rank, bias=False)
-        self.up_proj = nn.Linear(
-            self.bottleneck_rank,
-            len(self.layer_indices) * hidden_size,
-        )
-        nn.init.normal_(self.down_proj.weight, mean=0.0, std=0.02)
-        nn.init.normal_(self.up_proj.weight, mean=0.0, std=0.02)
-        nn.init.zeros_(self.up_proj.bias)
-
-    def _apply_norm_caps(self, stacked_hidden: torch.Tensor) -> torch.Tensor:
-        clipped = stacked_hidden
-        if self.slot_max_norm is not None and self.slot_max_norm > 0.0:
-            slot_norms = clipped.norm(dim=-1, keepdim=True).clamp_min(1e-6)
-            slot_scales = torch.clamp(self.slot_max_norm / slot_norms, max=1.0)
-            clipped = clipped * slot_scales
-        if self.total_max_norm is not None and self.total_max_norm > 0.0:
-            total_norms = clipped.flatten(start_dim=1).norm(dim=1, keepdim=True).clamp_min(1e-6)
-            total_scales = torch.clamp(self.total_max_norm / total_norms, max=1.0).view(-1, 1, 1, 1)
-            clipped = clipped * total_scales
-        return clipped
-
-    def forward(self, memory_slots: torch.Tensor) -> dict[int, torch.Tensor]:
-        if memory_slots.ndim != 3:
-            raise ValueError("memory_slots must have shape [batch, slots, hidden_size].")
-        if memory_slots.shape[1] != self.prefix_tokens:
-            raise ValueError(
-                f"SharedLowRankDeepPrefixProjector expected {self.prefix_tokens} slots, got {memory_slots.shape[1]}."
-            )
-        batch_size, slot_count, _ = memory_slots.shape
-        bottleneck = F.gelu(self.down_proj(self.prefix_norm(memory_slots)))
-        expanded = self.up_proj(bottleneck)
-        expanded = expanded.view(batch_size, slot_count, len(self.layer_indices), self.hidden_size)
-        expanded = expanded.permute(0, 2, 1, 3).contiguous()
-        expanded = self._apply_norm_caps(expanded)
-        return {
-            int(layer_index): expanded[:, layer_offset, :, :]
-            for layer_offset, layer_index in enumerate(self.layer_indices)
-        }
+class SharedLowRankDeepPrefixProjector(WriterDeepPrefixProjector):
+    pass
 
 
 def _load_task_dataset_with_path(config: dict[str, Any], dataset_path: str) -> list[dict[str, Any]]:
@@ -453,6 +406,34 @@ def _resolve_projector_token_source(config: dict[str, Any]) -> str:
             "runtime.pilot_memory_path_variant=two_level."
         )
     return source
+
+
+def _resolve_prefix_source_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_prefix_source_mode", "writer"))
+    if mode not in {"writer", "source_stub"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_prefix_source_mode={mode}. "
+            "Expected one of writer, source_stub."
+        )
+    return mode
+
+
+def _resolve_deep_prefix_init_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_deep_prefix_init_mode", "random"))
+    if mode not in {"random", "kv_stat_match", "semantic_anchor", "hidden_state_anchor"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_deep_prefix_init_mode={mode}. "
+            "Expected one of random, kv_stat_match, semantic_anchor, hidden_state_anchor."
+        )
+    return mode
+
+
+def _resolve_source_stub_learning_rate(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_source_stub_learning_rate", 5e-4))
+
+
+def _resolve_source_stub_weight_decay(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_source_stub_weight_decay", 0.0))
 
 
 def _resolve_support_encoder_mode(config: dict[str, Any]) -> str:
@@ -735,6 +716,7 @@ def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, A
     answer_logprob_with_memory = sum(float(row.get("answer_logprob_with_memory", 0.0)) for row in rows) / total
     answer_logprob_without_memory = sum(float(row.get("answer_logprob_without_memory", 0.0)) for row in rows) / total
     delta_answer_logprob = sum(float(row.get("delta_answer_logprob", 0.0)) for row in rows) / total
+    prefix_attention_metrics = _aggregate_prefix_attention_metrics(rows)
     if evaluator_type in TASK_GENERATION_EVALUATOR_TYPES:
         task_score = sum(float(row.get("task_score", 0.0)) for row in rows) / total
         exact_match = sum(int(bool(row.get("predicted_correct", False))) for row in rows) / total
@@ -757,6 +739,7 @@ def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, A
             "answer_logprob_with_memory": float(answer_logprob_with_memory),
             "answer_logprob_without_memory": float(answer_logprob_without_memory),
             "delta_answer_logprob": float(delta_answer_logprob),
+            **prefix_attention_metrics,
         }
     labels = [str(row["gold_label"]) for row in rows]
     unique_labels = sorted(set(labels))
@@ -797,6 +780,7 @@ def _classification_metrics_from_rows(rows: list[dict[str, Any]]) -> dict[str, A
         "answer_logprob_with_memory": float(answer_logprob_with_memory),
         "answer_logprob_without_memory": float(answer_logprob_without_memory),
         "delta_answer_logprob": float(delta_answer_logprob),
+        **prefix_attention_metrics,
     }
 
 
@@ -846,6 +830,23 @@ def _write_snapshot_eval(
         "delta_answer_logprob": float(metrics.get("delta_answer_logprob", 0.0)),
         "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
         "label_recall_by_class": metrics["label_recall_by_class"],
+        "prefix_attention_mass_mean": float(metrics.get("prefix_attention_mass_mean", 0.0)),
+        "prefix_to_content_attention_ratio_mean": float(
+            metrics.get("prefix_to_content_attention_ratio_mean", 0.0)
+        ),
+        "gold_prefix_attention_mass_mean": float(metrics.get("gold_prefix_attention_mass_mean", 0.0)),
+        "competitor_prefix_attention_mass_mean": float(
+            metrics.get("competitor_prefix_attention_mass_mean", 0.0)
+        ),
+        "prefix_attention_mass_mean_by_layer": dict(
+            metrics.get("prefix_attention_mass_mean_by_layer", {})
+        ),
+        "prefix_to_content_attention_ratio_mean_by_layer": dict(
+            metrics.get("prefix_to_content_attention_ratio_mean_by_layer", {})
+        ),
+        "prefix_attention_nontrivial_layer_count": int(
+            metrics.get("prefix_attention_nontrivial_layer_count", 0)
+        ),
         "prefix_artifact_stats": prefix_stats or {},
         "prefix_tokens": int(scalar_prefix_stats.get("prefix_tokens", 0.0)),
         "prefix_l2": float(scalar_prefix_stats.get("prefix_l2", 0.0)),
@@ -1367,6 +1368,8 @@ def _prefix_stats(
     fuser: MemoryFuser | None = None,
     memory_path_variant: str = "single_level",
     projector_token_source: str = "writer_slots",
+    prefix_source_mode: str = "writer",
+    deep_prefix_init_mode: str = "random",
 ) -> dict[str, Any]:
     memory_long = memory_slots if memory_long is None else memory_long
     memory_short = memory_long if memory_short is None else memory_short
@@ -1499,6 +1502,8 @@ def _prefix_stats(
                 "pilot_memory_path_variant": memory_path_variant,
                 "pilot_projector_token_source": projector_token_source,
                 "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_prefix_source_mode": prefix_source_mode,
+                "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
                 "pilot_support_encoder_mode": "pooled_block",
                 "active_prefix_layers": [],
                 "layer_hidden_l2_by_layer": {},
@@ -1546,6 +1551,8 @@ def _prefix_stats(
             "pilot_memory_path_variant": memory_path_variant,
             "pilot_projector_token_source": projector_token_source,
             "pilot_injection_mode": "sparse_deep_prefix",
+            "pilot_prefix_source_mode": prefix_source_mode,
+            "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
             "pilot_support_encoder_mode": (
                 "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
             ),
@@ -1578,6 +1585,8 @@ def _prefix_stats(
             "pilot_memory_path_variant": memory_path_variant,
             "pilot_projector_token_source": projector_token_source,
             "pilot_injection_mode": "shallow_prefix",
+            "pilot_prefix_source_mode": prefix_source_mode,
+            "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
             "pilot_support_encoder_mode": (
                 "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
             ),
@@ -1610,6 +1619,8 @@ def _prefix_stats(
         "pilot_memory_path_variant": memory_path_variant,
         "pilot_projector_token_source": projector_token_source,
         "pilot_injection_mode": "shallow_prefix",
+        "pilot_prefix_source_mode": prefix_source_mode,
+        "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
         "pilot_support_encoder_mode": (
             "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
         ),
@@ -1697,6 +1708,9 @@ def _save_shared_injection_checkpoint(
     torch.save(
         {
             "writer_state": runtime.writer.state_dict(),
+            "source_stub_state": (
+                None if runtime.source_stub is None else runtime.source_stub.state_dict()
+            ),
             "support_encoder_state": (
                 None if runtime.support_encoder is None else runtime.support_encoder.state_dict()
             ),
@@ -1732,10 +1746,12 @@ def _save_shared_injection_checkpoint(
                 else [list(group) for group in runtime.reader.masked_partition]
             ),
             "pilot_projector_token_source": str(runtime.projector_token_source),
+            "pilot_prefix_source_mode": str(runtime.prefix_source_mode),
             "pilot_reader_num_queries": int(runtime.reader_num_queries),
             "pilot_fuser_short_slots": int(runtime.fuser_short_slots),
             "pilot_projector_prefix_tokens": int(runtime.prefix_projector.prefix_tokens),
             "pilot_deep_prefix_rank": int(getattr(runtime.prefix_projector, "bottleneck_rank", runtime.backbone.hidden_size)),
+            "pilot_deep_prefix_init_mode": str(runtime.deep_prefix_init_mode),
             "pilot_writer_output_slot_basis_scale": float(
                 getattr(runtime.writer, "output_slot_basis_scale", 0.0)
             ),
@@ -1756,6 +1772,7 @@ def _save_shared_injection_checkpoint(
             "pilot_writer_adapter_alpha": float(runtime.writer_adapter_alpha),
             "pilot_writer_adapter_dropout": float(runtime.writer_adapter_dropout),
             "pilot_writer_adapter_trainable_params": int(runtime.writer_adapter_trainable_params),
+            "pilot_source_stub_trainable_params": int(runtime.source_stub_trainable_params),
             "receiver_lora_state": (
                 None
                 if not hasattr(runtime.backbone, "receiver_lora_state_dict")
@@ -2205,6 +2222,8 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.alignment_aux_advantage_center = _resolve_alignment_aux_advantage_center(config)
         self.alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
+        self.prefix_source_mode = _resolve_prefix_source_mode(config)
+        self.deep_prefix_init_mode = _resolve_deep_prefix_init_mode(config)
         self.support_serialization_variant = _resolve_support_serialization_variant(config)
         self.writer_adapter_enabled = _resolve_writer_adapter_enabled(config)
         self.writer_adapter_target_modules = _resolve_writer_adapter_target_modules(config)
@@ -2217,15 +2236,15 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.receiver_lora_rank = _resolve_receiver_lora_rank(config)
         self.receiver_lora_alpha = _resolve_receiver_lora_alpha(config)
         self.receiver_lora_dropout = _resolve_receiver_lora_dropout(config)
-        if self.bridge_mode == "writer_direct":
-            if self.memory_path_variant != "single_level":
-                raise ValueError("runtime.pilot_bridge_mode=writer_direct requires pilot_memory_path_variant=single_level.")
-            if self.receiver_lora_enabled:
-                raise ValueError("runtime.pilot_bridge_mode=writer_direct requires receiver micro-LoRA to stay disabled.")
+        self._validate_planv5_runtime_contract()
         if self.writer_adapter_enabled:
             if self.bridge_mode != "writer_direct":
                 raise ValueError(
                     "method.writer_adapter.enabled=true currently requires runtime.pilot_bridge_mode=writer_direct."
+                )
+            if self.prefix_source_mode != "writer":
+                raise ValueError(
+                    "method.writer_adapter.enabled=true requires runtime.pilot_prefix_source_mode=writer."
                 )
             if not hasattr(self.writer, "enable_writer_micro_lora"):
                 raise RuntimeError("Configured writer micro-LoRA, but the active writer lacks support.")
@@ -2238,6 +2257,14 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.writer_adapter_trainable_params = int(
             getattr(self.writer, "writer_lora_parameter_count", lambda: 0)()
         )
+        self.source_stub: SourceStubMemory | None = None
+        if self.prefix_source_mode == "source_stub":
+            self.source_stub = SourceStubMemory(
+                embed_dim=self.backbone.hidden_size,
+                memory_slots=int(self.writer.memory_slots),
+                slot_max_norm=config["runtime"].get("pilot_prefix_slot_max_norm"),
+                total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
+            )
         if self.receiver_lora_enabled:
             if not hasattr(self.backbone, "enable_receiver_micro_lora"):
                 raise RuntimeError("Configured receiver micro-LoRA, but BackboneWrapper lacks support.")
@@ -2250,6 +2277,9 @@ class SharedInjectionPilotRuntime(nn.Module):
             )
         self.receiver_lora_trainable_params = int(
             getattr(self.backbone, "receiver_lora_parameter_count", lambda: 0)()
+        )
+        self.source_stub_trainable_params = int(
+            0 if self.source_stub is None else sum(parameter.numel() for parameter in self.source_stub.parameters())
         )
         self.reader: MemoryReader | None = None
         self.fuser: MemoryFuser | None = None
@@ -2318,6 +2348,12 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.writer_memory_control = writer_memory_control
         self._prompt_summary_cache: dict[str, torch.Tensor] = {}
         self._prompt_context_cache: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._deep_prefix_projector_initialized = bool(
+            self.injection_mode == "shallow_prefix" or self.deep_prefix_init_mode == "random"
+        )
+        self._source_stub_initialized = bool(
+            self.source_stub is None or self.deep_prefix_init_mode == "random"
+        )
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(False)
         set_receiver_lora_trainable = getattr(self.backbone, "set_receiver_lora_trainable", None)
@@ -2325,8 +2361,57 @@ class SharedInjectionPilotRuntime(nn.Module):
             set_receiver_lora_trainable(self.receiver_lora_enabled)
         self.to(self.backbone.device)
 
+    def _validate_planv5_runtime_contract(self) -> None:
+        if self.bridge_mode == "writer_direct" and self.memory_path_variant != "single_level":
+            raise ValueError("runtime.pilot_bridge_mode=writer_direct requires pilot_memory_path_variant=single_level.")
+        if self.prefix_source_mode == "source_stub":
+            if self.bridge_mode != "writer_direct":
+                raise ValueError(
+                    "runtime.pilot_prefix_source_mode=source_stub currently requires runtime.pilot_bridge_mode=writer_direct."
+                )
+            if self.injection_mode != "sparse_deep_prefix":
+                raise ValueError(
+                    "runtime.pilot_prefix_source_mode=source_stub requires runtime.pilot_injection_mode=sparse_deep_prefix."
+                )
+        if self.bridge_mode != "writer_direct" and self.receiver_lora_enabled:
+            return
+        if self.bridge_mode == "writer_direct" and self.receiver_lora_enabled:
+            if self.injection_mode != "sparse_deep_prefix":
+                raise ValueError(
+                    "runtime.pilot_bridge_mode=writer_direct allows receiver micro-LoRA only when "
+                    "runtime.pilot_injection_mode=sparse_deep_prefix."
+                )
+            if not self.receiver_lora_target_layers:
+                raise ValueError(
+                    "runtime.pilot_bridge_mode=writer_direct with receiver micro-LoRA requires at least one target layer."
+                )
+            if len(self.receiver_lora_target_layers) > 5:
+                raise ValueError(
+                    "runtime.pilot_bridge_mode=writer_direct supports only tiny receiver micro-LoRA sets "
+                    "(at most 5 target layers)."
+                )
+            if self.receiver_lora_rank <= 0 or self.receiver_lora_rank > 4:
+                raise ValueError(
+                    "runtime.pilot_bridge_mode=writer_direct supports receiver micro-LoRA rank in [1, 4]."
+                )
+            if self.receiver_lora_alpha <= 0.0 or self.receiver_lora_alpha > 8.0:
+                raise ValueError(
+                    "runtime.pilot_bridge_mode=writer_direct supports receiver micro-LoRA alpha in (0, 8]."
+                )
+
     def orthogonalize_writer_slot_basis(self) -> None:
         self.writer.orthogonalize_slot_embeddings_()
+
+    def source_stub_parameters(self) -> list[nn.Parameter]:
+        if self.source_stub is None:
+            return []
+        return list(self.source_stub.parameters())
+
+    def set_source_stub_trainable(self, enabled: bool) -> None:
+        if self.source_stub is None:
+            return
+        for parameter in self.source_stub.parameters():
+            parameter.requires_grad_(enabled)
 
     def load_writer(self, resume: str | None) -> None:
         writer_path = _resolve_artifact_path(resume, "writer.ckpt")
@@ -2489,6 +2574,20 @@ class SharedInjectionPilotRuntime(nn.Module):
                     f"Warm-start checkpoint {checkpoint_path} uses pilot_projector_prefix_tokens="
                     f"{checkpoint_projector_prefix_tokens}, expected {self.prefix_projector.prefix_tokens}."
                 )
+        checkpoint_prefix_source_mode = str(checkpoint.get("pilot_prefix_source_mode", "writer"))
+        if checkpoint_prefix_source_mode != self.prefix_source_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_prefix_source_mode="
+                f"{checkpoint_prefix_source_mode}, expected {self.prefix_source_mode}."
+            )
+        checkpoint_deep_prefix_init_mode = str(
+            checkpoint.get("pilot_deep_prefix_init_mode", self.deep_prefix_init_mode)
+        )
+        if checkpoint_deep_prefix_init_mode != self.deep_prefix_init_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_deep_prefix_init_mode="
+                f"{checkpoint_deep_prefix_init_mode}, expected {self.deep_prefix_init_mode}."
+            )
         writer_state = checkpoint.get("writer_state")
         if not isinstance(writer_state, dict):
             raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing writer_state.")
@@ -2498,6 +2597,24 @@ class SharedInjectionPilotRuntime(nn.Module):
             checkpoint_state=writer_state,
             checkpoint_path=checkpoint_path,
         )
+        source_stub_state = checkpoint.get("source_stub_state")
+        if self.source_stub is None and source_stub_state is not None:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} includes source_stub_state, but the current "
+                f"runtime uses pilot_prefix_source_mode={self.prefix_source_mode}."
+            )
+        if self.source_stub is not None:
+            if not isinstance(source_stub_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} is missing source_stub_state for "
+                    f"pilot_prefix_source_mode={self.prefix_source_mode}."
+                )
+            _validate_module_state_shapes(
+                module_name="source_stub",
+                expected_state=self.source_stub.state_dict(),
+                checkpoint_state=source_stub_state,
+                checkpoint_path=checkpoint_path,
+            )
         support_encoder_state = checkpoint.get("support_encoder_state")
         if self.support_encoder is None and support_encoder_state is not None:
             raise ValueError(
@@ -2519,12 +2636,17 @@ class SharedInjectionPilotRuntime(nn.Module):
         prefix_projector_state = checkpoint.get("prefix_projector_state")
         if not isinstance(prefix_projector_state, dict):
             raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing prefix_projector_state.")
-        _validate_module_state_shapes(
-            module_name="prefix_projector",
-            expected_state=self.prefix_projector.state_dict(),
-            checkpoint_state=prefix_projector_state,
-            checkpoint_path=checkpoint_path,
-        )
+        if not (
+            allow_single_level_init_for_two_level
+            and self.memory_path_variant == "two_level"
+            and checkpoint_memory_path_variant == "single_level"
+        ):
+            _validate_module_state_shapes(
+                module_name="prefix_projector",
+                expected_state=self.prefix_projector.state_dict(),
+                checkpoint_state=prefix_projector_state,
+                checkpoint_path=checkpoint_path,
+            )
         if self.memory_path_variant == "two_level":
             checkpoint_reader_context_mode = str(
                 checkpoint.get("pilot_reader_context_mode", "prompt_summary")
@@ -2666,9 +2788,15 @@ class SharedInjectionPilotRuntime(nn.Module):
             allow_missing_receiver_lora_state=True,
         )
         self.writer.load_state_dict(checkpoint["writer_state"])
+        if self.source_stub is not None and checkpoint.get("source_stub_state") is not None:
+            self.source_stub.load_state_dict(checkpoint["source_stub_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
-        self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
+        if not (
+            self.memory_path_variant == "two_level"
+            and str(checkpoint.get("pilot_memory_path_variant", "single_level")) == "single_level"
+        ):
+            self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
         if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
             self.backbone.load_receiver_lora_state_dict(
                 checkpoint["receiver_lora_state"],
@@ -2694,6 +2822,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             allow_missing_receiver_lora_state=False,
         )
         self.writer.load_state_dict(checkpoint["writer_state"])
+        if self.source_stub is not None and checkpoint.get("source_stub_state") is not None:
+            self.source_stub.load_state_dict(checkpoint["source_stub_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
         self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
@@ -2813,6 +2943,60 @@ class SharedInjectionPilotRuntime(nn.Module):
         merged.update(projection_stats)
         return merged
 
+    def _deep_prefix_calibration_texts(
+        self,
+        *,
+        support_text_block: str,
+        prompt_text: str | None,
+    ) -> list[str]:
+        texts: list[str] = []
+        if prompt_text is not None and str(prompt_text).strip():
+            texts.append(str(prompt_text))
+        if str(support_text_block).strip():
+            texts.append(str(support_text_block))
+        if not texts:
+            texts.append("<empty>")
+        return texts
+
+    def _maybe_initialize_prefix_source(
+        self,
+        *,
+        support_text_block: str,
+        prompt_text: str | None,
+    ) -> None:
+        if self.injection_mode != "sparse_deep_prefix":
+            return
+        calibration = None
+        if (
+            not self._deep_prefix_projector_initialized
+            or (self.source_stub is not None and not self._source_stub_initialized)
+        ):
+            calibration = self.backbone.collect_deep_prefix_calibration(
+                self._deep_prefix_calibration_texts(
+                    support_text_block=support_text_block,
+                    prompt_text=prompt_text,
+                ),
+                layer_indices=self.deep_prefix_layers,
+                max_tokens=int(self.prefix_projector.prefix_tokens),
+            )
+        if not self._deep_prefix_projector_initialized:
+            assert calibration is not None
+            if isinstance(self.prefix_projector, SharedLowRankDeepPrefixProjector):
+                self.prefix_projector.initialize_from_calibration(
+                    mode=self.deep_prefix_init_mode,
+                    semantic_anchor=calibration.get("semantic_anchor"),
+                    hidden_state_anchor=calibration.get("hidden_state_anchor"),
+                    layer_hidden_anchor_by_layer=calibration.get("layer_hidden_anchor_by_layer"),
+                )
+            self._deep_prefix_projector_initialized = True
+        if self.source_stub is not None and not self._source_stub_initialized:
+            assert calibration is not None
+            if self.deep_prefix_init_mode == "semantic_anchor":
+                self.source_stub.initialize_from_anchor(calibration["semantic_anchor"])
+            else:
+                self.source_stub.initialize_from_anchor(calibration["hidden_state_anchor"])
+            self._source_stub_initialized = True
+
     def _writer_support_states(
         self,
         support_text_block: str,
@@ -2881,6 +3065,16 @@ class SharedInjectionPilotRuntime(nn.Module):
                 dtype=torch.float32,
                 device=self.backbone.device,
             )
+        elif self.prefix_source_mode == "source_stub":
+            if prompt_text is not None:
+                writer_context_states, writer_context_mask = self._prompt_context_states(prompt_text)
+            self._maybe_initialize_prefix_source(
+                support_text_block=support_text_block,
+                prompt_text=prompt_text,
+            )
+            if self.source_stub is None:
+                raise RuntimeError("pilot_prefix_source_mode=source_stub requires SourceStubMemory.")
+            memory_long = self.source_stub(batch_size=1)
         else:
             support_item_states, writer_support_states = self._writer_support_states(
                 support_text_block,
@@ -2979,6 +3173,8 @@ class SharedInjectionPilotRuntime(nn.Module):
                 fuser=self.fuser,
                 memory_path_variant=self.memory_path_variant,
                 projector_token_source=self.projector_token_source,
+                prefix_source_mode=self.prefix_source_mode,
+                deep_prefix_init_mode=self.deep_prefix_init_mode,
             )
             return PrefixInjectionArtifacts(
                 prefix_embeddings=prefix_embeddings,
@@ -2999,6 +3195,10 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_value_projected_slots=reader_value_projected_slots,
                 reader_readouts=reader_readouts,
             )
+        self._maybe_initialize_prefix_source(
+            support_text_block=support_text_block,
+            prompt_text=prompt_text,
+        )
         layer_prefix_hidden_by_layer = self.prefix_projector(projector_source)
         prefix_stats = _prefix_stats(
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
@@ -3017,6 +3217,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             fuser=self.fuser,
             memory_path_variant=self.memory_path_variant,
             projector_token_source=self.projector_token_source,
+            prefix_source_mode=self.prefix_source_mode,
+            deep_prefix_init_mode=self.deep_prefix_init_mode,
         )
         prefix_stats = self._augment_prefix_stats_with_projection(
             prefix_stats=prefix_stats,
@@ -3541,6 +3743,119 @@ def _median_train_event_metric(
     return float(values_tensor.median().item())
 
 
+def _prefix_attention_diagnostic_fields(
+    *,
+    example_cache: SharedInjectionExampleCache,
+    scores: torch.Tensor,
+    diagnostics: dict[str, object] | None,
+) -> dict[str, Any]:
+    if not diagnostics:
+        return {
+            "diagnostic_layers": [],
+            "prefix_attention_mass_mean": 0.0,
+            "prefix_to_content_attention_ratio_mean": 0.0,
+            "gold_prefix_attention_mass": 0.0,
+            "competitor_prefix_attention_mass": 0.0,
+            "prefix_attention_mass_mean_by_layer": {},
+            "prefix_to_content_attention_ratio_mean_by_layer": {},
+            "gold_prefix_attention_mass_by_layer": {},
+            "competitor_prefix_attention_mass_by_layer": {},
+        }
+    masses = [float(value) for value in diagnostics.get("prefix_attention_mass_by_candidate", [])]
+    layer_masses_raw = diagnostics.get("prefix_attention_mass_by_candidate_by_layer", {})
+    diagnostic_layers = [int(layer_index) for layer_index in diagnostics.get("diagnostic_layers", [])]
+    predicted_index = int(torch.argmax(scores).item()) if scores.numel() else 0
+    gold_index = int(example_cache.gold_index)
+    competitor_candidates = [index for index in range(len(example_cache.candidate_texts)) if index != gold_index]
+    competitor_index = (
+        max(competitor_candidates, key=lambda index: float(scores[index].item()))
+        if competitor_candidates
+        else predicted_index
+    )
+    mean_mass = float(sum(masses) / max(1, len(masses)))
+    gold_mass = float(masses[gold_index]) if gold_index < len(masses) else 0.0
+    competitor_mass = float(masses[competitor_index]) if competitor_index < len(masses) else 0.0
+    mean_by_layer: dict[str, float] = {}
+    ratio_by_layer: dict[str, float] = {}
+    gold_by_layer: dict[str, float] = {}
+    competitor_by_layer: dict[str, float] = {}
+    for layer_index in diagnostic_layers:
+        layer_values = [float(value) for value in layer_masses_raw.get(layer_index, layer_masses_raw.get(str(layer_index), []))]
+        if not layer_values:
+            continue
+        layer_mean = float(sum(layer_values) / len(layer_values))
+        mean_by_layer[str(layer_index)] = layer_mean
+        ratio_by_layer[str(layer_index)] = float(layer_mean / max(1e-8, 1.0 - layer_mean))
+        if gold_index < len(layer_values):
+            gold_by_layer[str(layer_index)] = float(layer_values[gold_index])
+        if competitor_index < len(layer_values):
+            competitor_by_layer[str(layer_index)] = float(layer_values[competitor_index])
+    return {
+        "diagnostic_layers": diagnostic_layers,
+        "prefix_attention_mass_mean": mean_mass,
+        "prefix_to_content_attention_ratio_mean": float(mean_mass / max(1e-8, 1.0 - mean_mass)),
+        "gold_prefix_attention_mass": gold_mass,
+        "competitor_prefix_attention_mass": competitor_mass,
+        "prefix_attention_mass_mean_by_layer": mean_by_layer,
+        "prefix_to_content_attention_ratio_mean_by_layer": ratio_by_layer,
+        "gold_prefix_attention_mass_by_layer": gold_by_layer,
+        "competitor_prefix_attention_mass_by_layer": competitor_by_layer,
+    }
+
+
+def _aggregate_prefix_attention_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    diagnostic_rows = [row for row in rows if "prefix_attention_mass_mean" in row]
+    if not diagnostic_rows:
+        return {
+            "prefix_attention_mass_mean": 0.0,
+            "prefix_to_content_attention_ratio_mean": 0.0,
+            "gold_prefix_attention_mass_mean": 0.0,
+            "competitor_prefix_attention_mass_mean": 0.0,
+            "prefix_attention_mass_mean_by_layer": {},
+            "prefix_to_content_attention_ratio_mean_by_layer": {},
+            "gold_prefix_attention_mass_mean_by_layer": {},
+            "competitor_prefix_attention_mass_mean_by_layer": {},
+            "prefix_attention_nontrivial_layer_count": 0,
+        }
+    metric_keys = [
+        "prefix_attention_mass_mean",
+        "prefix_to_content_attention_ratio_mean",
+        "gold_prefix_attention_mass",
+        "competitor_prefix_attention_mass",
+    ]
+    aggregated = {
+        key: float(
+            sum(float(row.get(key, 0.0)) for row in diagnostic_rows) / len(diagnostic_rows)
+        )
+        for key in metric_keys
+    }
+    aggregated["gold_prefix_attention_mass_mean"] = aggregated.pop("gold_prefix_attention_mass")
+    aggregated["competitor_prefix_attention_mass_mean"] = aggregated.pop("competitor_prefix_attention_mass")
+    nested_mappings = {
+        "prefix_attention_mass_mean_by_layer": "prefix_attention_mass_mean_by_layer",
+        "prefix_to_content_attention_ratio_mean_by_layer": "prefix_to_content_attention_ratio_mean_by_layer",
+        "gold_prefix_attention_mass_mean_by_layer": "gold_prefix_attention_mass_by_layer",
+        "competitor_prefix_attention_mass_mean_by_layer": "competitor_prefix_attention_mass_by_layer",
+    }
+    for output_key, row_key in nested_mappings.items():
+        layer_keys = sorted({str(layer_key) for row in diagnostic_rows for layer_key in row.get(row_key, {})})
+        aggregated[output_key] = {
+            layer_key: float(
+                sum(float(row.get(row_key, {}).get(layer_key, 0.0)) for row in diagnostic_rows)
+                / len(diagnostic_rows)
+            )
+            for layer_key in layer_keys
+        }
+    aggregated["prefix_attention_nontrivial_layer_count"] = int(
+        sum(
+            1
+            for value in aggregated["prefix_attention_mass_mean_by_layer"].values()
+            if float(value) > 1e-3
+        )
+    )
+    return aggregated
+
+
 def _prediction_row(
     *,
     arm_alias: str,
@@ -3555,6 +3870,7 @@ def _prediction_row(
     task_evaluator: Any,
     generated_text: str | None = None,
     no_memory_scores: torch.Tensor | None = None,
+    diagnostics: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     margin, competitor_index = _compute_margin(scores, example_cache.gold_index)
     scalar_prefix_stats = _prefix_scalar_summary(prefix_stats or {})
@@ -3596,6 +3912,11 @@ def _prediction_row(
             "normalized_prediction": str(score_payload.get("normalized_prediction", "")),
             "normalized_reference": str(score_payload.get("normalized_reference", "")),
             "extra_metrics": dict(score_payload.get("extra_metrics", {})),
+            **_prefix_attention_diagnostic_fields(
+                example_cache=example_cache,
+                scores=scores,
+                diagnostics=diagnostics,
+            ),
         }
     predicted_index = int(torch.argmax(scores).item())
     return {
@@ -3622,6 +3943,11 @@ def _prediction_row(
         "answer_logprob_with_memory": answer_logprob_with_memory,
         "answer_logprob_without_memory": answer_logprob_without_memory,
         "delta_answer_logprob": delta_answer_logprob,
+        **_prefix_attention_diagnostic_fields(
+            example_cache=example_cache,
+            scores=scores,
+            diagnostics=diagnostics,
+        ),
     }
 
 
@@ -3667,12 +3993,23 @@ def _evaluate_examples(
             active_layer_prefix_hidden_by_layer = prefix_artifacts.layer_prefix_hidden_by_layer
             active_prefix_stats = prefix_artifacts.prefix_stats
             example_prefix_stats.append(active_prefix_stats)
-        scores = runtime.score_example(
+        score_output = runtime.score_example(
             example_cache,
             support_text_block=teacher_support_text_block,
             prefix_embeddings=active_prefix_embeddings,
             layer_prefix_hidden_by_layer=active_layer_prefix_hidden_by_layer,
-        ).detach().to(dtype=torch.float32).cpu()
+            return_diagnostics=bool(
+                arm == "injected"
+                and runtime.injection_mode == "sparse_deep_prefix"
+                and active_layer_prefix_hidden_by_layer is not None
+            ),
+        )
+        diagnostics = None
+        if isinstance(score_output, tuple):
+            scores_tensor, diagnostics = score_output
+        else:
+            scores_tensor = score_output
+        scores = scores_tensor.detach().to(dtype=torch.float32).cpu()
         no_memory_scores = None
         if arm == "injected":
             no_memory_scores = runtime.backbone.score_continuations(
@@ -3703,6 +4040,7 @@ def _evaluate_examples(
                 task_evaluator=task_evaluator,
                 generated_text=generated_text,
                 no_memory_scores=no_memory_scores,
+                diagnostics=diagnostics,
             )
         )
     return case_rows, (_aggregate_prefix_stats(example_prefix_stats) if example_prefix_stats else (prefix_stats or _prefix_stats()))
@@ -3775,10 +4113,12 @@ def run_shared_injection_pilot(
     writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 1e-4))
     writer_adapter_learning_rate = _resolve_writer_adapter_learning_rate(config)
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
+    source_stub_learning_rate = _resolve_source_stub_learning_rate(config)
     receiver_lora_learning_rate = _resolve_receiver_lora_learning_rate(config)
     writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
     writer_adapter_weight_decay = _resolve_writer_adapter_weight_decay(config)
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
+    source_stub_weight_decay = _resolve_source_stub_weight_decay(config)
     receiver_lora_weight_decay = _resolve_receiver_lora_weight_decay(config)
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
     choice_margin = float(config["runtime"].get("stage_c_choice_margin", 0.1))
@@ -3787,10 +4127,10 @@ def run_shared_injection_pilot(
         raise ValueError(
             "runtime.pilot_init_checkpoint_path and runtime.pilot_checkpoint_path are mutually exclusive."
         )
-    if bridge_mode == "writer_direct" and init_checkpoint_path:
-        raise ValueError("runtime.pilot_bridge_mode=writer_direct forbids pilot_init_checkpoint_path; use fresh Writer init.")
-    if bridge_mode == "writer_direct" and injection_checkpoint_path:
-        raise ValueError("runtime.pilot_bridge_mode=writer_direct forbids pilot_checkpoint_path during W0 fresh-init runs.")
+    if bridge_mode == "writer_direct" and injection_mode != "sparse_deep_prefix" and init_checkpoint_path:
+        raise ValueError("runtime.pilot_bridge_mode=writer_direct forbids pilot_init_checkpoint_path outside sparse deep-prefix runs.")
+    if bridge_mode == "writer_direct" and injection_mode != "sparse_deep_prefix" and injection_checkpoint_path:
+        raise ValueError("runtime.pilot_bridge_mode=writer_direct forbids pilot_checkpoint_path outside sparse deep-prefix runs.")
     if trainable_variant == "writer_adapter_only" and not writer_adapter_enabled:
         raise ValueError(
             "runtime.pilot_trainable_variant=writer_adapter_only requires method.writer_adapter.enabled=true."
@@ -4030,6 +4370,8 @@ def run_shared_injection_pilot(
 
     if arm == "injected" and writer_memory_control != "zero" and train_steps > 0:
         runtime.writer.train()
+        if runtime.source_stub is not None:
+            runtime.source_stub.train()
         if runtime.support_encoder is not None:
             runtime.support_encoder.train()
         if runtime.reader is not None:
@@ -4038,9 +4380,11 @@ def run_shared_injection_pilot(
             runtime.fuser.train()
         runtime.prefix_projector.train()
         runtime.set_writer_trainable(False)
+        runtime.set_source_stub_trainable(False)
         runtime.set_support_encoder_trainable(False)
         writer_base_parameters = runtime.writer_base_parameters()
         writer_adapter_parameters = runtime.writer_adapter_parameters()
+        source_stub_parameters = runtime.source_stub_parameters()
         optimizer_groups = [
             {
                 "params": list(runtime.prefix_projector.parameters()),
@@ -4048,6 +4392,14 @@ def run_shared_injection_pilot(
                 "weight_decay": projector_weight_decay,
             },
         ]
+        if source_stub_parameters:
+            optimizer_groups.append(
+                {
+                    "params": source_stub_parameters,
+                    "lr": source_stub_learning_rate,
+                    "weight_decay": source_stub_weight_decay,
+                }
+            )
         if writer_base_parameters:
             optimizer_groups.append(
                 {
@@ -4119,9 +4471,13 @@ def run_shared_injection_pilot(
                     and trainable_variant == "writer_adapter_only"
                 )
             )
+            if runtime.source_stub is not None:
+                writer_base_frozen = True
+                writer_adapter_frozen = True
             projector_frozen = bool(bootstrap_active)
             runtime.set_writer_base_trainable(not writer_base_frozen)
             runtime.set_writer_adapter_trainable(not writer_adapter_frozen)
+            runtime.set_source_stub_trainable(not projector_frozen)
             runtime.set_support_encoder_trainable(not writer_base_frozen)
             runtime.set_prefix_projector_trainable(not projector_frozen)
             train_example = train_caches[step % len(train_caches)]
@@ -4175,12 +4531,21 @@ def run_shared_injection_pilot(
             memory_slot_effective_rank = _effective_rank(prefix_artifacts.memory_long)
             memory_short_effective_rank = _effective_rank(prefix_artifacts.memory_short)
             support_state_effective_rank = _effective_rank(prefix_artifacts.support_item_states)
-            scores = runtime.score_example(
+            score_output = runtime.score_example(
                 train_example,
                 support_text_block=teacher_support_text_block,
                 prefix_embeddings=prefix_artifacts.prefix_embeddings,
                 layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+                return_diagnostics=bool(
+                    runtime.injection_mode == "sparse_deep_prefix"
+                    and prefix_artifacts.layer_prefix_hidden_by_layer is not None
+                ),
             )
+            train_diagnostics = None
+            if isinstance(score_output, tuple):
+                scores, train_diagnostics = score_output
+            else:
+                scores = score_output
             with torch.no_grad():
                 no_memory_scores = runtime.backbone.score_continuations(
                     train_example.prompt_text,
@@ -4371,6 +4736,7 @@ def run_shared_injection_pilot(
                 ):
                     loss = loss + (active_alignment_aux_weight * alignment_aux_loss)
             loss.backward()
+            source_stub_grad_norm = _grad_norm(runtime.source_stub)
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
             writer_grad_norm = _grad_norm(runtime.writer)
@@ -4379,6 +4745,10 @@ def run_shared_injection_pilot(
             fuser_grad_norm = _grad_norm(runtime.fuser)
             receiver_lora_grad_norm = _parameters_grad_norm(
                 list(getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])())
+            )
+            source_to_projector_grad_ratio = _safe_grad_ratio(
+                source_stub_grad_norm,
+                prefix_projector_grad_norm,
             )
             writer_to_projector_grad_ratio = _safe_grad_ratio(
                 writer_grad_norm + support_encoder_grad_norm,
@@ -4413,6 +4783,11 @@ def run_shared_injection_pilot(
             profiler.add_tokens(runtime.backbone.count_tokens(masked_support_text_block))
             for candidate_text in train_example.candidate_texts:
                 profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
+            train_prefix_attention_metrics = _prefix_attention_diagnostic_fields(
+                example_cache=train_example,
+                scores=scores.detach().to(dtype=torch.float32).cpu(),
+                diagnostics=train_diagnostics,
+            )
             train_events.append(
                 {
                     "step": step + 1,
@@ -4542,6 +4917,8 @@ def run_shared_injection_pilot(
                     "pilot_writer_adapter_alpha": float(runtime.writer_adapter_alpha),
                     "pilot_writer_adapter_dropout": float(runtime.writer_adapter_dropout),
                     "pilot_writer_adapter_trainable_params": int(runtime.writer_adapter_trainable_params),
+                    "pilot_prefix_source_mode": runtime.prefix_source_mode,
+                    "pilot_deep_prefix_init_mode": runtime.deep_prefix_init_mode,
                     "alignment_aux_mode": alignment_aux_mode,
                     "alignment_aux_active": bool(alignment_aux_active),
                     "alignment_aux_loss": (
@@ -4606,11 +4983,13 @@ def run_shared_injection_pilot(
                     "pilot_receiver_lora_dropout": float(runtime.receiver_lora_dropout),
                     "pilot_receiver_lora_trainable_params": int(runtime.receiver_lora_trainable_params),
                     "support_encoder_grad_norm": support_encoder_grad_norm,
+                    "source_stub_grad_norm": source_stub_grad_norm,
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
                     "reader_grad_norm": reader_grad_norm,
                     "fuser_grad_norm": fuser_grad_norm,
                     "writer_grad_norm": writer_grad_norm,
                     "grad_norm_support_encoder": support_encoder_grad_norm,
+                    "grad_norm_source_stub": source_stub_grad_norm,
                     "grad_norm_projector": prefix_projector_grad_norm,
                     "grad_norm_prefix_projector": prefix_projector_grad_norm,
                     "grad_norm_reader": reader_grad_norm,
@@ -4620,8 +4999,10 @@ def run_shared_injection_pilot(
                     "grad_norm_receiver_lora": receiver_lora_grad_norm,
                     "reader_to_support_grad_ratio": reader_to_support_grad_ratio,
                     "fuser_to_support_grad_ratio": fuser_to_support_grad_ratio,
+                    "source_to_projector_grad_ratio": source_to_projector_grad_ratio,
                     "receiver_lora_to_reader_grad_ratio": receiver_lora_to_reader_grad_ratio,
                     "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
+                    "source_stub_trainable": _module_trainable(runtime.source_stub),
                     "writer_trainable": _module_trainable(runtime.writer),
                     "writer_adapter_trainable": bool(
                         any(parameter.requires_grad for parameter in runtime.writer_adapter_parameters())
@@ -4638,17 +5019,21 @@ def run_shared_injection_pilot(
                             if parameter.requires_grad
                         )
                     ),
+                    "source_stub_trainable_params": _trainable_parameter_count(runtime.source_stub),
                     "support_encoder_trainable_params": _trainable_parameter_count(runtime.support_encoder),
                     "reader_trainable_params": _trainable_parameter_count(runtime.reader),
                     "fuser_trainable_params": _trainable_parameter_count(runtime.fuser),
                     "prefix_projector_trainable_params": _trainable_parameter_count(runtime.prefix_projector),
                     "total_grad_norm_pre_clip": total_grad_norm,
                     "prefix_artifact_stats": prefix_artifacts.prefix_stats,
+                    **train_prefix_attention_metrics,
                     **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
                 }
             )
             if (step + 1) in snapshot_steps and (step + 1) != 0:
                 runtime.writer.eval()
+                if runtime.source_stub is not None:
+                    runtime.source_stub.eval()
                 if runtime.support_encoder is not None:
                     runtime.support_encoder.eval()
                 if runtime.reader is not None:
@@ -4658,6 +5043,8 @@ def run_shared_injection_pilot(
                 runtime.prefix_projector.eval()
                 evaluate_snapshot(step + 1)
                 runtime.writer.train()
+                if runtime.source_stub is not None:
+                    runtime.source_stub.train()
                 if runtime.support_encoder is not None:
                     runtime.support_encoder.train()
                 if runtime.reader is not None:
@@ -4666,6 +5053,8 @@ def run_shared_injection_pilot(
                     runtime.fuser.train()
                 runtime.prefix_projector.train()
         runtime.writer.eval()
+        if runtime.source_stub is not None:
+            runtime.source_stub.eval()
         if runtime.support_encoder is not None:
             runtime.support_encoder.eval()
         if runtime.reader is not None:
@@ -4674,6 +5063,7 @@ def run_shared_injection_pilot(
             runtime.fuser.eval()
         runtime.prefix_projector.eval()
         runtime.set_writer_trainable(True)
+        runtime.set_source_stub_trainable(True)
         runtime.set_support_encoder_trainable(True)
         runtime.set_prefix_projector_trainable(True)
 
@@ -4739,6 +5129,12 @@ def run_shared_injection_pilot(
         step_start=1,
         step_end=4,
     )
+    train_source_to_projector_grad_ratio_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="source_to_projector_grad_ratio",
+        step_start=1,
+        step_end=4,
+    )
     train_receiver_lora_to_reader_grad_ratio_steps_1_4_median = _median_train_event_metric(
         train_events,
         key="receiver_lora_to_reader_grad_ratio",
@@ -4748,6 +5144,12 @@ def run_shared_injection_pilot(
     train_grad_norm_reader_steps_1_4_median = _median_train_event_metric(
         train_events,
         key="grad_norm_reader",
+        step_start=1,
+        step_end=4,
+    )
+    train_grad_norm_source_stub_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_source_stub",
         step_start=1,
         step_end=4,
     )
@@ -4781,6 +5183,12 @@ def run_shared_injection_pilot(
         step_start=5,
         step_end=8,
     )
+    train_source_to_projector_grad_ratio_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="source_to_projector_grad_ratio",
+        step_start=5,
+        step_end=8,
+    )
     train_receiver_lora_to_reader_grad_ratio_steps_5_8_median = _median_train_event_metric(
         train_events,
         key="receiver_lora_to_reader_grad_ratio",
@@ -4790,6 +5198,12 @@ def run_shared_injection_pilot(
     train_grad_norm_reader_steps_5_8_median = _median_train_event_metric(
         train_events,
         key="grad_norm_reader",
+        step_start=5,
+        step_end=8,
+    )
+    train_grad_norm_source_stub_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_source_stub",
         step_start=5,
         step_end=8,
     )
@@ -4838,6 +5252,8 @@ def run_shared_injection_pilot(
         "pilot_reader_num_queries": reader_num_queries,
         "pilot_fuser_short_slots": fuser_short_slots,
         "pilot_projector_token_source": projector_token_source,
+        "pilot_prefix_source_mode": runtime.prefix_source_mode,
+        "pilot_deep_prefix_init_mode": runtime.deep_prefix_init_mode,
         "pilot_support_encoder_mode": support_encoder_mode,
         "pilot_trainable_variant": trainable_variant,
         "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
@@ -4848,6 +5264,7 @@ def run_shared_injection_pilot(
         "pilot_writer_adapter_alpha": float(runtime.writer_adapter_alpha),
         "pilot_writer_adapter_dropout": float(runtime.writer_adapter_dropout),
         "pilot_writer_adapter_trainable_params": int(runtime.writer_adapter_trainable_params),
+        "pilot_source_stub_trainable_params": int(runtime.source_stub_trainable_params),
         "pilot_writer_support_query_residual_scale": float(
             config["method"].get("writer", {}).get("support_query_residual_scale", 0.0)
         ),
@@ -4921,6 +5338,31 @@ def run_shared_injection_pilot(
         "answer_logprob_with_memory": float(class_metrics.get("answer_logprob_with_memory", 0.0)),
         "answer_logprob_without_memory": float(class_metrics.get("answer_logprob_without_memory", 0.0)),
         "delta_answer_logprob": float(class_metrics.get("delta_answer_logprob", 0.0)),
+        "prefix_attention_mass_mean": float(class_metrics.get("prefix_attention_mass_mean", 0.0)),
+        "prefix_to_content_attention_ratio_mean": float(
+            class_metrics.get("prefix_to_content_attention_ratio_mean", 0.0)
+        ),
+        "gold_prefix_attention_mass_mean": float(
+            class_metrics.get("gold_prefix_attention_mass_mean", 0.0)
+        ),
+        "competitor_prefix_attention_mass_mean": float(
+            class_metrics.get("competitor_prefix_attention_mass_mean", 0.0)
+        ),
+        "prefix_attention_mass_mean_by_layer": dict(
+            class_metrics.get("prefix_attention_mass_mean_by_layer", {})
+        ),
+        "prefix_to_content_attention_ratio_mean_by_layer": dict(
+            class_metrics.get("prefix_to_content_attention_ratio_mean_by_layer", {})
+        ),
+        "gold_prefix_attention_mass_mean_by_layer": dict(
+            class_metrics.get("gold_prefix_attention_mass_mean_by_layer", {})
+        ),
+        "competitor_prefix_attention_mass_mean_by_layer": dict(
+            class_metrics.get("competitor_prefix_attention_mass_mean_by_layer", {})
+        ),
+        "prefix_attention_nontrivial_layer_count": int(
+            class_metrics.get("prefix_attention_nontrivial_layer_count", 0)
+        ),
         "dominant_label_fraction": float(class_metrics["dominant_label_fraction"]),
         "label_recall_by_class": class_metrics["label_recall_by_class"],
         "best_adapt_step": 0,
@@ -4928,9 +5370,11 @@ def run_shared_injection_pilot(
         "task_case_dump_path": str(task_case_dump_path.resolve()),
         "pilot_train_steps": train_steps,
         "pilot_writer_learning_rate": writer_learning_rate,
+        "pilot_source_stub_learning_rate": source_stub_learning_rate,
         "pilot_projector_learning_rate": projector_learning_rate,
         "pilot_receiver_lora_learning_rate": receiver_lora_learning_rate,
         "pilot_writer_weight_decay": writer_weight_decay,
+        "pilot_source_stub_weight_decay": source_stub_weight_decay,
         "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_receiver_lora_weight_decay": receiver_lora_weight_decay,
         "pilot_projector_warmup_steps": projector_warmup_steps,
@@ -5056,6 +5500,9 @@ def run_shared_injection_pilot(
         "train_final_grad_norm_support_encoder": (
             train_events[-1]["grad_norm_support_encoder"] if train_events else None
         ),
+        "train_final_grad_norm_source_stub": (
+            train_events[-1]["grad_norm_source_stub"] if train_events else None
+        ),
         "train_final_grad_norm_projector": (
             train_events[-1]["grad_norm_projector"] if train_events else None
         ),
@@ -5071,10 +5518,14 @@ def run_shared_injection_pilot(
         "train_fuser_to_support_grad_ratio_steps_1_4_median": (
             train_fuser_to_support_grad_ratio_steps_1_4_median
         ),
+        "train_source_to_projector_grad_ratio_steps_1_4_median": (
+            train_source_to_projector_grad_ratio_steps_1_4_median
+        ),
         "train_receiver_lora_to_reader_grad_ratio_steps_1_4_median": (
             train_receiver_lora_to_reader_grad_ratio_steps_1_4_median
         ),
         "train_grad_norm_reader_steps_1_4_median": train_grad_norm_reader_steps_1_4_median,
+        "train_grad_norm_source_stub_steps_1_4_median": train_grad_norm_source_stub_steps_1_4_median,
         "train_grad_norm_fuser_steps_1_4_median": train_grad_norm_fuser_steps_1_4_median,
         "train_grad_norm_writer_adapter_steps_1_4_median": (
             train_grad_norm_writer_adapter_steps_1_4_median
@@ -5088,10 +5539,14 @@ def run_shared_injection_pilot(
         "train_fuser_to_support_grad_ratio_steps_5_8_median": (
             train_fuser_to_support_grad_ratio_steps_5_8_median
         ),
+        "train_source_to_projector_grad_ratio_steps_5_8_median": (
+            train_source_to_projector_grad_ratio_steps_5_8_median
+        ),
         "train_receiver_lora_to_reader_grad_ratio_steps_5_8_median": (
             train_receiver_lora_to_reader_grad_ratio_steps_5_8_median
         ),
         "train_grad_norm_reader_steps_5_8_median": train_grad_norm_reader_steps_5_8_median,
+        "train_grad_norm_source_stub_steps_5_8_median": train_grad_norm_source_stub_steps_5_8_median,
         "train_grad_norm_fuser_steps_5_8_median": train_grad_norm_fuser_steps_5_8_median,
         "train_grad_norm_writer_adapter_steps_5_8_median": (
             train_grad_norm_writer_adapter_steps_5_8_median
@@ -5105,8 +5560,14 @@ def run_shared_injection_pilot(
         "train_final_fuser_to_support_grad_ratio": (
             train_events[-1]["fuser_to_support_grad_ratio"] if train_events else None
         ),
+        "train_final_source_to_projector_grad_ratio": (
+            train_events[-1]["source_to_projector_grad_ratio"] if train_events else None
+        ),
         "train_final_receiver_lora_to_reader_grad_ratio": (
             train_events[-1]["receiver_lora_to_reader_grad_ratio"] if train_events else None
+        ),
+        "train_final_source_stub_trainable": (
+            train_events[-1]["source_stub_trainable"] if train_events else None
         ),
         "train_final_writer_trainable": train_events[-1]["writer_trainable"] if train_events else None,
         "train_final_writer_adapter_trainable": (
@@ -5125,6 +5586,9 @@ def run_shared_injection_pilot(
         ),
         "train_final_writer_adapter_trainable_params": (
             train_events[-1]["writer_adapter_trainable_params"] if train_events else None
+        ),
+        "train_final_source_stub_trainable_params": (
+            train_events[-1]["source_stub_trainable_params"] if train_events else None
         ),
         "train_final_support_encoder_trainable_params": (
             train_events[-1]["support_encoder_trainable_params"] if train_events else None

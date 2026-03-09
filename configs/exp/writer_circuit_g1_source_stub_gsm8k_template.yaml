@@ -1,0 +1,60 @@
+includes:
+  - ../tasks/benchmarks/materialized/gsm8k_real_smoke.yaml
+  - ../method/writer_direct_deep_prefix_no_lora_early4.yaml
+
+experiment:
+  name: writer_circuit_g1_source_stub_gsm8k_template
+  stage: Writer-Circuit-P1a
+  method_variant: writer-circuit-g1-source-stub-gsm8k
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+
+runtime:
+  training_stage: shared_injection_pilot
+  shared_injection_arm: injected
+  writer_memory_control: real
+  pilot_arm_alias: I_circuit_p1a
+  pilot_writer_stimulus_mode: support_and_context
+  pilot_writer_context_tokens: 8
+  pilot_prefix_source_mode: source_stub
+  pilot_support_examples: 8
+  pilot_support_encoder_mode: pooled_block
+  pilot_train_support_mode: static_support_rows
+  pilot_train_steps: 16
+  pilot_snapshot_steps:
+    - 0
+    - 4
+    - 8
+    - 16
+  pilot_projector_warmup_steps: 0
+  pilot_writer_learning_rate: 0.0002
+  pilot_source_stub_learning_rate: 0.0007
+  pilot_projector_learning_rate: 0.0015
+  pilot_writer_weight_decay: 0.0
+  pilot_source_stub_weight_decay: 0.0
+  pilot_projector_weight_decay: 0.0
+  pilot_gradient_clip_norm: 1.0
+  pilot_prefix_slot_max_norm: 8.0
+  pilot_prefix_total_max_norm: 32.0
+  stage_c_choice_margin: 0.1
+  pilot_choice_ce_weight: 1.0
+  pilot_competitor_hinge_weight_max: 0.0
+  pilot_prompt_variant: task_native
+  pilot_support_serialization: example_blocks_raw8
+  pilot_alignment_aux_mode: off
+  pilot_writer_gain_margin_weight: 0.0
+  pilot_writer_common_mode_penalty_weight: 0.0
+  pilot_writer_covariance_diversity_weight: 0.0
+  pilot_writer_slot_energy_balance_weight: 0.0
+  pilot_writer_orthogonalize_slot_basis: false
+  device: cuda
+
+task:
+  support_dataset_path: ""
+  train_dataset_path: ""
+  train_support_dataset_path: ""

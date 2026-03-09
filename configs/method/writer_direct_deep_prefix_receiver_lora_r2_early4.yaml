@@ -1,0 +1,17 @@
+includes:
+  - writer_direct_deep_prefix_no_lora_early4.yaml
+
+method:
+  receiver_lora:
+    enabled: true
+    target_layers:
+      - 0
+      - 1
+      - 2
+      - 3
+    target_modules:
+      - k_proj
+      - v_proj
+    rank: 2
+    alpha: 4.0
+    dropout: 0.0
