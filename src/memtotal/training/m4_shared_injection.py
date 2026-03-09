@@ -1704,6 +1704,9 @@ def _save_shared_injection_checkpoint(
             "pilot_writer_context_query_residual_scale": float(
                 getattr(runtime.writer, "context_query_residual_scale", 0.0)
             ),
+            "pilot_writer_conditioning_layers": int(
+                getattr(runtime.writer, "conditioning_layers", 1)
+            ),
             "pilot_writer_stimulus_mode": str(runtime.writer_stimulus_mode),
             "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
             "receiver_lora_state": (
@@ -2121,6 +2124,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 hidden_dim=writer_cfg.get("hidden_dim"),
                 num_heads=int(writer_cfg.get("num_heads", 4)),
                 transformer_layers=int(writer_cfg.get("transformer_layers", 1)),
+                conditioning_layers=int(writer_cfg.get("conditioning_layers", 1)),
                 dropout=float(writer_cfg.get("dropout", 0.0)),
                 context_query_residual_scale=float(
                     config["runtime"].get("pilot_writer_context_query_residual_scale", 1.0)
@@ -2348,6 +2352,18 @@ class SharedInjectionPilotRuntime(nn.Module):
                 raise ValueError(
                     f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_context_tokens="
                     f"{checkpoint_writer_context_tokens}, expected {self.writer_context_tokens}."
+                )
+            checkpoint_writer_conditioning_layers = int(
+                checkpoint.get(
+                    "pilot_writer_conditioning_layers",
+                    getattr(self.writer, "conditioning_layers", 1),
+                )
+            )
+            if checkpoint_writer_conditioning_layers != int(getattr(self.writer, "conditioning_layers", 1)):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_writer_conditioning_layers="
+                    f"{checkpoint_writer_conditioning_layers}, expected "
+                    f"{getattr(self.writer, 'conditioning_layers', 1)}."
                 )
         checkpoint_projector_prefix_tokens = int(
             checkpoint.get("pilot_projector_prefix_tokens", checkpoint_slots)
@@ -4635,6 +4651,9 @@ def run_shared_injection_pilot(
         ),
         "pilot_writer_context_query_residual_scale": float(
             config["runtime"].get("pilot_writer_context_query_residual_scale", 1.0)
+        ),
+        "pilot_writer_conditioning_layers": int(
+            config["method"].get("writer", {}).get("conditioning_layers", 1)
         ),
         "pilot_writer_output_slot_basis_scale": float(
             getattr(runtime.writer, "output_slot_basis_scale", 0.0)

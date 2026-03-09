@@ -42,6 +42,62 @@ class ManagedMemoryModule(nn.Module):
         return self
 
 
+class _WriterWeaverConditioningBlock(nn.Module):
+    def __init__(self, *, embed_dim: int, num_heads: int, dropout: float) -> None:
+        super().__init__()
+        self.context_cross_attn = nn.MultiheadAttention(
+            embed_dim=int(embed_dim),
+            num_heads=int(num_heads),
+            dropout=float(dropout),
+            batch_first=True,
+        )
+        self.support_cross_attn = nn.MultiheadAttention(
+            embed_dim=int(embed_dim),
+            num_heads=int(num_heads),
+            dropout=float(dropout),
+            batch_first=True,
+        )
+        self.context_attn_norm = nn.LayerNorm(int(embed_dim))
+        self.support_attn_norm = nn.LayerNorm(int(embed_dim))
+
+    def forward(
+        self,
+        slots: torch.Tensor,
+        *,
+        context_states: torch.Tensor | None,
+        support_states: torch.Tensor | None,
+        stimulus_mode: str,
+        context_key_padding_mask: torch.Tensor | None,
+        support_key_padding_mask: torch.Tensor | None,
+        context_query_residual_scale: float,
+        support_query_residual_scale: float,
+    ) -> torch.Tensor:
+        current_slots = slots
+        if context_states is not None and stimulus_mode in {"context_only", "support_and_context"}:
+            context_attended, _ = self.context_cross_attn(
+                query=current_slots,
+                key=context_states,
+                value=context_states,
+                key_padding_mask=context_key_padding_mask,
+                need_weights=False,
+            )
+            current_slots = self.context_attn_norm(
+                context_attended + (float(context_query_residual_scale) * current_slots)
+            )
+        if support_states is not None and stimulus_mode in {"support_only", "support_and_context"}:
+            support_attended, _ = self.support_cross_attn(
+                query=current_slots,
+                key=support_states,
+                value=support_states,
+                key_padding_mask=support_key_padding_mask,
+                need_weights=False,
+            )
+            current_slots = self.support_attn_norm(
+                support_attended + (float(support_query_residual_scale) * current_slots)
+            )
+        return current_slots
+
+
 class MemoryWriter(ManagedMemoryModule):
     def __init__(
         self,
@@ -216,6 +272,7 @@ class WriterWeaverHead(ManagedMemoryModule):
         hidden_dim: int | None = None,
         num_heads: int = 4,
         transformer_layers: int = 1,
+        conditioning_layers: int = 1,
         dropout: float = 0.0,
         context_query_residual_scale: float = 1.0,
         support_query_residual_scale: float = 1.0,
@@ -230,6 +287,9 @@ class WriterWeaverHead(ManagedMemoryModule):
         self.output_slot_basis_scale = float(output_slot_basis_scale)
         self.slot_conditioning_mode = "writer_weaver"
         self.shared_state_scale = 1.0
+        self.conditioning_layers = int(conditioning_layers)
+        if self.conditioning_layers < 1:
+            raise ValueError("WriterWeaverHead conditioning_layers must be >= 1.")
         resolved_hidden_dim = int(hidden_dim or (2 * self.embed_dim))
         self.slot_embeddings = nn.Parameter(torch.randn(self.memory_slots, self.embed_dim) * 0.02)
         self.context_cross_attn = nn.MultiheadAttention(
@@ -243,6 +303,18 @@ class WriterWeaverHead(ManagedMemoryModule):
             num_heads=int(num_heads),
             dropout=float(dropout),
             batch_first=True,
+        )
+        self.context_attn_norm = nn.LayerNorm(self.embed_dim)
+        self.support_attn_norm = nn.LayerNorm(self.embed_dim)
+        self.extra_conditioning_blocks = nn.ModuleList(
+            [
+                _WriterWeaverConditioningBlock(
+                    embed_dim=self.embed_dim,
+                    num_heads=int(num_heads),
+                    dropout=float(dropout),
+                )
+                for _ in range(self.conditioning_layers - 1)
+            ]
         )
         layer = nn.TransformerEncoderLayer(
             d_model=self.embed_dim,
@@ -288,6 +360,41 @@ class WriterWeaverHead(ManagedMemoryModule):
             )
         return states
 
+    def _apply_conditioning_layer(
+        self,
+        slots: torch.Tensor,
+        *,
+        context_states: torch.Tensor | None,
+        support_states: torch.Tensor | None,
+        stimulus_mode: str,
+        context_key_padding_mask: torch.Tensor | None,
+        support_key_padding_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        current_slots = slots
+        if context_states is not None and stimulus_mode in {"context_only", "support_and_context"}:
+            context_attended, _ = self.context_cross_attn(
+                query=current_slots,
+                key=context_states,
+                value=context_states,
+                key_padding_mask=context_key_padding_mask,
+                need_weights=False,
+            )
+            current_slots = self.context_attn_norm(
+                context_attended + (self.context_query_residual_scale * current_slots)
+            )
+        if support_states is not None and stimulus_mode in {"support_only", "support_and_context"}:
+            support_attended, _ = self.support_cross_attn(
+                query=current_slots,
+                key=support_states,
+                value=support_states,
+                key_padding_mask=support_key_padding_mask,
+                need_weights=False,
+            )
+            current_slots = self.support_attn_norm(
+                support_attended + (self.support_query_residual_scale * current_slots)
+            )
+        return current_slots
+
     def write(
         self,
         *,
@@ -317,25 +424,25 @@ class WriterWeaverHead(ManagedMemoryModule):
             raise ValueError("WriterWeaverHead requires at least one stimulus source.")
         batch_size = int(source_state.shape[0])
         slots = self.slot_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-        current_slots = slots
-        if normalized_context is not None and stimulus_mode in {"context_only", "support_and_context"}:
-            context_attended, _ = self.context_cross_attn(
-                query=current_slots,
-                key=normalized_context,
-                value=normalized_context,
-                key_padding_mask=context_key_padding_mask,
-                need_weights=False,
+        current_slots = self._apply_conditioning_layer(
+            slots,
+            context_states=normalized_context,
+            support_states=normalized_support,
+            stimulus_mode=stimulus_mode,
+            context_key_padding_mask=context_key_padding_mask,
+            support_key_padding_mask=support_key_padding_mask,
+        )
+        for block in self.extra_conditioning_blocks:
+            current_slots = block(
+                current_slots,
+                context_states=normalized_context,
+                support_states=normalized_support,
+                stimulus_mode=stimulus_mode,
+                context_key_padding_mask=context_key_padding_mask,
+                support_key_padding_mask=support_key_padding_mask,
+                context_query_residual_scale=self.context_query_residual_scale,
+                support_query_residual_scale=self.support_query_residual_scale,
             )
-            current_slots = context_attended + (self.context_query_residual_scale * current_slots)
-        if normalized_support is not None and stimulus_mode in {"support_only", "support_and_context"}:
-            support_attended, _ = self.support_cross_attn(
-                query=current_slots,
-                key=normalized_support,
-                value=normalized_support,
-                key_padding_mask=support_key_padding_mask,
-                need_weights=False,
-            )
-            current_slots = support_attended + (self.support_query_residual_scale * current_slots)
         encoded = self.output_norm(self.encoder(current_slots))
         if self.output_slot_basis_scale != 0.0:
             encoded = encoded + (self.output_slot_basis_scale * slots)

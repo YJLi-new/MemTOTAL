@@ -129,6 +129,26 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                 stimulus_mode="support_and_context",
             )
 
+    def test_writer_weaver_head_supports_stacked_conditioning_layers(self) -> None:
+        writer = WriterWeaverHead(
+            embed_dim=6,
+            memory_slots=4,
+            hidden_dim=12,
+            num_heads=2,
+            transformer_layers=2,
+            conditioning_layers=3,
+        )
+        context_states = torch.randn(1, 3, 6)
+        support_states = torch.randn(1, 2, 6)
+        outputs = writer.write(
+            context_states=context_states,
+            support_states=support_states,
+            stimulus_mode="support_and_context",
+        )
+        self.assertEqual(writer.conditioning_layers, 3)
+        self.assertEqual(len(writer.extra_conditioning_blocks), 2)
+        self.assertEqual(list(outputs.shape), [1, 4, 6])
+
     def test_support_text_block_respects_modes_and_triad_variant(self) -> None:
         support_rows = [
             {
@@ -946,6 +966,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                     "hidden_dim": 12,
                     "num_heads": 2,
                     "transformer_layers": 1,
+                    "conditioning_layers": 2,
                     "dropout": 0.0,
                 },
             },
@@ -970,6 +991,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         )
         self.assertEqual(runtime.bridge_mode, "writer_direct")
         self.assertIsInstance(runtime.writer, WriterWeaverHead)
+        self.assertEqual(runtime.writer.conditioning_layers, 2)
         self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 4, 6])
         self.assertEqual(list(prefix_artifacts.writer_context_states.shape), [1, 3, 6])
         self.assertEqual(list(prefix_artifacts.writer_context_mask.shape), [1, 3])

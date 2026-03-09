@@ -105,6 +105,9 @@ sync_first_available "runs/review/tl-bridge-multitask-qwen25" \
 sync_first_available "runs/review/writer-weaver-qwen25-smoke" \
   "runs/verify/writer-weaver-qwen25-smoke" \
   "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke"
+sync_first_available "runs/review/writer-weaver-qwen25-f1a" \
+  "runs/verify/writer-weaver-qwen25-f1a" \
+  "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-f1a"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -163,6 +166,9 @@ sync_first_available "results/generated/review/tl-bridge-multitask-qwen25" \
 sync_first_available "results/generated/review/writer-weaver-qwen25-smoke" \
   "results/generated/writer-weaver-qwen25-smoke" \
   "/root/autodl-tmp/results/generated/writer-weaver-qwen25-smoke"
+sync_first_available "results/generated/review/writer-weaver-qwen25-f1a" \
+  "results/generated/writer-weaver-qwen25-f1a" \
+  "/root/autodl-tmp/results/generated/writer-weaver-qwen25-f1a"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
