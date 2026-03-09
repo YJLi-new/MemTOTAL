@@ -73,7 +73,8 @@ class _WriterWeaverConditioningBlock(nn.Module):
         support_key_padding_mask: torch.Tensor | None,
         context_query_residual_scale: float,
         support_query_residual_scale: float,
-    ) -> torch.Tensor:
+        collect_support_diagnostics: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         current_slots = slots
         if context_states is not None and stimulus_mode in {"context_only", "support_and_context"}:
             context_attended, _ = self.context_cross_attn(
@@ -86,18 +87,42 @@ class _WriterWeaverConditioningBlock(nn.Module):
             current_slots = self.context_attn_norm(
                 context_attended + (float(context_query_residual_scale) * current_slots)
             )
+        support_attention_weights = None
         if support_states is not None and stimulus_mode in {"support_only", "support_and_context"}:
-            support_attended, _ = self.support_cross_attn(
+            support_attended, support_attention_weights = self.support_cross_attn(
                 query=current_slots,
                 key=support_states,
                 value=support_states,
                 key_padding_mask=support_key_padding_mask,
-                need_weights=False,
+                need_weights=bool(collect_support_diagnostics),
+                average_attn_weights=False,
             )
             current_slots = self.support_attn_norm(
                 support_attended + (float(support_query_residual_scale) * current_slots)
             )
-        return current_slots
+        return current_slots, support_attention_weights
+
+
+class WriterAuxProjectionHead(nn.Module):
+    def __init__(
+        self,
+        *,
+        input_dim: int,
+        projection_dim: int,
+        hidden_dim: int | None = None,
+    ) -> None:
+        super().__init__()
+        resolved_hidden_dim = int(hidden_dim or max(int(projection_dim), int(input_dim)))
+        self.proj = nn.Sequential(
+            nn.LayerNorm(int(input_dim)),
+            nn.Linear(int(input_dim), resolved_hidden_dim),
+            nn.GELU(),
+            nn.Linear(resolved_hidden_dim, int(projection_dim)),
+        )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        projected = self.proj(inputs)
+        return F.normalize(projected, dim=-1)
 
 
 class SourceStubMemory(ManagedMemoryModule):
@@ -579,6 +604,7 @@ class WriterWeaverHead(ManagedMemoryModule):
             "alpha": 0.0,
             "dropout": 0.0,
         }
+        self.aux_projection_head: WriterAuxProjectionHead | None = None
 
     @staticmethod
     def common_mode_vector(slots: torch.Tensor) -> torch.Tensor:
@@ -772,7 +798,8 @@ class WriterWeaverHead(ManagedMemoryModule):
         stimulus_mode: str,
         context_key_padding_mask: torch.Tensor | None,
         support_key_padding_mask: torch.Tensor | None,
-    ) -> torch.Tensor:
+        collect_support_diagnostics: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         current_slots = slots
         if context_states is not None and stimulus_mode in {"context_only", "support_and_context"}:
             context_attended, _ = self.context_cross_attn(
@@ -785,18 +812,60 @@ class WriterWeaverHead(ManagedMemoryModule):
             current_slots = self.context_attn_norm(
                 context_attended + (self.context_query_residual_scale * current_slots)
             )
+        support_attention_weights = None
         if support_states is not None and stimulus_mode in {"support_only", "support_and_context"}:
-            support_attended, _ = self.support_cross_attn(
+            support_attended, support_attention_weights = self.support_cross_attn(
                 query=current_slots,
                 key=support_states,
                 value=support_states,
                 key_padding_mask=support_key_padding_mask,
-                need_weights=False,
+                need_weights=bool(collect_support_diagnostics),
+                average_attn_weights=False,
             )
             current_slots = self.support_attn_norm(
                 support_attended + (self.support_query_residual_scale * current_slots)
             )
-        return current_slots
+        return current_slots, support_attention_weights
+
+    def enable_aux_projection_head(
+        self,
+        *,
+        projection_dim: int,
+        hidden_dim: int | None = None,
+    ) -> None:
+        if projection_dim <= 0:
+            raise ValueError(
+                f"WriterWeaverHead aux projection_dim must be positive, got {projection_dim}."
+            )
+        self.aux_projection_head = WriterAuxProjectionHead(
+            input_dim=self.embed_dim,
+            projection_dim=int(projection_dim),
+            hidden_dim=hidden_dim,
+        )
+
+    def project_auxiliary(
+        self,
+        slots: torch.Tensor,
+        *,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
+        if self.aux_projection_head is None:
+            raise RuntimeError("WriterWeaverHead auxiliary projection head is not enabled.")
+        if slots.ndim != 3 or slots.shape[-1] != self.embed_dim:
+            raise ValueError(
+                f"WriterWeaverHead.project_auxiliary expected [batch, slots, {self.embed_dim}] input, "
+                f"got {tuple(slots.shape)}."
+            )
+        if reduction == "mean":
+            inputs = slots.mean(dim=1)
+        elif reduction == "slots":
+            inputs = slots
+        else:
+            raise ValueError(
+                f"Unsupported WriterWeaverHead auxiliary reduction={reduction}. "
+                "Expected one of mean, slots."
+            )
+        return self.aux_projection_head(inputs)
 
     def write(
         self,
@@ -806,7 +875,8 @@ class WriterWeaverHead(ManagedMemoryModule):
         stimulus_mode: str = "support_and_context",
         context_key_padding_mask: torch.Tensor | None = None,
         support_key_padding_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_diagnostics: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if stimulus_mode not in {"support_only", "context_only", "support_and_context"}:
             raise ValueError(
                 f"Unsupported WriterWeaverHead stimulus_mode={stimulus_mode}. "
@@ -827,16 +897,20 @@ class WriterWeaverHead(ManagedMemoryModule):
             raise ValueError("WriterWeaverHead requires at least one stimulus source.")
         batch_size = int(source_state.shape[0])
         slots = self.slot_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-        current_slots = self._apply_conditioning_layer(
+        support_attention_by_layer: dict[str, torch.Tensor] = {}
+        current_slots, support_attention = self._apply_conditioning_layer(
             slots,
             context_states=normalized_context,
             support_states=normalized_support,
             stimulus_mode=stimulus_mode,
             context_key_padding_mask=context_key_padding_mask,
             support_key_padding_mask=support_key_padding_mask,
+            collect_support_diagnostics=return_diagnostics,
         )
+        if support_attention is not None:
+            support_attention_by_layer["0"] = support_attention
         for block in self.extra_conditioning_blocks:
-            current_slots = block(
+            current_slots, support_attention = block(
                 current_slots,
                 context_states=normalized_context,
                 support_states=normalized_support,
@@ -845,11 +919,16 @@ class WriterWeaverHead(ManagedMemoryModule):
                 support_key_padding_mask=support_key_padding_mask,
                 context_query_residual_scale=self.context_query_residual_scale,
                 support_query_residual_scale=self.support_query_residual_scale,
+                collect_support_diagnostics=return_diagnostics,
             )
+            if support_attention is not None:
+                support_attention_by_layer[str(len(support_attention_by_layer))] = support_attention
         encoded = self.output_norm(self.encoder(current_slots))
         if self.output_slot_basis_scale != 0.0:
             encoded = encoded + (self.output_slot_basis_scale * slots)
-        return encoded
+        if not return_diagnostics:
+            return encoded
+        return encoded, {"support_attention_weights_by_layer": support_attention_by_layer}
 
 
 class MemoryReader(ManagedMemoryModule):

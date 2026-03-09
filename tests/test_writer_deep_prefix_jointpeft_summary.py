@@ -238,7 +238,7 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
             self.assertFalse(summary["p2a_usefulness_positive_any_nonfever"])
             self.assertIn("comparison_conclusion: move_to_writer_direct_validation", report)
 
-    def test_jointpeft_summary_moves_to_layer_expansion_when_attention_is_weak(self) -> None:
+    def test_jointpeft_summary_uses_post_unfreeze_windows(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script_path = repo_root / "scripts" / "update_writer_deep_prefix_jointpeft_summary.py"
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -253,6 +253,35 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
                 path = tmp_path / name
                 payload = [{"step": index, "loss": loss} for index, loss in enumerate(losses, start=1)]
                 path.write_text(json.dumps(payload, indent=2) + "\n")
+                return path
+
+            def write_writer_events(name: str, *, task_loss_start: float, task_loss_end: float) -> Path:
+                path = tmp_path / name
+                payload: list[dict[str, object]] = []
+                for step in range(1, 121):
+                    frozen = step <= 50
+                    step_fraction = (step - 1) / 119.0
+                    loss = task_loss_start + ((task_loss_end - task_loss_start) * step_fraction)
+                    payload.append(
+                        {
+                            "step": step,
+                            "loss": loss,
+                            "writer_frozen": frozen,
+                            "grad_norm_writer": 0.0 if frozen else 0.02,
+                            "grad_norm_projector": 0.0 if frozen else 0.05,
+                            "grad_norm_receiver_lora": 0.0 if frozen else 0.03,
+                            "grad_probe_writer_task_only_norm": 0.0 if frozen else 0.015,
+                            "grad_probe_writer_aux_only_norm": 0.0 if frozen else 0.01,
+                            "grad_probe_writer_total_norm": 0.0 if frozen else 0.05,
+                            "grad_probe_writer_task_aux_cosine": 0.0 if frozen else 0.1,
+                            "grad_probe_writer_task_total_cosine": 0.0 if frozen else 0.4,
+                            "grad_probe_writer_aux_total_cosine": 0.0 if frozen else 0.3,
+                            "was_grad_clipped_writer": False,
+                            "was_grad_clipped_projector": False,
+                            "was_grad_clipped_receiver_lora": False,
+                        }
+                    )
+                path.write_text(json.dumps({"events": payload}, indent=2) + "\n")
                 return path
 
             def write_case_dump(name: str, deltas: list[float]) -> Path:
@@ -288,17 +317,22 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
                     "best_adapt_exact_match": exact_match,
                     "delta_answer_logprob": delta_answer_logprob,
                     "prefix_attention_mass_mean": prefix_attention_mass_mean,
-                    "prefix_attention_mass_mean_by_layer": {"0": prefix_attention_mass_mean},
+                    "prefix_attention_mass_mean_by_layer": {
+                        "0": prefix_attention_mass_mean,
+                        "1": prefix_attention_mass_mean * 0.8,
+                    },
                     "projected_memory_effective_rank": 10.0,
-                    "memory_long_common_mode_energy_ratio": 0.6,
+                    "memory_long_common_mode_energy_ratio": 0.999999,
                     "train_loss_steps_1_50_median": 9.0,
                     "train_loss_steps_451_500_median": 3.0,
-                    "train_grad_norm_writer_steps_1_50_median": 0.02,
+                    "train_grad_norm_writer_steps_1_50_median": 0.0,
                     "train_grad_norm_writer_steps_451_500_median": 0.01,
-                    "train_grad_norm_projector_steps_1_50_median": 0.05,
+                    "train_grad_norm_projector_steps_1_50_median": 0.0,
                     "train_grad_norm_projector_steps_451_500_median": 0.02,
-                    "train_grad_norm_receiver_lora_steps_1_50_median": 0.03,
+                    "train_grad_norm_receiver_lora_steps_1_50_median": 0.0,
                     "train_grad_norm_receiver_lora_steps_451_500_median": 0.01,
+                    "train_final_support_state_effective_rank": 1.0,
+                    "train_final_memory_long_effective_rank": 1.0,
                     "task_case_dump_path": str(case_dump_path.resolve()),
                 }
 
@@ -371,6 +405,21 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
                     prefix_attention_mass_mean=0.006,
                 ),
             )
+            gsm8k_writer_events = write_writer_events(
+                "gsm8k-writer-events.json",
+                task_loss_start=9.0,
+                task_loss_end=3.0,
+            )
+            narrativeqa_writer_events = write_writer_events(
+                "narrativeqa-writer-events.json",
+                task_loss_start=10.0,
+                task_loss_end=4.0,
+            )
+            fever_writer_events = write_writer_events(
+                "fever-writer-events.json",
+                task_loss_start=6.0,
+                task_loss_end=2.0,
+            )
 
             output_json = tmp_path / "jointpeft-summary.json"
             output_report = tmp_path / "jointpeft-summary.md"
@@ -386,14 +435,20 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
                     str(gsm8k_control),
                     "--gsm8k_writer_metrics_json",
                     str(gsm8k_writer),
+                    "--gsm8k_writer_train_events_json",
+                    str(gsm8k_writer_events),
                     "--narrativeqa_control_metrics_json",
                     str(narrativeqa_control),
                     "--narrativeqa_writer_metrics_json",
                     str(narrativeqa_writer),
+                    "--narrativeqa_writer_train_events_json",
+                    str(narrativeqa_writer_events),
                     "--fever_control_metrics_json",
                     str(fever_control),
                     "--fever_writer_metrics_json",
                     str(fever_writer),
+                    "--fever_writer_train_events_json",
+                    str(fever_writer_events),
                     "--output_json",
                     str(output_json),
                     "--output_report",
@@ -405,10 +460,183 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
 
             summary = json.loads(output_json.read_text())
             report = output_report.read_text()
-            self.assertEqual(summary["comparison_conclusion"], "move_to_layer_expansion_comparator")
-            self.assertEqual(summary["recommended_next_step"], "run_deeper_layer_comparator")
-            self.assertTrue(summary["move_to_layer_expansion_comparator"])
+            self.assertEqual(summary["comparison_conclusion"], "move_to_support_screening")
+            self.assertEqual(summary["recommended_next_step"], "run_support_interface_screen")
+            self.assertTrue(summary["move_to_support_screening"])
             self.assertFalse(summary["any_nonfever_usefulness_positive"])
             self.assertTrue(summary["source_stub_health"]["route_live"])
             self.assertEqual(summary["source_stub_health"]["delta_answer_logprob"], 0.0)
-            self.assertIn("comparison_conclusion: move_to_layer_expansion_comparator", report)
+            self.assertTrue(summary["gsm8k"]["route_live_post_unfreeze"])
+            self.assertTrue(summary["gsm8k"]["writer_task_supervision_live"])
+            self.assertIn("comparison_conclusion: move_to_support_screening", report)
+
+    def test_jointpeft_summary_classification_usefulness_does_not_require_positive_mean_delta(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script_path = repo_root / "scripts" / "update_writer_deep_prefix_jointpeft_summary.py"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            def write_json(name: str, payload: dict[str, object]) -> Path:
+                path = tmp_path / name
+                path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+                return path
+
+            def write_events(name: str) -> Path:
+                path = tmp_path / name
+                payload = {
+                    "events": [
+                        {
+                            "step": step,
+                            "loss": 6.0 - (0.04 * step),
+                            "writer_frozen": step <= 10,
+                            "grad_norm_writer": 0.0 if step <= 10 else 0.02,
+                            "grad_norm_projector": 0.0 if step <= 10 else 0.05,
+                            "grad_norm_receiver_lora": 0.0 if step <= 10 else 0.03,
+                            "grad_probe_writer_task_only_norm": 0.0 if step <= 10 else 0.02,
+                            "grad_probe_writer_aux_only_norm": 0.0 if step <= 10 else 0.01,
+                            "grad_probe_writer_total_norm": 0.0 if step <= 10 else 0.04,
+                            "grad_probe_writer_task_aux_cosine": 0.0 if step <= 10 else 0.2,
+                            "grad_probe_writer_task_total_cosine": 0.0 if step <= 10 else 0.5,
+                            "grad_probe_writer_aux_total_cosine": 0.0 if step <= 10 else 0.4,
+                            "was_grad_clipped_writer": False,
+                            "was_grad_clipped_projector": False,
+                            "was_grad_clipped_receiver_lora": False,
+                        }
+                        for step in range(1, 61)
+                    ]
+                }
+                path.write_text(json.dumps(payload, indent=2) + "\n")
+                return path
+
+            def write_rows(name: str, rows: list[dict[str, object]]) -> Path:
+                path = tmp_path / name
+                path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+                return path
+
+            source_stub_metrics = write_json(
+                "source-stub-health-metrics.json",
+                {
+                    "delta_answer_logprob": 0.0,
+                    "prefix_attention_mass_mean": 0.004,
+                    "prefix_attention_mass_mean_by_layer": {"0": 0.004},
+                    "train_grad_norm_source_stub_steps_1_4_median": 0.02,
+                    "train_grad_norm_receiver_lora_steps_1_4_median": 0.5,
+                    "train_loss_steps_1_50_median": 7.5,
+                    "train_loss_tail_50_steps_median": 5.0,
+                },
+            )
+            source_stub_events = write_json(
+                "source-stub-health-events.json",
+                {"events": [{"step": 1, "loss": 7.5}, {"step": 2, "loss": 5.0}]},
+            )
+            control_rows = write_rows(
+                "fever-control.jsonl",
+                [
+                    {
+                        "example_id": "1",
+                        "predicted_label": "REFUTES",
+                        "gold_label": "SUPPORTS",
+                        "predicted_correct": False,
+                        "final_margin": -0.5,
+                    },
+                    {
+                        "example_id": "2",
+                        "predicted_label": "REFUTES",
+                        "gold_label": "REFUTES",
+                        "predicted_correct": True,
+                        "final_margin": 0.1,
+                    },
+                ],
+            )
+            writer_rows = write_rows(
+                "fever-writer.jsonl",
+                [
+                    {
+                        "example_id": "1",
+                        "predicted_label": "SUPPORTS",
+                        "gold_label": "SUPPORTS",
+                        "predicted_correct": True,
+                        "final_margin": 0.3,
+                        "delta_answer_logprob": 0.0,
+                    },
+                    {
+                        "example_id": "2",
+                        "predicted_label": "REFUTES",
+                        "gold_label": "REFUTES",
+                        "predicted_correct": True,
+                        "final_margin": 0.2,
+                        "delta_answer_logprob": 0.0,
+                    },
+                ],
+            )
+
+            def metrics(*, task_score: float, case_dump_path: Path) -> dict[str, object]:
+                return {
+                    "benchmark_id": "fever",
+                    "task_name": "fever",
+                    "task_metric_name": "accuracy",
+                    "best_adapt_task_score": task_score,
+                    "best_adapt_exact_match": task_score,
+                    "delta_answer_logprob": 0.0,
+                    "prefix_attention_mass_mean": 0.02,
+                    "prefix_attention_mass_mean_by_layer": {"0": 0.02, "1": 0.02},
+                    "projected_memory_effective_rank": 6.0,
+                    "memory_long_common_mode_energy_ratio": 0.95,
+                    "train_final_support_state_effective_rank": 1.4,
+                    "train_final_memory_long_effective_rank": 1.8,
+                    "task_case_dump_path": str(case_dump_path.resolve()),
+                }
+
+            fever_control = write_json("fever-control.json", metrics(task_score=0.5, case_dump_path=control_rows))
+            fever_writer = write_json("fever-writer.json", metrics(task_score=1.0, case_dump_path=writer_rows))
+            writer_events = write_events("fever-writer-events.json")
+
+            shared_control = write_json("shared-control.json", metrics(task_score=0.0, case_dump_path=writer_rows))
+            shared_writer = write_json("shared-writer.json", metrics(task_score=0.0, case_dump_path=writer_rows))
+
+            output_json = tmp_path / "summary.json"
+            output_report = tmp_path / "summary.md"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--source_stub_health_metrics_json",
+                    str(source_stub_metrics),
+                    "--source_stub_health_train_events_json",
+                    str(source_stub_events),
+                    "--gsm8k_control_metrics_json",
+                    str(shared_control),
+                    "--gsm8k_writer_metrics_json",
+                    str(shared_writer),
+                    "--gsm8k_writer_train_events_json",
+                    str(writer_events),
+                    "--narrativeqa_control_metrics_json",
+                    str(shared_control),
+                    "--narrativeqa_writer_metrics_json",
+                    str(shared_writer),
+                    "--narrativeqa_writer_train_events_json",
+                    str(writer_events),
+                    "--fever_control_metrics_json",
+                    str(fever_control),
+                    "--fever_writer_metrics_json",
+                    str(fever_writer),
+                    "--fever_writer_train_events_json",
+                    str(writer_events),
+                    "--post_unfreeze_window",
+                    "20",
+                    "--tail_window",
+                    "20",
+                    "--output_json",
+                    str(output_json),
+                    "--output_report",
+                    str(output_report),
+                ],
+                cwd=repo_root,
+                check=True,
+            )
+
+            summary = json.loads(output_json.read_text())
+            self.assertTrue(summary["fever"]["usefulness_positive_v6"])
+            self.assertEqual(summary["fever"]["delta_answer_logprob"], 0.0)
+            self.assertGreater(summary["fever"]["margin_delta_mean"], 0.0)
+            self.assertGreater(summary["fever"]["correct_flip_count"], 0.0)

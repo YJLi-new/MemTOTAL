@@ -36,7 +36,12 @@ from memtotal.analysis.m4_shared_injection import (
     _v0_forensics_summary,
 )
 from memtotal.models.backbone import MicroLoRALinear
-from memtotal.models.memory import MemoryFuser, MemoryWriter, WriterWeaverHead
+from memtotal.models.memory import (
+    MemoryFuser,
+    MemoryWriter,
+    WriterAuxProjectionHead,
+    WriterWeaverHead,
+)
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     SharedLowRankDeepPrefixProjector,
@@ -48,8 +53,10 @@ from memtotal.training.m4_shared_injection import (
     _build_support_text_block,
     _candidate_payload,
     _class_entropy,
+    _clip_parameter_group,
     _choice_task_loss,
     _classification_metrics_from_rows,
+    _collect_gradient_probe,
     _conditioned_query_orthogonality_loss,
     _effective_rank,
     _latent_anchor_loss,
@@ -150,6 +157,34 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertEqual(len(writer.extra_conditioning_blocks), 2)
         self.assertEqual(list(outputs.shape), [1, 4, 6])
 
+    def test_writer_weaver_head_can_return_support_attention_diagnostics(self) -> None:
+        writer = WriterWeaverHead(
+            embed_dim=6,
+            memory_slots=4,
+            hidden_dim=12,
+            num_heads=2,
+            transformer_layers=1,
+            conditioning_layers=2,
+        )
+        encoded, diagnostics = writer.write(
+            context_states=torch.randn(1, 3, 6),
+            support_states=torch.randn(1, 5, 6),
+            stimulus_mode="support_and_context",
+            return_diagnostics=True,
+        )
+        self.assertEqual(list(encoded.shape), [1, 4, 6])
+        self.assertIn("support_attention_weights_by_layer", diagnostics)
+        support_attention = diagnostics["support_attention_weights_by_layer"]
+        self.assertIn("0", support_attention)
+        self.assertEqual(list(support_attention["0"].shape), [1, 2, 4, 5])
+
+    def test_writer_aux_projection_head_normalizes_outputs(self) -> None:
+        head = WriterAuxProjectionHead(input_dim=6, projection_dim=4, hidden_dim=8)
+        outputs = head(torch.randn(3, 6))
+        norms = outputs.norm(dim=-1)
+        self.assertEqual(list(outputs.shape), [3, 4])
+        self.assertTrue(torch.allclose(norms, torch.ones_like(norms), atol=1e-5))
+
     def test_writer_weaver_head_supports_writer_micro_lora(self) -> None:
         writer = WriterWeaverHead(
             embed_dim=6,
@@ -186,6 +221,31 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         writer.set_writer_lora_trainable(True)
         self.assertFalse(writer.slot_embeddings.requires_grad)
         self.assertTrue(all(parameter.requires_grad for parameter in writer.writer_lora_parameters()))
+
+    def test_collect_gradient_probe_separates_task_and_aux_terms(self) -> None:
+        parameter = torch.nn.Parameter(torch.tensor([1.0, -2.0], dtype=torch.float32))
+        task_loss = (parameter ** 2).sum()
+        aux_loss = (-parameter).sum()
+        total_loss = task_loss + aux_loss
+        probe = _collect_gradient_probe(
+            enabled=True,
+            module_parameters={"writer": [parameter]},
+            task_loss=task_loss,
+            aux_loss=aux_loss,
+            total_loss=total_loss,
+        )
+        self.assertGreater(probe["grad_probe_writer_task_only_norm"], 0.0)
+        self.assertGreater(probe["grad_probe_writer_aux_only_norm"], 0.0)
+        self.assertGreater(probe["grad_probe_writer_total_norm"], 0.0)
+        self.assertLessEqual(abs(probe["grad_probe_writer_task_aux_cosine"]), 1.0)
+        self.assertLessEqual(abs(probe["grad_probe_writer_task_total_cosine"]), 1.0)
+
+    def test_clip_parameter_group_reports_when_threshold_is_exceeded(self) -> None:
+        parameter = torch.nn.Parameter(torch.tensor([3.0, 4.0], dtype=torch.float32))
+        parameter.grad = torch.tensor([3.0, 4.0], dtype=torch.float32)
+        total_norm, was_clipped = _clip_parameter_group([parameter], max_norm=1.0)
+        self.assertGreater(total_norm, 1.0)
+        self.assertTrue(was_clipped)
 
     def test_support_text_block_respects_modes_and_triad_variant(self) -> None:
         support_rows = [

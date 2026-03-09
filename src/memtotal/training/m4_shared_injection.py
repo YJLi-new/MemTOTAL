@@ -70,6 +70,7 @@ class PrefixInjectionArtifacts:
     prefix_embeddings: torch.Tensor | None
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None
     prefix_stats: dict[str, Any]
+    writer_diagnostics: dict[str, Any] | None = None
     memory_slots: torch.Tensor | None = None
     support_item_states: torch.Tensor | None = None
     writer_support_states: torch.Tensor | None = None
@@ -613,6 +614,52 @@ def _resolve_writer_gain_margin_weight(config: dict[str, Any]) -> float:
 
 def _resolve_writer_covariance_diversity_weight(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_writer_covariance_diversity_weight", 0.0))
+
+
+def _resolve_gradient_probe_enabled(config: dict[str, Any]) -> bool:
+    return bool(config["runtime"].get("pilot_gradient_probe_enabled", False))
+
+
+def _resolve_gradient_probe_interval(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("pilot_gradient_probe_interval", 1)))
+
+
+def _resolve_gradient_probe_max_steps(config: dict[str, Any]) -> int:
+    return max(0, int(config["runtime"].get("pilot_gradient_probe_max_steps", 0)))
+
+
+def _resolve_gradient_probe_modules(config: dict[str, Any]) -> tuple[str, ...]:
+    raw_modules = config["runtime"].get("pilot_gradient_probe_modules", ("writer",))
+    if isinstance(raw_modules, str):
+        modules = tuple(
+            module_name.strip() for module_name in raw_modules.split(",") if module_name.strip()
+        )
+    else:
+        modules = tuple(str(module_name) for module_name in raw_modules)
+    supported = {"writer", "support_encoder", "projector", "receiver_lora", "source_stub"}
+    unsupported = sorted(set(modules) - supported)
+    if unsupported:
+        raise ValueError(
+            f"Unsupported runtime.pilot_gradient_probe_modules={unsupported}. "
+            "Expected only writer, support_encoder, projector, receiver_lora, and/or source_stub."
+        )
+    return modules
+
+
+def _resolve_groupwise_grad_clip(config: dict[str, Any]) -> bool:
+    return bool(config["runtime"].get("pilot_groupwise_grad_clip", False))
+
+
+def _resolve_projector_grad_clip_norm(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_projector_grad_clip_norm", 0.0))
+
+
+def _resolve_writer_grad_clip_norm(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_grad_clip_norm", 0.0))
+
+
+def _resolve_receiver_lora_grad_clip_norm(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_receiver_lora_grad_clip_norm", 0.0))
 
 
 def _resolve_writer_adapter_enabled(config: dict[str, Any]) -> bool:
@@ -1363,6 +1410,92 @@ def _prefix_scalar_summary(prefix_stats: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def _normalized_entropy(values: torch.Tensor) -> torch.Tensor:
+    safe_values = values.to(dtype=torch.float32).clamp_min(1e-8)
+    entropy = -(safe_values * safe_values.log()).sum(dim=-1)
+    item_count = int(safe_values.shape[-1]) if safe_values.ndim > 0 else 0
+    if item_count <= 1:
+        return torch.zeros_like(entropy)
+    return entropy / math.log(float(item_count))
+
+
+def _writer_support_attention_stats(
+    *,
+    writer_diagnostics: dict[str, Any] | None,
+    support_item_states: torch.Tensor | None,
+) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "support_item_effective_rank": _effective_rank(support_item_states),
+        "support_item_pairwise_cosine_mean": _pairwise_cosine_mean(support_item_states),
+        "writer_support_attention_entropy_mean": 0.0,
+        "writer_support_attention_top_mass_mean": 0.0,
+        "writer_support_attention_item_coverage_entropy_mean": 0.0,
+        "writer_support_attention_distinct_top_items_mean": 0.0,
+        "writer_support_attention_entropy_mean_by_layer": {},
+        "writer_support_attention_top_mass_mean_by_layer": {},
+        "writer_support_attention_item_coverage_entropy_mean_by_layer": {},
+        "writer_support_attention_distinct_top_items_mean_by_layer": {},
+    }
+    if not writer_diagnostics:
+        return stats
+    raw_by_layer = writer_diagnostics.get("support_attention_weights_by_layer", {})
+    if not isinstance(raw_by_layer, dict) or not raw_by_layer:
+        return stats
+    entropy_by_layer: dict[str, float] = {}
+    top_mass_by_layer: dict[str, float] = {}
+    coverage_entropy_by_layer: dict[str, float] = {}
+    distinct_top_items_by_layer: dict[str, float] = {}
+    for layer_key, raw_attention in raw_by_layer.items():
+        if not isinstance(raw_attention, torch.Tensor) or raw_attention.numel() == 0:
+            continue
+        attention = raw_attention.detach().to(dtype=torch.float32)
+        if attention.ndim == 4:
+            attention = attention.mean(dim=1)
+        if attention.ndim != 3:
+            continue
+        attention = attention.clamp_min(0.0)
+        attention = attention / attention.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        slot_entropy = _normalized_entropy(attention).mean()
+        top_mass = attention.max(dim=-1).values.mean()
+        coverage = attention.mean(dim=1)
+        coverage = coverage / coverage.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        coverage_entropy = _normalized_entropy(coverage).mean()
+        distinct_top_items: list[float] = []
+        top_item_indices = attention.argmax(dim=-1)
+        for batch_index in range(int(top_item_indices.shape[0])):
+            distinct_count = torch.unique(top_item_indices[batch_index]).numel()
+            distinct_top_items.append(float(distinct_count))
+        entropy_by_layer[str(layer_key)] = float(slot_entropy.item())
+        top_mass_by_layer[str(layer_key)] = float(top_mass.item())
+        coverage_entropy_by_layer[str(layer_key)] = float(coverage_entropy.item())
+        distinct_top_items_by_layer[str(layer_key)] = float(
+            sum(distinct_top_items) / max(1, len(distinct_top_items))
+        )
+    if not entropy_by_layer:
+        return stats
+    stats.update(
+        {
+            "writer_support_attention_entropy_mean": float(
+                sum(entropy_by_layer.values()) / len(entropy_by_layer)
+            ),
+            "writer_support_attention_top_mass_mean": float(
+                sum(top_mass_by_layer.values()) / len(top_mass_by_layer)
+            ),
+            "writer_support_attention_item_coverage_entropy_mean": float(
+                sum(coverage_entropy_by_layer.values()) / len(coverage_entropy_by_layer)
+            ),
+            "writer_support_attention_distinct_top_items_mean": float(
+                sum(distinct_top_items_by_layer.values()) / len(distinct_top_items_by_layer)
+            ),
+            "writer_support_attention_entropy_mean_by_layer": entropy_by_layer,
+            "writer_support_attention_top_mass_mean_by_layer": top_mass_by_layer,
+            "writer_support_attention_item_coverage_entropy_mean_by_layer": coverage_entropy_by_layer,
+            "writer_support_attention_distinct_top_items_mean_by_layer": distinct_top_items_by_layer,
+        }
+    )
+    return stats
+
+
 def _prefix_stats(
     prefix_embeddings: torch.Tensor | None = None,
     *,
@@ -1379,6 +1512,7 @@ def _prefix_stats(
     reader_attention_logits: torch.Tensor | None = None,
     reader_value_projected_slots: torch.Tensor | None = None,
     reader_readouts: torch.Tensor | None = None,
+    writer_diagnostics: dict[str, Any] | None = None,
     fuser: MemoryFuser | None = None,
     memory_path_variant: str = "single_level",
     projector_token_source: str = "writer_slots",
@@ -1494,6 +1628,10 @@ def _prefix_stats(
         reader_value_projected_slots=reader_value_projected_slots,
         reader_readouts=reader_readouts,
     )
+    writer_support_attention_stats = _writer_support_attention_stats(
+        writer_diagnostics=writer_diagnostics,
+        support_item_states=support_item_states,
+    )
     memory_long_geometry_stats = _memory_long_geometry_stats(memory_long)
     fuser_geometry_stats = _fuser_stats(
         fuser=fuser,
@@ -1538,6 +1676,7 @@ def _prefix_stats(
                 **support_stats,
                 **writer_support_stats,
                 **writer_context_stats,
+                **writer_support_attention_stats,
                 **reader_pre_stats,
                 **reader_stats,
                 **fuser_geometry_stats,
@@ -1589,6 +1728,7 @@ def _prefix_stats(
             **support_stats,
             **writer_support_stats,
             **writer_context_stats,
+            **writer_support_attention_stats,
             **reader_pre_stats,
             **reader_stats,
             **fuser_geometry_stats,
@@ -1623,6 +1763,7 @@ def _prefix_stats(
             **support_stats,
             **writer_support_stats,
             **writer_context_stats,
+            **writer_support_attention_stats,
             **reader_pre_stats,
             **reader_stats,
             **fuser_geometry_stats,
@@ -1657,6 +1798,7 @@ def _prefix_stats(
         **support_stats,
         **writer_support_stats,
         **writer_context_stats,
+        **writer_support_attention_stats,
         **reader_pre_stats,
         **reader_stats,
         **fuser_geometry_stats,
@@ -3071,6 +3213,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         writer_support_states = None
         writer_context_states = None
         writer_context_mask = None
+        writer_diagnostics: dict[str, Any] | None = None
         if self.writer_memory_control == "zero":
             memory_long = torch.zeros(
                 1,
@@ -3098,7 +3241,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 writer_context_states, writer_context_mask = self._prompt_context_states(prompt_text)
                 if not isinstance(self.writer, WriterWeaverHead):
                     raise RuntimeError("writer_direct bridge mode requires WriterWeaverHead.")
-                memory_long = self.writer.write(
+                writer_output = self.writer.write(
                     context_states=writer_context_states,
                     support_states=writer_support_states,
                     stimulus_mode=self.writer_stimulus_mode,
@@ -3106,7 +3249,12 @@ class SharedInjectionPilotRuntime(nn.Module):
                         None if writer_context_mask is None else ~writer_context_mask.to(dtype=torch.bool)
                     ),
                     support_key_padding_mask=None,
+                    return_diagnostics=True,
                 )
+                if isinstance(writer_output, tuple):
+                    memory_long, writer_diagnostics = writer_output
+                else:
+                    memory_long = writer_output
             elif writer_support_states is not None and writer_support_states.shape[1] > 1:
                 memory_long = self.writer.write(
                     writer_support_states,
@@ -3184,6 +3332,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_attention_logits=reader_attention_logits,
                 reader_value_projected_slots=reader_value_projected_slots,
                 reader_readouts=reader_readouts,
+                writer_diagnostics=writer_diagnostics,
                 fuser=self.fuser,
                 memory_path_variant=self.memory_path_variant,
                 projector_token_source=self.projector_token_source,
@@ -3199,6 +3348,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 writer_support_states=writer_support_states,
                 writer_context_states=writer_context_states,
                 writer_context_mask=writer_context_mask,
+                writer_diagnostics=writer_diagnostics,
                 memory_long=memory_long,
                 memory_short=memory_short,
                 reader_attention=reader_attention,
@@ -3228,6 +3378,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             reader_attention_logits=reader_attention_logits,
             reader_value_projected_slots=reader_value_projected_slots,
             reader_readouts=reader_readouts,
+            writer_diagnostics=writer_diagnostics,
             fuser=self.fuser,
             memory_path_variant=self.memory_path_variant,
             projector_token_source=self.projector_token_source,
@@ -3247,6 +3398,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             writer_support_states=writer_support_states,
             writer_context_states=writer_context_states,
             writer_context_mask=writer_context_mask,
+            writer_diagnostics=writer_diagnostics,
             memory_long=memory_long,
             memory_short=memory_short,
             reader_attention=reader_attention,
@@ -3723,6 +3875,14 @@ def _parameters_grad_norm(parameters: list[nn.Parameter]) -> float:
     return float(total ** 0.5)
 
 
+def _parameters_norm(parameters: list[nn.Parameter]) -> float:
+    total = 0.0
+    for parameter in parameters:
+        value = parameter.detach().to(dtype=torch.float32)
+        total += float(torch.sum(value * value).item())
+    return float(total ** 0.5)
+
+
 def _trainable_parameter_count(module: nn.Module | None) -> int:
     if module is None:
         return 0
@@ -3737,6 +3897,136 @@ def _module_trainable(module: nn.Module | None) -> bool:
 
 def _safe_grad_ratio(numerator: float, denominator: float) -> float:
     return float(numerator / max(abs(denominator), 1e-8))
+
+
+def _gradient_probe_active(
+    *,
+    enabled: bool,
+    interval: int,
+    max_steps: int,
+    step: int,
+) -> bool:
+    if not enabled:
+        return False
+    if max_steps > 0 and step > max_steps:
+        return False
+    return ((int(step) - 1) % max(1, int(interval))) == 0
+
+
+def _autograd_grad_list(
+    loss: torch.Tensor | None,
+    *,
+    parameters: list[nn.Parameter],
+) -> list[torch.Tensor | None]:
+    if loss is None or not parameters:
+        return []
+    if not loss.requires_grad:
+        return [None for _ in parameters]
+    gradients = torch.autograd.grad(
+        loss,
+        parameters,
+        retain_graph=True,
+        allow_unused=True,
+    )
+    return [
+        None if grad is None else grad.detach().to(dtype=torch.float32)
+        for grad in gradients
+    ]
+
+
+def _grad_list_norm(gradients: list[torch.Tensor | None]) -> float:
+    total = 0.0
+    for grad in gradients:
+        if grad is None:
+            continue
+        total += float(torch.sum(grad * grad).item())
+    return float(total ** 0.5)
+
+
+def _grad_list_cosine(
+    gradients_a: list[torch.Tensor | None],
+    gradients_b: list[torch.Tensor | None],
+) -> float:
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for grad_a, grad_b in zip(gradients_a, gradients_b, strict=False):
+        if grad_a is not None:
+            norm_a += float(torch.sum(grad_a * grad_a).item())
+        if grad_b is not None:
+            norm_b += float(torch.sum(grad_b * grad_b).item())
+        if grad_a is None or grad_b is None:
+            continue
+        dot += float(torch.sum(grad_a * grad_b).item())
+    if norm_a <= 0.0 or norm_b <= 0.0:
+        return 0.0
+    return float(dot / max((norm_a ** 0.5) * (norm_b ** 0.5), 1e-8))
+
+
+def _gradient_probe_metrics_for_parameters(
+    *,
+    task_loss: torch.Tensor,
+    aux_loss: torch.Tensor | None,
+    total_loss: torch.Tensor,
+    parameters: list[nn.Parameter],
+) -> dict[str, float]:
+    if not parameters:
+        return {
+            "task_only_norm": 0.0,
+            "aux_only_norm": 0.0,
+            "total_norm": 0.0,
+            "task_aux_cosine": 0.0,
+            "task_total_cosine": 0.0,
+            "aux_total_cosine": 0.0,
+        }
+    task_grads = _autograd_grad_list(task_loss, parameters=parameters)
+    aux_grads = _autograd_grad_list(aux_loss, parameters=parameters)
+    total_grads = _autograd_grad_list(total_loss, parameters=parameters)
+    return {
+        "task_only_norm": _grad_list_norm(task_grads),
+        "aux_only_norm": _grad_list_norm(aux_grads),
+        "total_norm": _grad_list_norm(total_grads),
+        "task_aux_cosine": _grad_list_cosine(task_grads, aux_grads),
+        "task_total_cosine": _grad_list_cosine(task_grads, total_grads),
+        "aux_total_cosine": _grad_list_cosine(aux_grads, total_grads),
+    }
+
+
+def _gradient_probe_defaults(module_names: tuple[str, ...]) -> dict[str, float]:
+    defaults: dict[str, float] = {}
+    for module_name in module_names:
+        defaults[f"grad_probe_{module_name}_task_only_norm"] = 0.0
+        defaults[f"grad_probe_{module_name}_aux_only_norm"] = 0.0
+        defaults[f"grad_probe_{module_name}_total_norm"] = 0.0
+        defaults[f"grad_probe_{module_name}_task_aux_cosine"] = 0.0
+        defaults[f"grad_probe_{module_name}_task_total_cosine"] = 0.0
+        defaults[f"grad_probe_{module_name}_aux_total_cosine"] = 0.0
+    return defaults
+
+
+def _collect_gradient_probe(
+    *,
+    enabled: bool,
+    module_parameters: dict[str, list[nn.Parameter]],
+    task_loss: torch.Tensor,
+    aux_loss: torch.Tensor | None,
+    total_loss: torch.Tensor,
+) -> dict[str, float]:
+    module_names = tuple(module_parameters)
+    defaults = _gradient_probe_defaults(module_names)
+    if not enabled:
+        return defaults
+    probe: dict[str, float] = dict(defaults)
+    for module_name, parameters in module_parameters.items():
+        metrics = _gradient_probe_metrics_for_parameters(
+            task_loss=task_loss,
+            aux_loss=aux_loss,
+            total_loss=total_loss,
+            parameters=parameters,
+        )
+        for metric_name, value in metrics.items():
+            probe[f"grad_probe_{module_name}_{metric_name}"] = float(value)
+    return probe
 
 
 def _learning_rate_scale(
@@ -3782,6 +4072,8 @@ def _live_train_trace_row(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "step": int(event.get("step", 0)),
         "loss": float(event.get("loss", 0.0)),
+        "task_loss": float(event.get("task_loss", 0.0)),
+        "aux_loss_total": float(event.get("aux_loss_total", 0.0)),
         "choice_ce_loss": float(event.get("choice_ce_loss", 0.0)),
         "competitor_hinge_loss": float(event.get("competitor_hinge_loss", 0.0)),
         "delta_answer_logprob": float(event.get("delta_answer_logprob", 0.0)),
@@ -3792,11 +4084,31 @@ def _live_train_trace_row(event: dict[str, Any]) -> dict[str, Any]:
         "grad_norm_writer_adapter": float(event.get("grad_norm_writer_adapter", 0.0)),
         "grad_norm_projector": float(event.get("grad_norm_projector", 0.0)),
         "grad_norm_receiver_lora": float(event.get("grad_norm_receiver_lora", 0.0)),
+        "grad_probe_writer_task_only_norm": float(
+            event.get("grad_probe_writer_task_only_norm", 0.0)
+        ),
+        "grad_probe_writer_aux_only_norm": float(
+            event.get("grad_probe_writer_aux_only_norm", 0.0)
+        ),
+        "grad_probe_writer_total_norm": float(
+            event.get("grad_probe_writer_total_norm", 0.0)
+        ),
+        "grad_probe_writer_task_total_cosine": float(
+            event.get("grad_probe_writer_task_total_cosine", 0.0)
+        ),
         "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
         "was_grad_clipped": bool(event.get("was_grad_clipped", False)),
+        "was_grad_clipped_writer": bool(event.get("was_grad_clipped_writer", False)),
+        "was_grad_clipped_projector": bool(event.get("was_grad_clipped_projector", False)),
+        "was_grad_clipped_receiver_lora": bool(
+            event.get("was_grad_clipped_receiver_lora", False)
+        ),
         "prefix_attention_mass_mean": float(event.get("prefix_attention_mass_mean", 0.0)),
         "prefix_attention_nontrivial_layer_count": int(
             event.get("prefix_attention_nontrivial_layer_count", 0)
+        ),
+        "writer_support_attention_entropy_mean": float(
+            event.get("writer_support_attention_entropy_mean", 0.0)
         ),
         "optimizer_lr_by_group": dict(event.get("optimizer_lr_by_group", {})),
     }
@@ -3823,6 +4135,61 @@ def _median_train_event_metric(
         return 0.0
     values_tensor = torch.tensor(values, dtype=torch.float32)
     return float(values_tensor.median().item())
+
+
+def _fraction_train_event_metric(
+    train_events: list[dict[str, Any]],
+    *,
+    key: str,
+    step_start: int,
+    step_end: int,
+) -> float:
+    values = [
+        bool(event.get(key, False))
+        for event in train_events
+        if step_start <= int(event.get("step", 0)) <= step_end
+    ]
+    if not values:
+        return 0.0
+    return float(sum(1 for value in values if value) / len(values))
+
+
+def _mean_absolute_step_delta(
+    train_events: list[dict[str, Any]],
+    *,
+    key: str,
+    step_start: int,
+    step_end: int,
+) -> float:
+    values = [
+        float(event.get(key, 0.0))
+        for event in train_events
+        if step_start <= int(event.get("step", 0)) <= step_end
+    ]
+    if len(values) <= 1:
+        return 0.0
+    deltas = [abs(current - previous) for previous, current in zip(values[:-1], values[1:], strict=False)]
+    return float(sum(deltas) / len(deltas))
+
+
+def _parameter_group_norm_summary(parameters: list[nn.Parameter]) -> dict[str, float]:
+    active_parameters = [parameter for parameter in parameters if parameter.grad is not None]
+    return {
+        "param_norm": _parameters_norm(parameters),
+        "grad_norm_pre_clip": _parameters_grad_norm(active_parameters),
+    }
+
+
+def _clip_parameter_group(
+    parameters: list[nn.Parameter],
+    *,
+    max_norm: float,
+) -> tuple[float, bool]:
+    active_parameters = [parameter for parameter in parameters if parameter.grad is not None]
+    if not active_parameters or max_norm <= 0.0:
+        return 0.0, False
+    total_norm = float(torch.nn.utils.clip_grad_norm_(active_parameters, max_norm).item())
+    return total_norm, bool(total_norm > (max_norm + 1e-6))
 
 
 def _prefix_attention_diagnostic_fields(
@@ -4184,6 +4551,10 @@ def run_shared_injection_pilot(
     writer_gain_margin = _resolve_writer_gain_margin(config)
     writer_gain_margin_weight = _resolve_writer_gain_margin_weight(config)
     writer_covariance_diversity_weight = _resolve_writer_covariance_diversity_weight(config)
+    gradient_probe_enabled = _resolve_gradient_probe_enabled(config)
+    gradient_probe_interval = _resolve_gradient_probe_interval(config)
+    gradient_probe_max_steps = _resolve_gradient_probe_max_steps(config)
+    gradient_probe_modules = _resolve_gradient_probe_modules(config)
     orthogonalize_writer_slot_basis = _resolve_writer_orthogonalize_slot_basis(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
@@ -4205,6 +4576,10 @@ def run_shared_injection_pilot(
     source_stub_weight_decay = _resolve_source_stub_weight_decay(config)
     receiver_lora_weight_decay = _resolve_receiver_lora_weight_decay(config)
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
+    groupwise_grad_clip = _resolve_groupwise_grad_clip(config)
+    projector_grad_clip_norm = _resolve_projector_grad_clip_norm(config)
+    writer_grad_clip_norm = _resolve_writer_grad_clip_norm(config)
+    receiver_lora_grad_clip_norm = _resolve_receiver_lora_grad_clip_norm(config)
     choice_margin = float(config["runtime"].get("stage_c_choice_margin", 0.1))
     injection_checkpoint_path = config["runtime"].get("pilot_checkpoint_path")
     if init_checkpoint_path and injection_checkpoint_path:
@@ -4670,13 +5045,15 @@ def run_shared_injection_pilot(
                 start_step=competitor_hinge_start_step,
                 ramp_steps=competitor_hinge_ramp_steps,
             )
-            loss, choice_ce_loss, competitor_hinge_loss = _task_training_loss(
+            task_loss, choice_ce_loss, competitor_hinge_loss = _task_training_loss(
                 scores,
                 train_example,
                 margin_value=choice_margin,
                 ce_weight=choice_ce_weight,
                 competitor_hinge_weight=active_competitor_hinge_weight,
             )
+            loss = task_loss
+            auxiliary_loss_terms: list[torch.Tensor] = []
             writer_gain_margin_loss = None
             delta_answer_logprob_tensor = _answer_logprob(scores, train_example.gold_index) - _answer_logprob(
                 no_memory_scores,
@@ -4689,7 +5066,11 @@ def run_shared_injection_pilot(
                     gold_index=train_example.gold_index,
                     margin_value=writer_gain_margin,
                 )
-                loss = loss + (writer_gain_margin_weight * writer_gain_margin_loss)
+                weighted_writer_gain_margin_loss = (
+                    writer_gain_margin_weight * writer_gain_margin_loss
+                )
+                auxiliary_loss_terms.append(weighted_writer_gain_margin_loss)
+                loss = loss + weighted_writer_gain_margin_loss
             active_latent_anchor_weight = _scheduled_linear_decay_weight(
                 current_step=step + 1,
                 start_weight=latent_anchor_weight_start,
@@ -4725,7 +5106,9 @@ def run_shared_injection_pilot(
                     current_memory_slots=prefix_artifacts.memory_slots,
                     reference_memory_slots=reference_memory_slots,
                 )
-                loss = loss + (active_latent_anchor_weight * latent_anchor_loss)
+                weighted_latent_anchor_loss = active_latent_anchor_weight * latent_anchor_loss
+                auxiliary_loss_terms.append(weighted_latent_anchor_loss)
+                loss = loss + weighted_latent_anchor_loss
             memory_long_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
             memory_short_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_short)
             reader_attention_diversity_loss = _reader_attention_diversity_loss(
@@ -4747,57 +5130,81 @@ def run_shared_injection_pilot(
                 prefix_artifacts.memory_long
             )
             if memory_long_diversity_weight > 0.0 and memory_long_diversity_loss is not None:
-                loss = loss + (memory_long_diversity_weight * memory_long_diversity_loss)
+                weighted_memory_long_diversity_loss = (
+                    memory_long_diversity_weight * memory_long_diversity_loss
+                )
+                auxiliary_loss_terms.append(weighted_memory_long_diversity_loss)
+                loss = loss + weighted_memory_long_diversity_loss
             if memory_short_diversity_weight > 0.0 and memory_short_diversity_loss is not None:
-                loss = loss + (memory_short_diversity_weight * memory_short_diversity_loss)
+                weighted_memory_short_diversity_loss = (
+                    memory_short_diversity_weight * memory_short_diversity_loss
+                )
+                auxiliary_loss_terms.append(weighted_memory_short_diversity_loss)
+                loss = loss + weighted_memory_short_diversity_loss
             if (
                 reader_attention_diversity_weight > 0.0
                 and reader_attention_diversity_loss is not None
             ):
-                loss = loss + (reader_attention_diversity_weight * reader_attention_diversity_loss)
+                weighted_reader_attention_diversity_loss = (
+                    reader_attention_diversity_weight * reader_attention_diversity_loss
+                )
+                auxiliary_loss_terms.append(weighted_reader_attention_diversity_loss)
+                loss = loss + weighted_reader_attention_diversity_loss
             if (
                 reader_conditioned_query_orthogonality_weight > 0.0
                 and reader_conditioned_query_orthogonality_loss is not None
             ):
-                loss = loss + (
+                weighted_reader_conditioned_query_orthogonality_loss = (
                     reader_conditioned_query_orthogonality_weight
                     * reader_conditioned_query_orthogonality_loss
                 )
+                auxiliary_loss_terms.append(weighted_reader_conditioned_query_orthogonality_loss)
+                loss = loss + weighted_reader_conditioned_query_orthogonality_loss
             if (
                 reader_short_reconstruction_weight > 0.0
                 and reader_short_reconstruction_loss is not None
             ):
-                loss = loss + (
+                weighted_reader_short_reconstruction_loss = (
                     reader_short_reconstruction_weight * reader_short_reconstruction_loss
                 )
+                auxiliary_loss_terms.append(weighted_reader_short_reconstruction_loss)
+                loss = loss + weighted_reader_short_reconstruction_loss
             if (
                 writer_slot_basis_orthogonality_weight > 0.0
                 and writer_slot_basis_orthogonality_loss is not None
             ):
-                loss = loss + (
+                weighted_writer_slot_basis_orthogonality_loss = (
                     writer_slot_basis_orthogonality_weight * writer_slot_basis_orthogonality_loss
                 )
+                auxiliary_loss_terms.append(weighted_writer_slot_basis_orthogonality_loss)
+                loss = loss + weighted_writer_slot_basis_orthogonality_loss
             if (
                 writer_slot_energy_balance_weight > 0.0
                 and writer_slot_energy_balance_loss is not None
             ):
-                loss = loss + (
+                weighted_writer_slot_energy_balance_loss = (
                     writer_slot_energy_balance_weight * writer_slot_energy_balance_loss
                 )
+                auxiliary_loss_terms.append(weighted_writer_slot_energy_balance_loss)
+                loss = loss + weighted_writer_slot_energy_balance_loss
             if (
                 writer_common_mode_penalty_weight > 0.0
                 and writer_common_mode_penalty_loss is not None
             ):
-                loss = loss + (
+                weighted_writer_common_mode_penalty_loss = (
                     writer_common_mode_penalty_weight * writer_common_mode_penalty_loss
                 )
+                auxiliary_loss_terms.append(weighted_writer_common_mode_penalty_loss)
+                loss = loss + weighted_writer_common_mode_penalty_loss
             if (
                 writer_covariance_diversity_weight > 0.0
                 and writer_covariance_diversity_loss is not None
             ):
-                loss = loss + (
+                weighted_writer_covariance_diversity_loss = (
                     writer_covariance_diversity_weight * writer_covariance_diversity_loss
                 )
+                auxiliary_loss_terms.append(weighted_writer_covariance_diversity_loss)
+                loss = loss + weighted_writer_covariance_diversity_loss
             active_alignment_aux_weight = _active_competitor_hinge_weight(
                 current_step=step + 1,
                 max_weight=alignment_aux_weight_max,
@@ -4847,7 +5254,68 @@ def run_shared_injection_pilot(
                     and active_alignment_aux_weight > 0.0
                     and alignment_aux_loss is not None
                 ):
-                    loss = loss + (active_alignment_aux_weight * alignment_aux_loss)
+                    weighted_alignment_aux_loss = active_alignment_aux_weight * alignment_aux_loss
+                    auxiliary_loss_terms.append(weighted_alignment_aux_loss)
+                    loss = loss + weighted_alignment_aux_loss
+            aux_loss_total = (
+                torch.stack(auxiliary_loss_terms).sum()
+                if auxiliary_loss_terms
+                else None
+            )
+            probe_step_active = _gradient_probe_active(
+                enabled=gradient_probe_enabled,
+                interval=gradient_probe_interval,
+                max_steps=gradient_probe_max_steps,
+                step=step + 1,
+            )
+            gradient_probe_payload = _collect_gradient_probe(
+                enabled=probe_step_active,
+                module_parameters={
+                    module_name: parameters
+                    for module_name, parameters in {
+                        "writer": [
+                            parameter
+                            for parameter in (
+                                runtime.writer_base_parameters()
+                                + runtime.writer_adapter_parameters()
+                            )
+                            if parameter.requires_grad
+                        ],
+                        "support_encoder": [
+                            parameter
+                            for parameter in (
+                                []
+                                if runtime.support_encoder is None
+                                else list(runtime.support_encoder.parameters())
+                            )
+                            if parameter.requires_grad
+                        ],
+                        "projector": [
+                            parameter
+                            for parameter in runtime.prefix_projector.parameters()
+                            if parameter.requires_grad
+                        ],
+                        "receiver_lora": [
+                            parameter
+                            for parameter in getattr(
+                                runtime.backbone,
+                                "receiver_lora_parameters",
+                                lambda: [],
+                            )()
+                            if parameter.requires_grad
+                        ],
+                        "source_stub": [
+                            parameter
+                            for parameter in runtime.source_stub_parameters()
+                            if parameter.requires_grad
+                        ],
+                    }.items()
+                    if module_name in gradient_probe_modules
+                },
+                task_loss=task_loss,
+                aux_loss=aux_loss_total,
+                total_loss=loss,
+            )
             loss.backward()
             source_stub_grad_norm = _grad_norm(runtime.source_stub)
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
@@ -4879,19 +5347,133 @@ def run_shared_injection_pilot(
                 receiver_lora_grad_norm,
                 reader_grad_norm,
             )
-            total_grad_norm = 0.0
+            writer_group_parameters = [
+                parameter
+                for parameter in (
+                    writer_base_parameters
+                    + writer_adapter_parameters
+                    + ([] if runtime.support_encoder is None else list(runtime.support_encoder.parameters()))
+                )
+                if parameter.requires_grad
+            ]
+            projector_group_parameters = [
+                parameter
+                for parameter in runtime.prefix_projector.parameters()
+                if parameter.requires_grad
+            ]
+            receiver_lora_group_parameters = [
+                parameter
+                for parameter in getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])()
+                if parameter.requires_grad
+            ]
+            source_stub_group_parameters = [
+                parameter for parameter in source_stub_parameters if parameter.requires_grad
+            ]
+            reader_group_parameters = [
+                parameter
+                for parameter in ([] if runtime.reader is None else list(runtime.reader.parameters()))
+                if parameter.requires_grad
+            ]
+            fuser_group_parameters = [
+                parameter
+                for parameter in ([] if runtime.fuser is None else list(runtime.fuser.parameters()))
+                if parameter.requires_grad
+            ]
+            writer_group_summary = _parameter_group_norm_summary(writer_group_parameters)
+            projector_group_summary = _parameter_group_norm_summary(projector_group_parameters)
+            receiver_lora_group_summary = _parameter_group_norm_summary(receiver_lora_group_parameters)
+            source_stub_group_summary = _parameter_group_norm_summary(source_stub_group_parameters)
+            reader_group_summary = _parameter_group_norm_summary(reader_group_parameters)
+            fuser_group_summary = _parameter_group_norm_summary(fuser_group_parameters)
+            writer_clip_limit = (
+                writer_grad_clip_norm if writer_grad_clip_norm > 0.0 else gradient_clip_norm
+            )
+            projector_clip_limit = (
+                projector_grad_clip_norm
+                if projector_grad_clip_norm > 0.0
+                else gradient_clip_norm
+            )
+            receiver_lora_clip_limit = (
+                receiver_lora_grad_clip_norm
+                if receiver_lora_grad_clip_norm > 0.0
+                else gradient_clip_norm
+            )
+            total_grad_parameters = [
+                parameter
+                for parameter in runtime.parameters()
+                if parameter.requires_grad and parameter.grad is not None
+            ]
+            total_grad_norm = _parameters_grad_norm(total_grad_parameters)
             was_grad_clipped = False
-            if gradient_clip_norm > 0.0:
-                parameters = [
-                    parameter
-                    for parameter in runtime.parameters()
-                    if parameter.requires_grad and parameter.grad is not None
-                ]
-                if parameters:
-                    total_grad_norm = float(
-                        torch.nn.utils.clip_grad_norm_(parameters, gradient_clip_norm).item()
-                    )
-                    was_grad_clipped = bool(total_grad_norm > (gradient_clip_norm + 1e-6))
+            was_grad_clipped_writer = False
+            was_grad_clipped_projector = False
+            was_grad_clipped_receiver_lora = False
+            was_grad_clipped_source_stub = False
+            was_grad_clipped_reader = False
+            was_grad_clipped_fuser = False
+            if groupwise_grad_clip:
+                _, was_grad_clipped_writer = _clip_parameter_group(
+                    writer_group_parameters,
+                    max_norm=writer_clip_limit,
+                )
+                _, was_grad_clipped_projector = _clip_parameter_group(
+                    projector_group_parameters,
+                    max_norm=projector_clip_limit,
+                )
+                _, was_grad_clipped_receiver_lora = _clip_parameter_group(
+                    receiver_lora_group_parameters,
+                    max_norm=receiver_lora_clip_limit,
+                )
+                _, was_grad_clipped_source_stub = _clip_parameter_group(
+                    source_stub_group_parameters,
+                    max_norm=writer_clip_limit,
+                )
+                _, was_grad_clipped_reader = _clip_parameter_group(
+                    reader_group_parameters,
+                    max_norm=writer_clip_limit,
+                )
+                _, was_grad_clipped_fuser = _clip_parameter_group(
+                    fuser_group_parameters,
+                    max_norm=writer_clip_limit,
+                )
+                was_grad_clipped = bool(
+                    was_grad_clipped_writer
+                    or was_grad_clipped_projector
+                    or was_grad_clipped_receiver_lora
+                    or was_grad_clipped_source_stub
+                    or was_grad_clipped_reader
+                    or was_grad_clipped_fuser
+                )
+            elif gradient_clip_norm > 0.0 and total_grad_parameters:
+                unclipped_total = float(
+                    torch.nn.utils.clip_grad_norm_(total_grad_parameters, gradient_clip_norm).item()
+                )
+                total_grad_norm = unclipped_total
+                was_grad_clipped = bool(unclipped_total > (gradient_clip_norm + 1e-6))
+                was_grad_clipped_writer = bool(was_grad_clipped and writer_group_parameters)
+                was_grad_clipped_projector = bool(was_grad_clipped and projector_group_parameters)
+                was_grad_clipped_receiver_lora = bool(
+                    was_grad_clipped and receiver_lora_group_parameters
+                )
+                was_grad_clipped_source_stub = bool(was_grad_clipped and source_stub_group_parameters)
+                was_grad_clipped_reader = bool(was_grad_clipped and reader_group_parameters)
+                was_grad_clipped_fuser = bool(was_grad_clipped and fuser_group_parameters)
+            writer_group_lr = max(
+                float(optimizer_lr_by_group.get("writer_base", 0.0)),
+                float(optimizer_lr_by_group.get("writer_adapter", 0.0)),
+                float(optimizer_lr_by_group.get("support_encoder", 0.0)),
+            )
+            projector_group_lr = float(optimizer_lr_by_group.get("prefix_projector", 0.0))
+            receiver_lora_group_lr = float(optimizer_lr_by_group.get("receiver_lora", 0.0))
+            writer_group_update_to_param_norm_ratio = (
+                writer_group_lr * writer_group_summary["grad_norm_pre_clip"]
+            ) / max(writer_group_summary["param_norm"], 1e-8)
+            projector_group_update_to_param_norm_ratio = (
+                projector_group_lr * projector_group_summary["grad_norm_pre_clip"]
+            ) / max(projector_group_summary["param_norm"], 1e-8)
+            receiver_lora_group_update_to_param_norm_ratio = (
+                receiver_lora_group_lr * receiver_lora_group_summary["grad_norm_pre_clip"]
+            ) / max(receiver_lora_group_summary["param_norm"], 1e-8)
             optimizer.step()
             profiler.add_example()
             profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
@@ -4907,6 +5489,10 @@ def run_shared_injection_pilot(
                 {
                     "step": step + 1,
                     "loss": float(loss.item()),
+                    "task_loss": float(task_loss.item()),
+                    "aux_loss_total": (
+                        0.0 if aux_loss_total is None else float(aux_loss_total.detach().item())
+                    ),
                     "choice_ce_loss": float(choice_ce_loss.item()),
                     "competitor_hinge_loss": float(competitor_hinge_loss.item()),
                     "active_competitor_hinge_weight": float(active_competitor_hinge_weight),
@@ -5065,6 +5651,30 @@ def run_shared_injection_pilot(
                     "memory_long_effective_rank": float(memory_slot_effective_rank),
                     "memory_short_effective_rank": float(memory_short_effective_rank),
                     "support_state_effective_rank": float(support_state_effective_rank),
+                    "support_item_effective_rank": float(
+                        prefix_artifacts.prefix_stats.get("support_item_effective_rank", 0.0)
+                    ),
+                    "support_item_pairwise_cosine_mean": float(
+                        prefix_artifacts.prefix_stats.get("support_item_pairwise_cosine_mean", 0.0)
+                    ),
+                    "writer_support_attention_entropy_mean": float(
+                        prefix_artifacts.prefix_stats.get("writer_support_attention_entropy_mean", 0.0)
+                    ),
+                    "writer_support_attention_top_mass_mean": float(
+                        prefix_artifacts.prefix_stats.get("writer_support_attention_top_mass_mean", 0.0)
+                    ),
+                    "writer_support_attention_item_coverage_entropy_mean": float(
+                        prefix_artifacts.prefix_stats.get(
+                            "writer_support_attention_item_coverage_entropy_mean",
+                            0.0,
+                        )
+                    ),
+                    "writer_support_attention_distinct_top_items_mean": float(
+                        prefix_artifacts.prefix_stats.get(
+                            "writer_support_attention_distinct_top_items_mean",
+                            0.0,
+                        )
+                    ),
                     "pilot_memory_path_variant": runtime.memory_path_variant,
                     "pilot_writer_slot_conditioning_mode": getattr(
                         runtime.writer,
@@ -5117,6 +5727,10 @@ def run_shared_injection_pilot(
                     "source_to_projector_grad_ratio": source_to_projector_grad_ratio,
                     "receiver_lora_to_reader_grad_ratio": receiver_lora_to_reader_grad_ratio,
                     "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
+                    "gradient_probe_enabled": bool(gradient_probe_enabled),
+                    "gradient_probe_step_active": bool(probe_step_active),
+                    "gradient_probe_interval": int(gradient_probe_interval),
+                    "gradient_probe_max_steps": int(gradient_probe_max_steps),
                     "source_stub_trainable": _module_trainable(runtime.source_stub),
                     "writer_trainable": _module_trainable(runtime.writer),
                     "writer_adapter_trainable": bool(
@@ -5139,11 +5753,55 @@ def run_shared_injection_pilot(
                     "reader_trainable_params": _trainable_parameter_count(runtime.reader),
                     "fuser_trainable_params": _trainable_parameter_count(runtime.fuser),
                     "prefix_projector_trainable_params": _trainable_parameter_count(runtime.prefix_projector),
+                    "grad_clip_scheme": "groupwise" if groupwise_grad_clip else "global",
+                    "groupwise_grad_clip_enabled": bool(groupwise_grad_clip),
+                    "writer_group_grad_norm_pre_clip": float(
+                        writer_group_summary["grad_norm_pre_clip"]
+                    ),
+                    "projector_group_grad_norm_pre_clip": float(
+                        projector_group_summary["grad_norm_pre_clip"]
+                    ),
+                    "receiver_lora_group_grad_norm_pre_clip": float(
+                        receiver_lora_group_summary["grad_norm_pre_clip"]
+                    ),
+                    "source_stub_group_grad_norm_pre_clip": float(
+                        source_stub_group_summary["grad_norm_pre_clip"]
+                    ),
+                    "reader_group_grad_norm_pre_clip": float(
+                        reader_group_summary["grad_norm_pre_clip"]
+                    ),
+                    "fuser_group_grad_norm_pre_clip": float(
+                        fuser_group_summary["grad_norm_pre_clip"]
+                    ),
+                    "writer_group_param_norm": float(writer_group_summary["param_norm"]),
+                    "projector_group_param_norm": float(projector_group_summary["param_norm"]),
+                    "receiver_lora_group_param_norm": float(
+                        receiver_lora_group_summary["param_norm"]
+                    ),
+                    "writer_group_update_to_param_norm_ratio": float(
+                        writer_group_update_to_param_norm_ratio
+                    ),
+                    "projector_group_update_to_param_norm_ratio": float(
+                        projector_group_update_to_param_norm_ratio
+                    ),
+                    "receiver_lora_group_update_to_param_norm_ratio": float(
+                        receiver_lora_group_update_to_param_norm_ratio
+                    ),
+                    "writer_grad_clip_norm": float(writer_clip_limit),
+                    "projector_grad_clip_norm": float(projector_clip_limit),
+                    "receiver_lora_grad_clip_norm": float(receiver_lora_clip_limit),
                     "total_grad_norm_pre_clip": total_grad_norm,
                     "was_grad_clipped": was_grad_clipped,
+                    "was_grad_clipped_writer": was_grad_clipped_writer,
+                    "was_grad_clipped_projector": was_grad_clipped_projector,
+                    "was_grad_clipped_receiver_lora": was_grad_clipped_receiver_lora,
+                    "was_grad_clipped_source_stub": was_grad_clipped_source_stub,
+                    "was_grad_clipped_reader": was_grad_clipped_reader,
+                    "was_grad_clipped_fuser": was_grad_clipped_fuser,
                     "optimizer_lr_by_group": optimizer_lr_by_group,
                     "prefix_artifact_stats": prefix_artifacts.prefix_stats,
                     **train_prefix_attention_metrics,
+                    **gradient_probe_payload,
                     **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
                 }
             )
@@ -5448,6 +6106,93 @@ def run_shared_injection_pilot(
         step_start=451,
         step_end=500,
     )
+    post_unfreeze_start_step = next(
+        (
+            int(event.get("step", 0))
+            for event in train_events
+            if not bool(event.get("writer_frozen", False))
+        ),
+        max(1, projector_warmup_steps + 1),
+    )
+    post_unfreeze_end_step = min(train_steps, post_unfreeze_start_step + 49)
+    train_grad_norm_writer_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_norm_projector_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_projector",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_norm_receiver_lora_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_receiver_lora",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_probe_writer_task_only_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_probe_writer_task_only_norm",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_probe_writer_aux_only_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_probe_writer_aux_only_norm",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_probe_writer_total_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_probe_writer_total_norm",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_probe_writer_task_aux_cosine_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_probe_writer_task_aux_cosine",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_probe_writer_task_total_cosine_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_probe_writer_task_total_cosine",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_grad_probe_writer_aux_total_cosine_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="grad_probe_writer_aux_total_cosine",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_writer_clip_fraction_tail_50 = _fraction_train_event_metric(
+        train_events,
+        key="was_grad_clipped_writer",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_projector_clip_fraction_tail_50 = _fraction_train_event_metric(
+        train_events,
+        key="was_grad_clipped_projector",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_receiver_lora_clip_fraction_tail_50 = _fraction_train_event_metric(
+        train_events,
+        key="was_grad_clipped_receiver_lora",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_loss_step_delta_tail_50_mean = _mean_absolute_step_delta(
+        train_events,
+        key="loss",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
     metrics = {
         "mode": "train",
         "training_stage": "shared_injection_pilot",
@@ -5621,6 +6366,18 @@ def run_shared_injection_pilot(
         "pilot_reader_fuser_bootstrap_steps": reader_fuser_bootstrap_steps,
         "pilot_writer_slot_basis_orthogonality_weight": writer_slot_basis_orthogonality_weight,
         "pilot_gradient_clip_norm": gradient_clip_norm,
+        "pilot_groupwise_grad_clip": groupwise_grad_clip,
+        "pilot_writer_grad_clip_norm": writer_clip_limit if train_events else writer_grad_clip_norm,
+        "pilot_projector_grad_clip_norm": (
+            projector_clip_limit if train_events else projector_grad_clip_norm
+        ),
+        "pilot_receiver_lora_grad_clip_norm": (
+            receiver_lora_clip_limit if train_events else receiver_lora_grad_clip_norm
+        ),
+        "pilot_gradient_probe_enabled": gradient_probe_enabled,
+        "pilot_gradient_probe_interval": gradient_probe_interval,
+        "pilot_gradient_probe_max_steps": gradient_probe_max_steps,
+        "pilot_gradient_probe_modules": list(gradient_probe_modules),
         "pilot_prefix_slot_max_norm": float(config["runtime"].get("pilot_prefix_slot_max_norm", 0.0)),
         "pilot_prefix_total_max_norm": float(config["runtime"].get("pilot_prefix_total_max_norm", 0.0)),
         "pilot_snapshot_steps": snapshot_steps,
@@ -5805,6 +6562,37 @@ def run_shared_injection_pilot(
         "train_grad_norm_receiver_lora_steps_451_500_median": (
             train_grad_norm_receiver_lora_steps_451_500_median
         ),
+        "train_writer_post_unfreeze_start_step": post_unfreeze_start_step,
+        "train_writer_post_unfreeze_end_step": post_unfreeze_end_step,
+        "train_grad_norm_writer_post_unfreeze_median": train_grad_norm_writer_post_unfreeze_median,
+        "train_grad_norm_projector_post_unfreeze_median": (
+            train_grad_norm_projector_post_unfreeze_median
+        ),
+        "train_grad_norm_receiver_lora_post_unfreeze_median": (
+            train_grad_norm_receiver_lora_post_unfreeze_median
+        ),
+        "train_grad_probe_writer_task_only_post_unfreeze_median": (
+            train_grad_probe_writer_task_only_post_unfreeze_median
+        ),
+        "train_grad_probe_writer_aux_only_post_unfreeze_median": (
+            train_grad_probe_writer_aux_only_post_unfreeze_median
+        ),
+        "train_grad_probe_writer_total_post_unfreeze_median": (
+            train_grad_probe_writer_total_post_unfreeze_median
+        ),
+        "train_grad_probe_writer_task_aux_cosine_post_unfreeze_median": (
+            train_grad_probe_writer_task_aux_cosine_post_unfreeze_median
+        ),
+        "train_grad_probe_writer_task_total_cosine_post_unfreeze_median": (
+            train_grad_probe_writer_task_total_cosine_post_unfreeze_median
+        ),
+        "train_grad_probe_writer_aux_total_cosine_post_unfreeze_median": (
+            train_grad_probe_writer_aux_total_cosine_post_unfreeze_median
+        ),
+        "train_writer_clip_fraction_tail_50": train_writer_clip_fraction_tail_50,
+        "train_projector_clip_fraction_tail_50": train_projector_clip_fraction_tail_50,
+        "train_receiver_lora_clip_fraction_tail_50": train_receiver_lora_clip_fraction_tail_50,
+        "train_loss_step_delta_tail_50_mean": train_loss_step_delta_tail_50_mean,
         "train_final_reader_to_support_grad_ratio": (
             train_events[-1]["reader_to_support_grad_ratio"] if train_events else None
         ),
@@ -5858,6 +6646,15 @@ def run_shared_injection_pilot(
         ),
         "train_final_was_grad_clipped": (
             train_events[-1]["was_grad_clipped"] if train_events else None
+        ),
+        "train_final_was_grad_clipped_writer": (
+            train_events[-1]["was_grad_clipped_writer"] if train_events else None
+        ),
+        "train_final_was_grad_clipped_projector": (
+            train_events[-1]["was_grad_clipped_projector"] if train_events else None
+        ),
+        "train_final_was_grad_clipped_receiver_lora": (
+            train_events[-1]["was_grad_clipped_receiver_lora"] if train_events else None
         ),
         "train_final_optimizer_lr_by_group": (
             train_events[-1]["optimizer_lr_by_group"] if train_events else {}

@@ -207,10 +207,13 @@ python scripts/update_writer_deep_prefix_jointpeft_summary.py \
   --source_stub_health_train_events_json "${RUN_ROOT}/gsm8k-source-stub-health/pilot-I-source-stub-health/train_events.json" \
   --gsm8k_control_metrics_json "${RUN_ROOT}/gsm8k-control/pilot-A-selected/metrics.json" \
   --gsm8k_writer_metrics_json "${RUN_ROOT}/gsm8k-writer/pilot-I-writer-direct/metrics.json" \
+  --gsm8k_writer_train_events_json "${RUN_ROOT}/gsm8k-writer/pilot-I-writer-direct/train_events.json" \
   --narrativeqa_control_metrics_json "${RUN_ROOT}/narrativeqa-control/pilot-A-selected/metrics.json" \
   --narrativeqa_writer_metrics_json "${RUN_ROOT}/narrativeqa-writer/pilot-I-writer-direct/metrics.json" \
+  --narrativeqa_writer_train_events_json "${RUN_ROOT}/narrativeqa-writer/pilot-I-writer-direct/train_events.json" \
   --fever_control_metrics_json "${RUN_ROOT}/fever-control/pilot-A-selected/metrics.json" \
   --fever_writer_metrics_json "${RUN_ROOT}/fever-writer/pilot-I-writer-direct/metrics.json" \
+  --fever_writer_train_events_json "${RUN_ROOT}/fever-writer/pilot-I-writer-direct/train_events.json" \
   --output_json "${RESULT_ROOT}/writer-deep-prefix-jointpeft-summary.json" \
   --output_report "${RESULT_ROOT}/writer-deep-prefix-jointpeft-summary.md"
 
