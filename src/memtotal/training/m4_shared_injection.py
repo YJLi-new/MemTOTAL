@@ -3778,6 +3778,35 @@ def _tail_window_start(train_steps: int, *, window_size: int) -> int:
     return max(1, int(train_steps) - int(window_size) + 1)
 
 
+def _live_train_trace_row(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "step": int(event.get("step", 0)),
+        "loss": float(event.get("loss", 0.0)),
+        "choice_ce_loss": float(event.get("choice_ce_loss", 0.0)),
+        "competitor_hinge_loss": float(event.get("competitor_hinge_loss", 0.0)),
+        "delta_answer_logprob": float(event.get("delta_answer_logprob", 0.0)),
+        "answer_logprob_with_memory": float(event.get("answer_logprob_with_memory", 0.0)),
+        "answer_logprob_without_memory": float(event.get("answer_logprob_without_memory", 0.0)),
+        "grad_norm_source_stub": float(event.get("grad_norm_source_stub", 0.0)),
+        "grad_norm_writer": float(event.get("grad_norm_writer", 0.0)),
+        "grad_norm_writer_adapter": float(event.get("grad_norm_writer_adapter", 0.0)),
+        "grad_norm_projector": float(event.get("grad_norm_projector", 0.0)),
+        "grad_norm_receiver_lora": float(event.get("grad_norm_receiver_lora", 0.0)),
+        "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
+        "was_grad_clipped": bool(event.get("was_grad_clipped", False)),
+        "prefix_attention_mass_mean": float(event.get("prefix_attention_mass_mean", 0.0)),
+        "prefix_attention_nontrivial_layer_count": int(
+            event.get("prefix_attention_nontrivial_layer_count", 0)
+        ),
+        "optimizer_lr_by_group": dict(event.get("optimizer_lr_by_group", {})),
+    }
+
+
+def _append_jsonl_row(path: Path, row: dict[str, Any]) -> None:
+    with Path(path).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
 def _median_train_event_metric(
     train_events: list[dict[str, Any]],
     *,
@@ -4425,10 +4454,20 @@ def run_shared_injection_pilot(
             }
         )
 
+    live_snapshot_trace_path = output_dir / "snapshot_metrics.live.jsonl"
+    if live_snapshot_trace_path.exists():
+        live_snapshot_trace_path.unlink()
     if 0 in snapshot_steps:
         evaluate_snapshot(0)
+        _append_jsonl_row(
+            live_snapshot_trace_path,
+            dict(snapshot_metrics[-1]),
+        )
 
     if arm == "injected" and writer_memory_control != "zero" and train_steps > 0:
+        live_train_trace_path = output_dir / "train_trace.live.jsonl"
+        if live_train_trace_path.exists():
+            live_train_trace_path.unlink()
         runtime.writer.train()
         if runtime.source_stub is not None:
             runtime.source_stub.train()
@@ -5108,6 +5147,10 @@ def run_shared_injection_pilot(
                     **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
                 }
             )
+            _append_jsonl_row(
+                live_train_trace_path,
+                _live_train_trace_row(train_events[-1]),
+            )
             if (step + 1) in snapshot_steps and (step + 1) != 0:
                 runtime.writer.eval()
                 if runtime.source_stub is not None:
@@ -5120,6 +5163,10 @@ def run_shared_injection_pilot(
                     runtime.fuser.eval()
                 runtime.prefix_projector.eval()
                 evaluate_snapshot(step + 1)
+                _append_jsonl_row(
+                    live_snapshot_trace_path,
+                    dict(snapshot_metrics[-1]),
+                )
                 runtime.writer.train()
                 if runtime.source_stub is not None:
                     runtime.source_stub.train()
