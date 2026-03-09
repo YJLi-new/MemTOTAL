@@ -3842,3 +3842,328 @@ def compare_tl_reader_rg3_runs(
         "stop_after_rg3": stop_after_rg3,
         "failure_reason": failure_reason,
     }
+
+
+def _collapse_onset_from_snapshot_metrics(run_metrics: dict[str, Any]) -> int | None:
+    snapshot_metrics = run_metrics.get("snapshot_metrics", [])
+    if not isinstance(snapshot_metrics, list):
+        return None
+    ordered = sorted(
+        [snapshot for snapshot in snapshot_metrics if isinstance(snapshot, dict)],
+        key=lambda snapshot: int(snapshot.get("step", 0)),
+    )
+    for snapshot in ordered:
+        if float(snapshot.get("dominant_label_fraction", 0.0)) >= 0.85:
+            return int(snapshot.get("step", 0))
+    return None
+
+
+def _writer_value_arm_summary(
+    *,
+    metrics_json: str,
+    train_events_json: str | None = None,
+) -> dict[str, Any]:
+    run_metrics = json.loads(Path(metrics_json).read_text())
+    train_geometry = _train_geometry_summary(train_events_json)
+    forensics = _v0_forensics_summary(run_metrics)
+    return {
+        "writer_mode": str(run_metrics.get("pilot_writer_slot_conditioning_mode", "shared_add")),
+        "shared_state_scale": float(run_metrics.get("pilot_writer_shared_state_scale", 1.0)),
+        "best_adapt_task_score": float(run_metrics.get("best_adapt_task_score", 0.0)),
+        "best_adapt_macro_f1": float(run_metrics.get("best_adapt_macro_f1", 0.0)),
+        "dominant_label_fraction": float(run_metrics.get("dominant_label_fraction", 0.0)),
+        "dominant_label_collapse_onset_step": _collapse_onset_from_snapshot_metrics(run_metrics),
+        "memory_long_top1_top2_ratio": float(
+            run_metrics.get(
+                "memory_long_top1_top2_ratio",
+                train_geometry["final_memory_long_top1_top2_ratio"],
+            )
+        ),
+        "memory_long_common_mode_energy_ratio": float(
+            run_metrics.get(
+                "memory_long_common_mode_energy_ratio",
+                train_geometry["final_memory_long_common_mode_energy_ratio"],
+            )
+        ),
+        "memory_long_centered_effective_rank": float(
+            run_metrics.get(
+                "memory_long_centered_effective_rank",
+                train_geometry["final_memory_long_centered_effective_rank"],
+            )
+        ),
+        "reader_value_projected_effective_rank": float(
+            run_metrics.get(
+                "reader_value_projected_effective_rank",
+                train_geometry["final_reader_value_projected_effective_rank"],
+            )
+        ),
+        "reader_value_projected_pairwise_cosine_mean": float(
+            run_metrics.get(
+                "reader_value_projected_pairwise_cosine_mean",
+                train_geometry["final_reader_value_projected_pairwise_cosine_mean"],
+            )
+        ),
+        "reader_readout_effective_rank": float(
+            run_metrics.get(
+                "reader_readout_effective_rank",
+                train_geometry["final_reader_readout_effective_rank"],
+            )
+        ),
+        "reader_readout_centered_effective_rank": float(
+            run_metrics.get(
+                "reader_readout_centered_effective_rank",
+                train_geometry["final_reader_readout_centered_effective_rank"],
+            )
+        ),
+        "reader_readout_pairwise_cosine_mean": float(
+            run_metrics.get("reader_readout_pairwise_cosine_mean", 0.0)
+        ),
+        **forensics,
+    }
+
+
+def _writer_value_candidate_delta(
+    *,
+    reference: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    top1_top2_reduction_factor = float(
+        reference["memory_long_top1_top2_ratio"]
+        / max(candidate["memory_long_top1_top2_ratio"], 1e-6)
+    )
+    readout_cosine_delta = float(
+        reference["reader_readout_pairwise_cosine_mean"]
+        - candidate["reader_readout_pairwise_cosine_mean"]
+    )
+    readout_rank_delta = float(
+        candidate["reader_readout_effective_rank"]
+        - reference["reader_readout_effective_rank"]
+    )
+    collapse_delayed = bool(
+        _later_onset(
+            candidate["dominant_label_collapse_onset_step"],
+            reference["dominant_label_collapse_onset_step"],
+        )
+    )
+    diagnostic_success = bool(
+        top1_top2_reduction_factor >= 3.0
+        and readout_cosine_delta >= 0.02
+        and readout_rank_delta > 0.25
+    )
+    partial_geometry_gain = bool(
+        candidate["v0_value_diversity_gate_passed"]
+        or top1_top2_reduction_factor >= 1.5
+        or readout_cosine_delta >= 0.01
+        or readout_rank_delta > 0.1
+        or collapse_delayed
+    )
+    medium_success = bool(
+        candidate["memory_long_top1_top2_ratio"] < 15.0
+        and candidate["reader_readout_pairwise_cosine_mean"] < 0.95
+        and candidate["reader_readout_effective_rank"] > 2.0
+        and collapse_delayed
+    )
+    strong_success = bool(
+        candidate["memory_long_top1_top2_ratio"] < 10.0
+        and candidate["memory_long_centered_effective_rank"] >= 3.0
+        and candidate["reader_readout_pairwise_cosine_mean"] < 0.90
+        and candidate["reader_readout_effective_rank"] > 2.5
+        and candidate["best_adapt_task_score"]
+        >= max(reference["best_adapt_task_score"] + 0.05, 0.45)
+    )
+    return {
+        "top1_top2_reduction_factor": top1_top2_reduction_factor,
+        "readout_cosine_delta": readout_cosine_delta,
+        "readout_rank_delta": readout_rank_delta,
+        "collapse_delayed": collapse_delayed,
+        "diagnostic_success": diagnostic_success,
+        "partial_geometry_gain": partial_geometry_gain,
+        "medium_success": medium_success,
+        "strong_success": strong_success,
+    }
+
+
+def compare_tl_writer_value_runs(
+    *,
+    control_metrics_json: str,
+    shared_scaled_metrics_json: str,
+    slot_query_only_metrics_json: str,
+    control_train_events_json: str | None = None,
+    shared_scaled_train_events_json: str | None = None,
+    slot_query_only_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _writer_value_arm_summary(
+        metrics_json=control_metrics_json,
+        train_events_json=control_train_events_json,
+    )
+    shared_scaled = _writer_value_arm_summary(
+        metrics_json=shared_scaled_metrics_json,
+        train_events_json=shared_scaled_train_events_json,
+    )
+    slot_query_only = _writer_value_arm_summary(
+        metrics_json=slot_query_only_metrics_json,
+        train_events_json=slot_query_only_train_events_json,
+    )
+    shared_scaled_delta = _writer_value_candidate_delta(reference=control, candidate=shared_scaled)
+    slot_query_only_delta = _writer_value_candidate_delta(reference=control, candidate=slot_query_only)
+
+    candidate_rows = [
+        {
+            "arm": "shared_add_scaled",
+            "preference": 0,
+            **shared_scaled,
+            **shared_scaled_delta,
+        },
+        {
+            "arm": "slot_query_only",
+            "preference": 1,
+            **slot_query_only,
+            **slot_query_only_delta,
+        },
+    ]
+    best_candidate = max(
+        candidate_rows,
+        key=lambda row: (
+            bool(row["strong_success"]),
+            bool(row["medium_success"]),
+            bool(row["diagnostic_success"]),
+            bool(row["partial_geometry_gain"]),
+            float(row["top1_top2_reduction_factor"]),
+            float(row["readout_rank_delta"]),
+            float(row["readout_cosine_delta"]),
+            float(row["best_adapt_task_score"]),
+            int(row["preference"]),
+        ),
+    )
+
+    if bool(best_candidate["strong_success"]):
+        comparison_conclusion = "strong_success"
+        primary_interpretation = "writer_value_diversity_strongly_improved"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v2 = True
+        move_to_v1_penalties = False
+        stop_after_v1_architecture = False
+        failure_reason = ""
+    elif bool(best_candidate["medium_success"]):
+        comparison_conclusion = "move_to_v2"
+        primary_interpretation = "writer_value_diversity_gate_passed"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v2 = True
+        move_to_v1_penalties = False
+        stop_after_v1_architecture = False
+        failure_reason = ""
+    elif bool(best_candidate["partial_geometry_gain"]):
+        comparison_conclusion = "needs_penalty_refinement"
+        primary_interpretation = "writer_architecture_helped_but_common_mode_remains"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v2 = False
+        move_to_v1_penalties = True
+        stop_after_v1_architecture = False
+        failure_reason = ""
+    else:
+        comparison_conclusion = "failure"
+        primary_interpretation = "writer_architecture_first_matrix_flat"
+        recommended_arm = "control"
+        move_to_v2 = False
+        move_to_v1_penalties = False
+        stop_after_v1_architecture = True
+        if (
+            bool(shared_scaled["v0_common_mode_domination_flag"])
+            and bool(slot_query_only["v0_common_mode_domination_flag"])
+        ):
+            failure_reason = "common_mode_domination_persists"
+        elif (
+            bool(shared_scaled["v0_value_projected_homogenization_flag"])
+            and bool(slot_query_only["v0_value_projected_homogenization_flag"])
+        ):
+            failure_reason = "value_projection_homogenization_persists"
+        else:
+            failure_reason = "no_writer_arm_improved_geometry"
+
+    return {
+        "control_writer_mode": control["writer_mode"],
+        "control_shared_state_scale": control["shared_state_scale"],
+        "control_best_adapt_task_score": control["best_adapt_task_score"],
+        "control_best_adapt_macro_f1": control["best_adapt_macro_f1"],
+        "control_dominant_label_collapse_onset_step": control["dominant_label_collapse_onset_step"],
+        "control_memory_long_top1_top2_ratio": control["memory_long_top1_top2_ratio"],
+        "control_memory_long_common_mode_energy_ratio": control["memory_long_common_mode_energy_ratio"],
+        "control_memory_long_centered_effective_rank": control["memory_long_centered_effective_rank"],
+        "control_reader_value_projected_effective_rank": control["reader_value_projected_effective_rank"],
+        "control_reader_readout_effective_rank": control["reader_readout_effective_rank"],
+        "control_reader_readout_pairwise_cosine_mean": control["reader_readout_pairwise_cosine_mean"],
+        "control_v0_primary_bottleneck": control["v0_primary_bottleneck"],
+        "shared_scaled_writer_mode": shared_scaled["writer_mode"],
+        "shared_scaled_shared_state_scale": shared_scaled["shared_state_scale"],
+        "shared_scaled_best_adapt_task_score": shared_scaled["best_adapt_task_score"],
+        "shared_scaled_best_adapt_macro_f1": shared_scaled["best_adapt_macro_f1"],
+        "shared_scaled_dominant_label_collapse_onset_step": shared_scaled[
+            "dominant_label_collapse_onset_step"
+        ],
+        "shared_scaled_memory_long_top1_top2_ratio": shared_scaled["memory_long_top1_top2_ratio"],
+        "shared_scaled_memory_long_common_mode_energy_ratio": shared_scaled[
+            "memory_long_common_mode_energy_ratio"
+        ],
+        "shared_scaled_memory_long_centered_effective_rank": shared_scaled[
+            "memory_long_centered_effective_rank"
+        ],
+        "shared_scaled_reader_value_projected_effective_rank": shared_scaled[
+            "reader_value_projected_effective_rank"
+        ],
+        "shared_scaled_reader_readout_effective_rank": shared_scaled["reader_readout_effective_rank"],
+        "shared_scaled_reader_readout_pairwise_cosine_mean": shared_scaled[
+            "reader_readout_pairwise_cosine_mean"
+        ],
+        "shared_scaled_top1_top2_reduction_factor": shared_scaled_delta["top1_top2_reduction_factor"],
+        "shared_scaled_readout_cosine_delta": shared_scaled_delta["readout_cosine_delta"],
+        "shared_scaled_readout_rank_delta": shared_scaled_delta["readout_rank_delta"],
+        "shared_scaled_collapse_delayed": shared_scaled_delta["collapse_delayed"],
+        "shared_scaled_diagnostic_success": shared_scaled_delta["diagnostic_success"],
+        "shared_scaled_partial_geometry_gain": shared_scaled_delta["partial_geometry_gain"],
+        "shared_scaled_medium_success": shared_scaled_delta["medium_success"],
+        "shared_scaled_strong_success": shared_scaled_delta["strong_success"],
+        "shared_scaled_v0_primary_bottleneck": shared_scaled["v0_primary_bottleneck"],
+        "slot_query_only_writer_mode": slot_query_only["writer_mode"],
+        "slot_query_only_shared_state_scale": slot_query_only["shared_state_scale"],
+        "slot_query_only_best_adapt_task_score": slot_query_only["best_adapt_task_score"],
+        "slot_query_only_best_adapt_macro_f1": slot_query_only["best_adapt_macro_f1"],
+        "slot_query_only_dominant_label_collapse_onset_step": slot_query_only[
+            "dominant_label_collapse_onset_step"
+        ],
+        "slot_query_only_memory_long_top1_top2_ratio": slot_query_only[
+            "memory_long_top1_top2_ratio"
+        ],
+        "slot_query_only_memory_long_common_mode_energy_ratio": slot_query_only[
+            "memory_long_common_mode_energy_ratio"
+        ],
+        "slot_query_only_memory_long_centered_effective_rank": slot_query_only[
+            "memory_long_centered_effective_rank"
+        ],
+        "slot_query_only_reader_value_projected_effective_rank": slot_query_only[
+            "reader_value_projected_effective_rank"
+        ],
+        "slot_query_only_reader_readout_effective_rank": slot_query_only[
+            "reader_readout_effective_rank"
+        ],
+        "slot_query_only_reader_readout_pairwise_cosine_mean": slot_query_only[
+            "reader_readout_pairwise_cosine_mean"
+        ],
+        "slot_query_only_top1_top2_reduction_factor": slot_query_only_delta[
+            "top1_top2_reduction_factor"
+        ],
+        "slot_query_only_readout_cosine_delta": slot_query_only_delta["readout_cosine_delta"],
+        "slot_query_only_readout_rank_delta": slot_query_only_delta["readout_rank_delta"],
+        "slot_query_only_collapse_delayed": slot_query_only_delta["collapse_delayed"],
+        "slot_query_only_diagnostic_success": slot_query_only_delta["diagnostic_success"],
+        "slot_query_only_partial_geometry_gain": slot_query_only_delta["partial_geometry_gain"],
+        "slot_query_only_medium_success": slot_query_only_delta["medium_success"],
+        "slot_query_only_strong_success": slot_query_only_delta["strong_success"],
+        "slot_query_only_v0_primary_bottleneck": slot_query_only["v0_primary_bottleneck"],
+        "recommended_arm": recommended_arm,
+        "primary_interpretation": primary_interpretation,
+        "comparison_conclusion": comparison_conclusion,
+        "move_to_v2": move_to_v2,
+        "move_to_v1_penalties": move_to_v1_penalties,
+        "stop_after_v1_architecture": stop_after_v1_architecture,
+        "failure_reason": failure_reason,
+    }

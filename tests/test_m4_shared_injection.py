@@ -14,6 +14,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_alignment_runs,
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
+    compare_tl_writer_value_runs,
     compare_tl_reader_geometry_runs,
     compare_tl_reader_rg2_runs,
     compare_tl_reader_rg3_runs,
@@ -54,6 +55,8 @@ from memtotal.training.m4_shared_injection import (
     _sample_support_examples_for_training,
     _slot_diversity_loss,
     _teacher_advantage_weight,
+    _writer_common_mode_penalty,
+    _writer_slot_energy_balance_loss,
     _writer_slot_basis_orthogonality_loss,
     run_shared_injection_pilot,
 )
@@ -336,6 +339,37 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertGreater(float(collapsed_loss.item()), 0.5)
         self.assertLess(float(orthogonal_loss.item()), 0.1)
 
+    def test_writer_slot_energy_balance_loss_prefers_balanced_slot_norms(self) -> None:
+        balanced = torch.tensor(
+            [[[1.0, 0.0], [0.0, 1.0]]],
+            dtype=torch.float32,
+        )
+        imbalanced = torch.tensor(
+            [[[4.0, 0.0], [0.1, 0.0]]],
+            dtype=torch.float32,
+        )
+        balanced_loss = _writer_slot_energy_balance_loss(balanced)
+        imbalanced_loss = _writer_slot_energy_balance_loss(imbalanced)
+        self.assertIsNotNone(balanced_loss)
+        self.assertIsNotNone(imbalanced_loss)
+        assert balanced_loss is not None
+        assert imbalanced_loss is not None
+        self.assertLess(float(balanced_loss.item()), float(imbalanced_loss.item()))
+
+    def test_writer_common_mode_penalty_prefers_centered_slots(self) -> None:
+        collapsed = torch.ones(1, 3, 4, dtype=torch.float32)
+        centered = torch.tensor(
+            [[[1.0, 0.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]],
+            dtype=torch.float32,
+        )
+        collapsed_penalty = _writer_common_mode_penalty(collapsed)
+        centered_penalty = _writer_common_mode_penalty(centered)
+        self.assertIsNotNone(collapsed_penalty)
+        self.assertIsNotNone(centered_penalty)
+        assert collapsed_penalty is not None
+        assert centered_penalty is not None
+        self.assertGreater(float(collapsed_penalty.item()), float(centered_penalty.item()))
+
     def test_latent_anchor_loss_combines_support_and_writer_cosines(self) -> None:
         current_support = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
         current_writer = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]], dtype=torch.float32)
@@ -490,6 +524,59 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         memory = writer.write(support_states, input_schema="support_set")
         self.assertEqual(list(memory.shape), [2, 4, 6])
         self.assertGreater(float(memory.var(dim=1).sum().item()), 0.0)
+
+    def test_transformer_writer_shared_add_scaled_respects_shared_state_scale(self) -> None:
+        class ZeroCrossAttention(torch.nn.Module):
+            def forward(self, query, key, value, need_weights=False):
+                return torch.zeros_like(query), None
+
+        writer = MemoryWriter(
+            embed_dim=6,
+            memory_slots=4,
+            arch="transformer",
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+            support_query_residual_scale=1.0,
+            slot_conditioning_mode="shared_add_scaled",
+            shared_state_scale=0.25,
+        )
+        writer.support_cross_attn = ZeroCrossAttention()
+        writer.encoder = torch.nn.Identity()
+        writer.output_norm = torch.nn.Identity()
+        with torch.no_grad():
+            writer.state_proj.weight.copy_(torch.eye(6))
+            writer.state_proj.bias.zero_()
+        support_states = torch.ones(2, 6, 6)
+        expected = writer.slot_embeddings.detach().unsqueeze(0).expand(2, -1, -1) + 0.25
+        memory = writer.write(support_states, input_schema="support_set")
+        self.assertTrue(torch.allclose(memory, expected, atol=1e-6))
+
+    def test_transformer_writer_slot_query_only_ignores_shared_state(self) -> None:
+        class ZeroCrossAttention(torch.nn.Module):
+            def forward(self, query, key, value, need_weights=False):
+                return torch.zeros_like(query), None
+
+        writer = MemoryWriter(
+            embed_dim=6,
+            memory_slots=4,
+            arch="transformer",
+            num_heads=2,
+            transformer_layers=1,
+            dropout=0.0,
+            support_query_residual_scale=1.0,
+            slot_conditioning_mode="slot_query_only",
+        )
+        writer.support_cross_attn = ZeroCrossAttention()
+        writer.encoder = torch.nn.Identity()
+        writer.output_norm = torch.nn.Identity()
+        with torch.no_grad():
+            writer.state_proj.weight.fill_(2.0)
+            writer.state_proj.bias.fill_(1.0)
+        support_states = torch.randn(2, 6, 6)
+        expected = writer.slot_embeddings.detach().unsqueeze(0).expand(2, -1, -1)
+        memory = writer.write(support_states, input_schema="support_set")
+        self.assertTrue(torch.allclose(memory, expected, atol=1e-6))
 
     def test_writer_orthogonalize_slot_embeddings_preserves_mean_norm(self) -> None:
         writer = MemoryWriter(embed_dim=8, memory_slots=4, arch="transformer", num_heads=2)
@@ -832,6 +919,63 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertEqual(runtime.reader.conditioning_mode, "none")
         self.assertEqual(runtime.reader.attention_mode, "masked_partition")
         self.assertEqual(runtime.reader.masked_partition, ((0, 1), (2, 3), (4, 5), (6, 7)))
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_runtime_threads_writer_modes(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 8,
+                    "arch": "transformer",
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "slot_conditioning_mode": "slot_query_only",
+                    "shared_state_scale": 0.02,
+                },
+                "reader": {"num_queries": 4, "num_heads": 2},
+                "fuser": {"short_slots": 4, "arch": "linear", "num_heads": 2},
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=13,
+            arm="injected",
+            writer_memory_control="real",
+        )
+
+        self.assertEqual(runtime.writer.slot_conditioning_mode, "slot_query_only")
+        self.assertAlmostEqual(runtime.writer.shared_state_scale, 0.02)
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_warm_start_supports_conditioning_mode_none(self, mock_backbone_cls) -> None:
@@ -2796,6 +2940,195 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertFalse(summary["move_to_rg4"])
             self.assertEqual(summary["final_classification"], "B-2_candidate_downstream_flattening")
             self.assertTrue(summary["stop_after_rg3"])
+
+    def test_compare_tl_writer_value_runs_prefers_slot_query_only_on_strong_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_metrics(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            control_metrics = write_metrics(
+                "control_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "shared_add",
+                    "pilot_writer_shared_state_scale": 1.0,
+                    "best_adapt_task_score": 0.32,
+                    "best_adapt_macro_f1": 0.29,
+                    "dominant_label_fraction": 0.98,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.40},
+                        {"step": 2, "dominant_label_fraction": 0.91},
+                    ],
+                    "memory_long_top1_top2_ratio": 60.0,
+                    "memory_long_common_mode_energy_ratio": 0.82,
+                    "memory_long_centered_effective_rank": 4.0,
+                    "reader_value_projected_effective_rank": 1.5,
+                    "reader_value_projected_pairwise_cosine_mean": 0.97,
+                    "reader_readout_effective_rank": 1.1,
+                    "reader_readout_centered_effective_rank": 1.0,
+                    "reader_readout_pairwise_cosine_mean": 0.99,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+            shared_scaled_metrics = write_metrics(
+                "shared_scaled_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "shared_add_scaled",
+                    "pilot_writer_shared_state_scale": 0.02,
+                    "best_adapt_task_score": 0.38,
+                    "best_adapt_macro_f1": 0.35,
+                    "dominant_label_fraction": 0.88,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.35},
+                        {"step": 2, "dominant_label_fraction": 0.60},
+                        {"step": 4, "dominant_label_fraction": 0.88},
+                    ],
+                    "memory_long_top1_top2_ratio": 18.0,
+                    "memory_long_common_mode_energy_ratio": 0.45,
+                    "memory_long_centered_effective_rank": 3.2,
+                    "reader_value_projected_effective_rank": 2.0,
+                    "reader_value_projected_pairwise_cosine_mean": 0.92,
+                    "reader_readout_effective_rank": 2.1,
+                    "reader_readout_centered_effective_rank": 1.9,
+                    "reader_readout_pairwise_cosine_mean": 0.94,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+            slot_query_only_metrics = write_metrics(
+                "slot_query_only_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "slot_query_only",
+                    "pilot_writer_shared_state_scale": 1.0,
+                    "best_adapt_task_score": 0.50,
+                    "best_adapt_macro_f1": 0.47,
+                    "dominant_label_fraction": 0.55,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.33},
+                        {"step": 2, "dominant_label_fraction": 0.42},
+                        {"step": 4, "dominant_label_fraction": 0.48},
+                    ],
+                    "memory_long_top1_top2_ratio": 8.0,
+                    "memory_long_common_mode_energy_ratio": 0.24,
+                    "memory_long_centered_effective_rank": 3.5,
+                    "reader_value_projected_effective_rank": 2.6,
+                    "reader_value_projected_pairwise_cosine_mean": 0.81,
+                    "reader_readout_effective_rank": 2.8,
+                    "reader_readout_centered_effective_rank": 2.3,
+                    "reader_readout_pairwise_cosine_mean": 0.87,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+
+            summary = compare_tl_writer_value_runs(
+                control_metrics_json=str(control_metrics),
+                shared_scaled_metrics_json=str(shared_scaled_metrics),
+                slot_query_only_metrics_json=str(slot_query_only_metrics),
+            )
+
+            self.assertEqual(summary["recommended_arm"], "slot_query_only")
+            self.assertEqual(summary["comparison_conclusion"], "strong_success")
+            self.assertTrue(summary["move_to_v2"])
+            self.assertFalse(summary["move_to_v1_penalties"])
+
+    def test_compare_tl_writer_value_runs_moves_to_penalties_on_partial_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_metrics(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            control_metrics = write_metrics(
+                "control_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "shared_add",
+                    "pilot_writer_shared_state_scale": 1.0,
+                    "best_adapt_task_score": 0.30,
+                    "best_adapt_macro_f1": 0.27,
+                    "dominant_label_fraction": 0.97,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.44},
+                        {"step": 2, "dominant_label_fraction": 0.92},
+                    ],
+                    "memory_long_top1_top2_ratio": 60.0,
+                    "memory_long_common_mode_energy_ratio": 0.81,
+                    "memory_long_centered_effective_rank": 4.0,
+                    "reader_value_projected_effective_rank": 1.6,
+                    "reader_value_projected_pairwise_cosine_mean": 0.96,
+                    "reader_readout_effective_rank": 1.2,
+                    "reader_readout_centered_effective_rank": 1.0,
+                    "reader_readout_pairwise_cosine_mean": 0.99,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+            shared_scaled_metrics = write_metrics(
+                "shared_scaled_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "shared_add_scaled",
+                    "pilot_writer_shared_state_scale": 0.02,
+                    "best_adapt_task_score": 0.34,
+                    "best_adapt_macro_f1": 0.30,
+                    "dominant_label_fraction": 0.91,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.40},
+                        {"step": 2, "dominant_label_fraction": 0.70},
+                        {"step": 4, "dominant_label_fraction": 0.91},
+                    ],
+                    "memory_long_top1_top2_ratio": 20.0,
+                    "memory_long_common_mode_energy_ratio": 0.50,
+                    "memory_long_centered_effective_rank": 3.0,
+                    "reader_value_projected_effective_rank": 1.9,
+                    "reader_value_projected_pairwise_cosine_mean": 0.93,
+                    "reader_readout_effective_rank": 1.6,
+                    "reader_readout_centered_effective_rank": 1.5,
+                    "reader_readout_pairwise_cosine_mean": 0.965,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+            slot_query_only_metrics = write_metrics(
+                "slot_query_only_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "slot_query_only",
+                    "pilot_writer_shared_state_scale": 1.0,
+                    "best_adapt_task_score": 0.28,
+                    "best_adapt_macro_f1": 0.24,
+                    "dominant_label_fraction": 0.95,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.45},
+                        {"step": 2, "dominant_label_fraction": 0.93},
+                    ],
+                    "memory_long_top1_top2_ratio": 32.0,
+                    "memory_long_common_mode_energy_ratio": 0.66,
+                    "memory_long_centered_effective_rank": 2.8,
+                    "reader_value_projected_effective_rank": 1.7,
+                    "reader_value_projected_pairwise_cosine_mean": 0.95,
+                    "reader_readout_effective_rank": 1.3,
+                    "reader_readout_centered_effective_rank": 1.2,
+                    "reader_readout_pairwise_cosine_mean": 0.985,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+
+            summary = compare_tl_writer_value_runs(
+                control_metrics_json=str(control_metrics),
+                shared_scaled_metrics_json=str(shared_scaled_metrics),
+                slot_query_only_metrics_json=str(slot_query_only_metrics),
+            )
+
+            self.assertEqual(summary["recommended_arm"], "shared_add_scaled")
+            self.assertEqual(summary["comparison_conclusion"], "needs_penalty_refinement")
+            self.assertFalse(summary["move_to_v2"])
+            self.assertTrue(summary["move_to_v1_penalties"])
 
 
 if __name__ == "__main__":

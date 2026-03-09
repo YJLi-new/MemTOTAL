@@ -1,0 +1,4 @@
+method:
+  writer:
+    slot_conditioning_mode: slot_query_small_shared
+    shared_state_scale: 0.02

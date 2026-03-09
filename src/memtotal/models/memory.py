@@ -55,6 +55,8 @@ class MemoryWriter(ManagedMemoryModule):
         dropout: float = 0.0,
         support_query_residual_scale: float = 0.0,
         output_slot_basis_scale: float = 0.0,
+        slot_conditioning_mode: str = "shared_add",
+        shared_state_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -62,6 +64,19 @@ class MemoryWriter(ManagedMemoryModule):
         self.arch = arch
         self.support_query_residual_scale = float(support_query_residual_scale)
         self.output_slot_basis_scale = float(output_slot_basis_scale)
+        resolved_slot_conditioning_mode = str(slot_conditioning_mode)
+        if resolved_slot_conditioning_mode not in {
+            "shared_add",
+            "shared_add_scaled",
+            "slot_query_only",
+            "slot_query_small_shared",
+        }:
+            raise ValueError(
+                f"Unsupported writer slot_conditioning_mode: {resolved_slot_conditioning_mode}. "
+                "Expected one of shared_add/shared_add_scaled/slot_query_only/slot_query_small_shared."
+            )
+        self.slot_conditioning_mode = resolved_slot_conditioning_mode
+        self.shared_state_scale = float(shared_state_scale)
         hidden_dim = hidden_dim or (2 * embed_dim)
         if arch == "mlp":
             self.proj = nn.Sequential(
@@ -109,6 +124,48 @@ class MemoryWriter(ManagedMemoryModule):
             return state.mean(dim=1)
         raise ValueError(f"Unsupported state rank for writer: {state.ndim}")
 
+    @staticmethod
+    def common_mode_vector(slots: torch.Tensor) -> torch.Tensor:
+        if slots.ndim == 2:
+            return slots.mean(dim=0)
+        if slots.ndim == 3:
+            return slots.mean(dim=1)
+        raise ValueError(f"Unsupported slot rank for common_mode_vector: {slots.ndim}")
+
+    @staticmethod
+    def center_slots(slots: torch.Tensor) -> torch.Tensor:
+        if slots.ndim == 2:
+            return slots - slots.mean(dim=0, keepdim=True)
+        if slots.ndim == 3:
+            return slots - slots.mean(dim=1, keepdim=True)
+        raise ValueError(f"Unsupported slot rank for center_slots: {slots.ndim}")
+
+    @staticmethod
+    def slot_norms(slots: torch.Tensor) -> torch.Tensor:
+        if slots.ndim not in {2, 3}:
+            raise ValueError(f"Unsupported slot rank for slot_norms: {slots.ndim}")
+        return slots.norm(dim=-1)
+
+    def _condition_slots(
+        self,
+        slots: torch.Tensor,
+        shared_state: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.slot_conditioning_mode == "slot_query_only":
+            return slots
+        shared_delta = self.state_proj(shared_state).unsqueeze(1)
+        # `slot_query_small_shared` is the same path as scaled shared add; the
+        # distinct mode name preserves experiment attribution in configs/results.
+        if self.slot_conditioning_mode in {"shared_add_scaled", "slot_query_small_shared"}:
+            shared_delta = self.shared_state_scale * shared_delta
+        return slots + shared_delta
+
+    def _encode_slots(self, slot_inputs: torch.Tensor, slots: torch.Tensor) -> torch.Tensor:
+        encoded_slots = self.output_norm(self.encoder(slot_inputs))
+        if self.output_slot_basis_scale != 0.0:
+            encoded_slots = encoded_slots + (self.output_slot_basis_scale * slots)
+        return encoded_slots
+
     def write(self, state: torch.Tensor, *, input_schema: str = "pooled_state") -> torch.Tensor:
         if input_schema not in {"pooled_state", "support_set"}:
             raise ValueError(
@@ -135,14 +192,11 @@ class MemoryWriter(ManagedMemoryModule):
 
         slots = self.slot_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
         if input_schema == "pooled_state":
-            conditioned_slots = slots + self.state_proj(pooled_state).unsqueeze(1)
-            encoded_slots = self.output_norm(self.encoder(conditioned_slots))
-            if self.output_slot_basis_scale != 0.0:
-                encoded_slots = encoded_slots + (self.output_slot_basis_scale * slots)
-            return encoded_slots
+            conditioned_slots = self._condition_slots(slots, pooled_state)
+            return self._encode_slots(conditioned_slots, slots)
 
         pooled_support_state = state.mean(dim=1)
-        conditioned_slots = slots + self.state_proj(pooled_support_state).unsqueeze(1)
+        conditioned_slots = self._condition_slots(slots, pooled_support_state)
         attended_slots, _ = self.support_cross_attn(
             query=conditioned_slots,
             key=state,
@@ -150,10 +204,7 @@ class MemoryWriter(ManagedMemoryModule):
             need_weights=False,
         )
         support_slots = attended_slots + (self.support_query_residual_scale * conditioned_slots)
-        encoded_slots = self.output_norm(self.encoder(support_slots))
-        if self.output_slot_basis_scale != 0.0:
-            encoded_slots = encoded_slots + (self.output_slot_basis_scale * slots)
-        return encoded_slots
+        return self._encode_slots(support_slots, slots)
 
 
 class MemoryReader(ManagedMemoryModule):

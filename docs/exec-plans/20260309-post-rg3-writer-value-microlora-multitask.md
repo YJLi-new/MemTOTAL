@@ -57,6 +57,10 @@ Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLA
 - 2026-03-09: Completed Phase V0 offline forensics patch in `src/memtotal/models/memory.py`, `src/memtotal/training/m4_shared_injection.py`, `src/memtotal/analysis/m4_shared_injection.py`, `scripts/update_m4_run_summary.py`, and `tests/test_m4_shared_injection.py`.
 - 2026-03-09: Verified V0 with targeted test coverage (`python -m unittest tests.test_m4_shared_injection tests.test_smoke_components -v`) and an injected dry-run smoke at `/root/autodl-tmp/runs/verify/tl-writer-value-v0-smoke-injected`.
 - 2026-03-09: Confirmed the new V0 metrics propagate through `train_events.json`, snapshot metrics, and final `metrics.json`; the smoke classification currently points to Writer-side common-mode domination rather than a Reader-only failure.
+- 2026-03-09: Rebased onto upstream `origin/main`, committed Phase V0 as `0cd5375` (`feat: complete planv3 v0 writer value forensics`), and pushed it to `YJLi-new/MemTOTAL`.
+- 2026-03-09: Implemented the V1 architecture-first surface: Writer conditioning modes (`shared_add`, `shared_add_scaled`, `slot_query_only`, `slot_query_small_shared`), Writer-side penalties (`writer_slot_energy_balance_loss`, `writer_common_mode_penalty`), FEVER V1 config matrix, the V1 summary comparator, and the new runner scripts.
+- 2026-03-09: Verified the V1 code path with targeted validation (`python -m unittest tests.test_m4_shared_injection tests.test_smoke_components tests.test_repo_contract tests.test_repo_lints -v`) and real injected dry-run smokes for control / `shared_add_scaled` / `slot_query_only`.
+- 2026-03-09: Ran the new V1 summary script on the three dry-run FEVER arms and observed a flat early picture (`comparison_conclusion=failure`, `failure_reason=common_mode_domination_persists`) at 2 training steps, which is informative but not a substitute for the real Step-2 matrix.
 
 ## Decision Log
 
@@ -66,6 +70,7 @@ Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLA
 - Use repo-supported non-FEVER tasks before onboarding new datasets.
 - Treat Phase V0 as complete only after the full repo test suite passes and the milestone is committed/pushed.
 - The first active post-V0 training step remains the architecture-first FEVER Writer matrix (`W0/W1/W2`) before any Writer penalties or receiver LoRA.
+- Do not read the 2-step V1 smoke as a Step-2 decision; it is only a pipeline validation and an early sanity check on whether the new Writer modes alter immediate geometry.
 
 ## Surprises & Discoveries
 
@@ -74,3 +79,4 @@ Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLA
 - Receiver gradients became too small for local Reader rescue to be a meaningful next hop.
 - The first injected V0 smoke accidentally stayed on `shared_injection_arm=base_only`; once rerun with `shared_injection_arm=injected`, the new metrics became non-zero and internally consistent across train/snapshot/final outputs.
 - The injected V0 smoke shows extreme shared Writer energy (`memory_long_common_mode_energy_ratio≈0.999`, `memory_long_top1_top2_ratio≈70.7`) even while centered rank stays healthy, which strengthens the common-mode bottleneck hypothesis and justifies prioritizing V1 Writer diversification before V2 LoRA.
+- The first real V1 dry-run smokes execute correctly for `shared_add_scaled` and `slot_query_only`, but at 2 steps both remain almost identical to control (`top1/top2≈70.7`, `readout cosine≈0.999`), so the new modes are wired correctly without yet showing immediate rescue under the inherited warm-start.

@@ -537,6 +537,14 @@ def _resolve_writer_slot_basis_orthogonality_weight(config: dict[str, Any]) -> f
     return float(config["runtime"].get("pilot_writer_slot_basis_orthogonality_weight", 0.0))
 
 
+def _resolve_writer_slot_energy_balance_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_slot_energy_balance_weight", 0.0))
+
+
+def _resolve_writer_common_mode_penalty_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_common_mode_penalty_weight", 0.0))
+
+
 def _resolve_writer_orthogonalize_slot_basis(config: dict[str, Any]) -> bool:
     return bool(config["runtime"].get("pilot_writer_orthogonalize_slot_basis", False))
 
@@ -1816,6 +1824,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             dropout=float(writer_cfg.get("dropout", 0.0)),
             support_query_residual_scale=float(writer_cfg.get("support_query_residual_scale", 0.0)),
             output_slot_basis_scale=float(writer_cfg.get("output_slot_basis_scale", 0.0)),
+            slot_conditioning_mode=str(writer_cfg.get("slot_conditioning_mode", "shared_add")),
+            shared_state_scale=float(writer_cfg.get("shared_state_scale", 1.0)),
         )
         self.memory_path_variant = _resolve_memory_path_variant(config)
         self.injection_mode = _resolve_injection_mode(config)
@@ -2687,6 +2697,33 @@ def _writer_slot_basis_orthogonality_loss(writer: MemoryWriter | None) -> torch.
     return _slot_diversity_loss(slot_embeddings.unsqueeze(0))
 
 
+def _writer_slot_energy_balance_loss(memory_long: torch.Tensor | None) -> torch.Tensor | None:
+    if memory_long is None:
+        return None
+    slot_norms = MemoryWriter.slot_norms(memory_long.to(dtype=torch.float32))
+    if slot_norms.ndim == 1:
+        slot_norms = slot_norms.unsqueeze(0)
+    if slot_norms.ndim != 2 or slot_norms.shape[1] <= 1:
+        return None
+    slot_norm_mean = slot_norms.mean(dim=1).clamp_min(1e-6)
+    slot_norm_std = slot_norms.std(dim=1, unbiased=False)
+    return torch.mean(slot_norm_std / slot_norm_mean)
+
+
+def _writer_common_mode_penalty(memory_long: torch.Tensor | None) -> torch.Tensor | None:
+    if memory_long is None:
+        return None
+    slots_fp32 = memory_long.to(dtype=torch.float32)
+    if slots_fp32.ndim == 2:
+        slots_fp32 = slots_fp32.unsqueeze(0)
+    if slots_fp32.ndim != 3 or slots_fp32.shape[1] <= 1:
+        return None
+    common_mode = MemoryWriter.common_mode_vector(slots_fp32)
+    common_energy = common_mode.square().sum(dim=-1) * float(slots_fp32.shape[1])
+    total_energy = slots_fp32.square().sum(dim=(1, 2)).clamp_min(1e-6)
+    return torch.mean(common_energy / total_energy)
+
+
 def _reader_fuser_bootstrap_active(*, current_step: int, bootstrap_steps: int) -> bool:
     return int(current_step) <= max(0, int(bootstrap_steps))
 
@@ -2890,6 +2927,8 @@ def run_shared_injection_pilot(
     reader_short_reconstruction_weight = _resolve_reader_short_reconstruction_weight(config)
     reader_fuser_bootstrap_steps = _resolve_reader_fuser_bootstrap_steps(config)
     writer_slot_basis_orthogonality_weight = _resolve_writer_slot_basis_orthogonality_weight(config)
+    writer_slot_energy_balance_weight = _resolve_writer_slot_energy_balance_weight(config)
+    writer_common_mode_penalty_weight = _resolve_writer_common_mode_penalty_weight(config)
     orthogonalize_writer_slot_basis = _resolve_writer_orthogonalize_slot_basis(config)
     support_dataset_path = str(config["task"]["support_dataset_path"])
     train_dataset_path = str(config["task"].get("train_dataset_path", support_dataset_path))
@@ -3317,6 +3356,8 @@ def run_shared_injection_pilot(
                 prefix_artifacts.reader_readouts,
             )
             writer_slot_basis_orthogonality_loss = _writer_slot_basis_orthogonality_loss(runtime.writer)
+            writer_slot_energy_balance_loss = _writer_slot_energy_balance_loss(prefix_artifacts.memory_long)
+            writer_common_mode_penalty_loss = _writer_common_mode_penalty(prefix_artifacts.memory_long)
             if memory_long_diversity_weight > 0.0 and memory_long_diversity_loss is not None:
                 loss = loss + (memory_long_diversity_weight * memory_long_diversity_loss)
             if memory_short_diversity_weight > 0.0 and memory_short_diversity_loss is not None:
@@ -3347,6 +3388,20 @@ def run_shared_injection_pilot(
             ):
                 loss = loss + (
                     writer_slot_basis_orthogonality_weight * writer_slot_basis_orthogonality_loss
+                )
+            if (
+                writer_slot_energy_balance_weight > 0.0
+                and writer_slot_energy_balance_loss is not None
+            ):
+                loss = loss + (
+                    writer_slot_energy_balance_weight * writer_slot_energy_balance_loss
+                )
+            if (
+                writer_common_mode_penalty_weight > 0.0
+                and writer_common_mode_penalty_loss is not None
+            ):
+                loss = loss + (
+                    writer_common_mode_penalty_weight * writer_common_mode_penalty_loss
                 )
             active_alignment_aux_weight = _active_competitor_hinge_weight(
                 current_step=step + 1,
@@ -3500,6 +3555,22 @@ def run_shared_injection_pilot(
                     "writer_slot_basis_orthogonality_weight": float(
                         writer_slot_basis_orthogonality_weight
                     ),
+                    "writer_slot_energy_balance_loss": (
+                        0.0
+                        if writer_slot_energy_balance_loss is None
+                        else float(writer_slot_energy_balance_loss.item())
+                    ),
+                    "writer_slot_energy_balance_weight": float(
+                        writer_slot_energy_balance_weight
+                    ),
+                    "writer_common_mode_penalty_loss": (
+                        0.0
+                        if writer_common_mode_penalty_loss is None
+                        else float(writer_common_mode_penalty_loss.item())
+                    ),
+                    "writer_common_mode_penalty_weight": float(
+                        writer_common_mode_penalty_weight
+                    ),
                     "writer_slot_basis_pairwise_cosine_mean": _pairwise_cosine_mean(
                         runtime.writer.slot_embeddings
                         if getattr(runtime.writer, "arch", "") == "transformer"
@@ -3549,6 +3620,14 @@ def run_shared_injection_pilot(
                     "memory_short_effective_rank": float(memory_short_effective_rank),
                     "support_state_effective_rank": float(support_state_effective_rank),
                     "pilot_memory_path_variant": runtime.memory_path_variant,
+                    "pilot_writer_slot_conditioning_mode": getattr(
+                        runtime.writer,
+                        "slot_conditioning_mode",
+                        "shared_add",
+                    ),
+                    "pilot_writer_shared_state_scale": float(
+                        getattr(runtime.writer, "shared_state_scale", 1.0)
+                    ),
                     "pilot_reader_context_mode": runtime.reader_context_mode,
                     "pilot_reader_conditioning_mode": (
                         None if runtime.reader is None else runtime.reader.conditioning_mode
@@ -3731,7 +3810,15 @@ def run_shared_injection_pilot(
         "pilot_writer_output_slot_basis_scale": float(
             config["method"].get("writer", {}).get("output_slot_basis_scale", 0.0)
         ),
+        "pilot_writer_slot_conditioning_mode": str(
+            config["method"].get("writer", {}).get("slot_conditioning_mode", "shared_add")
+        ),
+        "pilot_writer_shared_state_scale": float(
+            config["method"].get("writer", {}).get("shared_state_scale", 1.0)
+        ),
         "pilot_writer_orthogonalize_slot_basis": orthogonalize_writer_slot_basis,
+        "pilot_writer_slot_energy_balance_weight": writer_slot_energy_balance_weight,
+        "pilot_writer_common_mode_penalty_weight": writer_common_mode_penalty_weight,
         "pilot_alignment_aux_mode": alignment_aux_mode,
         "pilot_alignment_aux_weight": alignment_aux_weight_max,
         "pilot_alignment_aux_weight_max": alignment_aux_weight_max,
@@ -3838,6 +3925,12 @@ def run_shared_injection_pilot(
         ),
         "train_final_writer_slot_basis_orthogonality_loss": (
             train_events[-1]["writer_slot_basis_orthogonality_loss"] if train_events else None
+        ),
+        "train_final_writer_slot_energy_balance_loss": (
+            train_events[-1]["writer_slot_energy_balance_loss"] if train_events else None
+        ),
+        "train_final_writer_common_mode_penalty_loss": (
+            train_events[-1]["writer_common_mode_penalty_loss"] if train_events else None
         ),
         "train_final_writer_slot_basis_pairwise_cosine_mean": (
             train_events[-1]["writer_slot_basis_pairwise_cosine_mean"] if train_events else None

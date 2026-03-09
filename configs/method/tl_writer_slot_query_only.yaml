@@ -1,0 +1,3 @@
+method:
+  writer:
+    slot_conditioning_mode: slot_query_only

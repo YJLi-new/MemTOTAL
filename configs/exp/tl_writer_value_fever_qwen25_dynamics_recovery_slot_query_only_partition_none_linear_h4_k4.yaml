@@ -1,0 +1,11 @@
+includes:
+  - tl_writer_value_fever_qwen25_slot_query_only_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_writer_value_fever_qwen25_dynamics_recovery_slot_query_only_partition_none_linear_h4_k4
+  stage: TL-Writer-Value-V1
+  method_variant: fever-tl-writer-v1-dynamics-slot-query-only-partition-none-linear-h4-k4
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl
