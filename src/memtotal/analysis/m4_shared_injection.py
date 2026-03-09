@@ -4064,7 +4064,7 @@ def compare_tl_writer_value_runs(
         comparison_conclusion = "failure"
         primary_interpretation = "writer_architecture_first_matrix_flat"
         recommended_arm = "control"
-        move_to_v2 = False
+        move_to_v2 = True
         move_to_v1_penalties = False
         stop_after_v1_architecture = True
         if (

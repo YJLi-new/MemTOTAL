@@ -3130,6 +3130,100 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertFalse(summary["move_to_v2"])
             self.assertTrue(summary["move_to_v1_penalties"])
 
+    def test_compare_tl_writer_value_runs_hard_stop_still_moves_to_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_metrics(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            control_metrics = write_metrics(
+                "control_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "shared_add",
+                    "pilot_writer_shared_state_scale": 1.0,
+                    "best_adapt_task_score": 0.30,
+                    "best_adapt_macro_f1": 0.25,
+                    "dominant_label_fraction": 0.97,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.44},
+                        {"step": 2, "dominant_label_fraction": 0.92},
+                    ],
+                    "memory_long_top1_top2_ratio": 70.0,
+                    "memory_long_common_mode_energy_ratio": 0.99,
+                    "memory_long_centered_effective_rank": 6.8,
+                    "reader_value_projected_effective_rank": 1.5,
+                    "reader_value_projected_pairwise_cosine_mean": 0.97,
+                    "reader_readout_effective_rank": 1.2,
+                    "reader_readout_centered_effective_rank": 1.1,
+                    "reader_readout_pairwise_cosine_mean": 0.999,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+            shared_scaled_metrics = write_metrics(
+                "shared_scaled_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "shared_add_scaled",
+                    "pilot_writer_shared_state_scale": 0.02,
+                    "best_adapt_task_score": 0.29,
+                    "best_adapt_macro_f1": 0.24,
+                    "dominant_label_fraction": 0.96,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.44},
+                        {"step": 2, "dominant_label_fraction": 0.91},
+                    ],
+                    "memory_long_top1_top2_ratio": 71.0,
+                    "memory_long_common_mode_energy_ratio": 0.99,
+                    "memory_long_centered_effective_rank": 6.7,
+                    "reader_value_projected_effective_rank": 1.5,
+                    "reader_value_projected_pairwise_cosine_mean": 0.97,
+                    "reader_readout_effective_rank": 1.19,
+                    "reader_readout_centered_effective_rank": 1.1,
+                    "reader_readout_pairwise_cosine_mean": 0.9991,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+            slot_query_only_metrics = write_metrics(
+                "slot_query_only_metrics.json",
+                {
+                    "pilot_writer_slot_conditioning_mode": "slot_query_only",
+                    "pilot_writer_shared_state_scale": 1.0,
+                    "best_adapt_task_score": 0.28,
+                    "best_adapt_macro_f1": 0.23,
+                    "dominant_label_fraction": 0.96,
+                    "snapshot_metrics": [
+                        {"step": 0, "dominant_label_fraction": 0.45},
+                        {"step": 2, "dominant_label_fraction": 0.92},
+                    ],
+                    "memory_long_top1_top2_ratio": 69.5,
+                    "memory_long_common_mode_energy_ratio": 0.99,
+                    "memory_long_centered_effective_rank": 6.8,
+                    "reader_value_projected_effective_rank": 1.5,
+                    "reader_value_projected_pairwise_cosine_mean": 0.97,
+                    "reader_readout_effective_rank": 1.21,
+                    "reader_readout_centered_effective_rank": 1.1,
+                    "reader_readout_pairwise_cosine_mean": 0.9989,
+                    "train_reader_to_support_grad_ratio_steps_1_4_median": 1.0,
+                    "train_fuser_to_support_grad_ratio_steps_1_4_median": 1.0,
+                },
+            )
+
+            summary = compare_tl_writer_value_runs(
+                control_metrics_json=str(control_metrics),
+                shared_scaled_metrics_json=str(shared_scaled_metrics),
+                slot_query_only_metrics_json=str(slot_query_only_metrics),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "failure")
+            self.assertTrue(summary["move_to_v2"])
+            self.assertFalse(summary["move_to_v1_penalties"])
+            self.assertTrue(summary["stop_after_v1_architecture"])
+            self.assertEqual(summary["recommended_arm"], "control")
+
 
 if __name__ == "__main__":
     unittest.main()
