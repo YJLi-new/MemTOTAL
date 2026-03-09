@@ -436,6 +436,20 @@ def _resolve_source_stub_weight_decay(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_source_stub_weight_decay", 0.0))
 
 
+def _resolve_lr_schedule(config: dict[str, Any]) -> str:
+    schedule = str(config["runtime"].get("pilot_lr_schedule", "constant"))
+    if schedule not in {"constant", "constant_with_linear_warmup"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_lr_schedule={schedule}. "
+            "Expected one of constant, constant_with_linear_warmup."
+        )
+    return schedule
+
+
+def _resolve_lr_warmup_steps(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_lr_warmup_steps", 0))
+
+
 def _resolve_support_encoder_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_support_encoder_mode", "pooled_block"))
     if mode not in {"pooled_block", "structured_support_set"}:
@@ -3725,6 +3739,45 @@ def _safe_grad_ratio(numerator: float, denominator: float) -> float:
     return float(numerator / max(abs(denominator), 1e-8))
 
 
+def _learning_rate_scale(
+    *,
+    schedule: str,
+    step: int,
+    warmup_steps: int,
+) -> float:
+    if schedule == "constant" or warmup_steps <= 0:
+        return 1.0
+    return min(1.0, float(step) / float(max(1, warmup_steps)))
+
+
+def _apply_learning_rate_schedule(
+    optimizer: torch.optim.Optimizer,
+    *,
+    base_lrs: list[float],
+    schedule: str,
+    warmup_steps: int,
+    step: int,
+) -> dict[str, float]:
+    scale = _learning_rate_scale(
+        schedule=schedule,
+        step=step,
+        warmup_steps=warmup_steps,
+    )
+    lr_by_group: dict[str, float] = {}
+    for index, (group, base_lr) in enumerate(zip(optimizer.param_groups, base_lrs, strict=False)):
+        current_lr = float(base_lr) * scale
+        group["lr"] = current_lr
+        group_name = str(group.get("name", f"group_{index}"))
+        lr_by_group[group_name] = current_lr
+    return lr_by_group
+
+
+def _tail_window_start(train_steps: int, *, window_size: int) -> int:
+    if train_steps <= 0:
+        return 1
+    return max(1, int(train_steps) - int(window_size) + 1)
+
+
 def _median_train_event_metric(
     train_events: list[dict[str, Any]],
     *,
@@ -4110,6 +4163,8 @@ def run_shared_injection_pilot(
     support_limit = max(0, int(config["runtime"].get("pilot_support_examples", 8)))
     train_steps = int(config["runtime"].get("pilot_train_steps", 96))
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
+    lr_schedule = _resolve_lr_schedule(config)
+    lr_warmup_steps = _resolve_lr_warmup_steps(config)
     writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 1e-4))
     writer_adapter_learning_rate = _resolve_writer_adapter_learning_rate(config)
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
@@ -4138,12 +4193,17 @@ def run_shared_injection_pilot(
     if arm in {"base_only", "teacher_text"} or writer_memory_control == "zero":
         train_steps = 0
         projector_warmup_steps = 0
+        lr_warmup_steps = 0
     if injection_checkpoint_path:
         train_steps = 0
         projector_warmup_steps = 0
+        lr_warmup_steps = 0
     if dry_run:
         train_steps = min(train_steps, 2)
         projector_warmup_steps = min(projector_warmup_steps, train_steps)
+        lr_warmup_steps = min(lr_warmup_steps, train_steps)
+    projector_warmup_steps = min(projector_warmup_steps, train_steps)
+    lr_warmup_steps = min(lr_warmup_steps, train_steps)
 
     task_evaluator = build_task_evaluator(config)
     support_examples = _load_task_dataset_with_path(config, support_dataset_path)
@@ -4387,6 +4447,7 @@ def run_shared_injection_pilot(
         source_stub_parameters = runtime.source_stub_parameters()
         optimizer_groups = [
             {
+                "name": "prefix_projector",
                 "params": list(runtime.prefix_projector.parameters()),
                 "lr": projector_learning_rate,
                 "weight_decay": projector_weight_decay,
@@ -4395,6 +4456,7 @@ def run_shared_injection_pilot(
         if source_stub_parameters:
             optimizer_groups.append(
                 {
+                    "name": "source_stub",
                     "params": source_stub_parameters,
                     "lr": source_stub_learning_rate,
                     "weight_decay": source_stub_weight_decay,
@@ -4403,6 +4465,7 @@ def run_shared_injection_pilot(
         if writer_base_parameters:
             optimizer_groups.append(
                 {
+                    "name": "writer_base",
                     "params": writer_base_parameters,
                     "lr": writer_learning_rate,
                     "weight_decay": writer_weight_decay,
@@ -4411,6 +4474,7 @@ def run_shared_injection_pilot(
         if writer_adapter_parameters:
             optimizer_groups.append(
                 {
+                    "name": "writer_adapter",
                     "params": writer_adapter_parameters,
                     "lr": writer_adapter_learning_rate,
                     "weight_decay": writer_adapter_weight_decay,
@@ -4419,6 +4483,7 @@ def run_shared_injection_pilot(
         if runtime.support_encoder is not None:
             optimizer_groups.append(
                 {
+                    "name": "support_encoder",
                     "params": list(runtime.support_encoder.parameters()),
                     "lr": writer_learning_rate,
                     "weight_decay": writer_weight_decay,
@@ -4427,6 +4492,7 @@ def run_shared_injection_pilot(
         if runtime.reader is not None:
             optimizer_groups.append(
                 {
+                    "name": "reader",
                     "params": list(runtime.reader.parameters()),
                     "lr": writer_learning_rate,
                     "weight_decay": writer_weight_decay,
@@ -4435,6 +4501,7 @@ def run_shared_injection_pilot(
         if runtime.fuser is not None:
             optimizer_groups.append(
                 {
+                    "name": "fuser",
                     "params": list(runtime.fuser.parameters()),
                     "lr": writer_learning_rate,
                     "weight_decay": writer_weight_decay,
@@ -4446,14 +4513,14 @@ def run_shared_injection_pilot(
         if receiver_lora_parameters:
             optimizer_groups.append(
                 {
+                    "name": "receiver_lora",
                     "params": receiver_lora_parameters,
                     "lr": receiver_lora_learning_rate,
                     "weight_decay": receiver_lora_weight_decay,
                 }
             )
-        optimizer = torch.optim.AdamW(
-            optimizer_groups
-        )
+        optimizer = torch.optim.AdamW(optimizer_groups)
+        optimizer_base_lrs = [float(group["lr"]) for group in optimizer.param_groups]
         for step in range(train_steps):
             bootstrap_active = _reader_fuser_bootstrap_active(
                 current_step=step + 1,
@@ -4480,6 +4547,13 @@ def run_shared_injection_pilot(
             runtime.set_source_stub_trainable(not projector_frozen)
             runtime.set_support_encoder_trainable(not writer_base_frozen)
             runtime.set_prefix_projector_trainable(not projector_frozen)
+            optimizer_lr_by_group = _apply_learning_rate_schedule(
+                optimizer,
+                base_lrs=optimizer_base_lrs,
+                schedule=lr_schedule,
+                warmup_steps=lr_warmup_steps,
+                step=step + 1,
+            )
             train_example = train_caches[step % len(train_caches)]
             selected_episode_id = ""
             selected_episode_source_split = ""
@@ -4767,6 +4841,7 @@ def run_shared_injection_pilot(
                 reader_grad_norm,
             )
             total_grad_norm = 0.0
+            was_grad_clipped = False
             if gradient_clip_norm > 0.0:
                 parameters = [
                     parameter
@@ -4777,6 +4852,7 @@ def run_shared_injection_pilot(
                     total_grad_norm = float(
                         torch.nn.utils.clip_grad_norm_(parameters, gradient_clip_norm).item()
                     )
+                    was_grad_clipped = bool(total_grad_norm > (gradient_clip_norm + 1e-6))
             optimizer.step()
             profiler.add_example()
             profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
@@ -5025,6 +5101,8 @@ def run_shared_injection_pilot(
                     "fuser_trainable_params": _trainable_parameter_count(runtime.fuser),
                     "prefix_projector_trainable_params": _trainable_parameter_count(runtime.prefix_projector),
                     "total_grad_norm_pre_clip": total_grad_norm,
+                    "was_grad_clipped": was_grad_clipped,
+                    "optimizer_lr_by_group": optimizer_lr_by_group,
                     "prefix_artifact_stats": prefix_artifacts.prefix_stats,
                     **train_prefix_attention_metrics,
                     **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
@@ -5153,6 +5231,18 @@ def run_shared_injection_pilot(
         step_start=1,
         step_end=4,
     )
+    train_grad_norm_writer_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer",
+        step_start=1,
+        step_end=4,
+    )
+    train_grad_norm_projector_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_projector",
+        step_start=1,
+        step_end=4,
+    )
     train_grad_norm_fuser_steps_1_4_median = _median_train_event_metric(
         train_events,
         key="grad_norm_fuser",
@@ -5207,6 +5297,18 @@ def run_shared_injection_pilot(
         step_start=5,
         step_end=8,
     )
+    train_grad_norm_writer_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer",
+        step_start=5,
+        step_end=8,
+    )
+    train_grad_norm_projector_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_projector",
+        step_start=5,
+        step_end=8,
+    )
     train_grad_norm_fuser_steps_5_8_median = _median_train_event_metric(
         train_events,
         key="grad_norm_fuser",
@@ -5224,6 +5326,80 @@ def run_shared_injection_pilot(
         key="grad_norm_writer_adapter",
         step_start=5,
         step_end=8,
+    )
+    head_window_end = min(train_steps, 50)
+    tail_window_start = _tail_window_start(train_steps, window_size=50)
+    train_loss_steps_1_50_median = _median_train_event_metric(
+        train_events,
+        key="loss",
+        step_start=1,
+        step_end=head_window_end,
+    )
+    train_loss_tail_50_steps_median = _median_train_event_metric(
+        train_events,
+        key="loss",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_loss_steps_451_500_median = _median_train_event_metric(
+        train_events,
+        key="loss",
+        step_start=451,
+        step_end=500,
+    )
+    train_grad_norm_writer_steps_1_50_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer",
+        step_start=1,
+        step_end=head_window_end,
+    )
+    train_grad_norm_writer_tail_50_steps_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_grad_norm_writer_steps_451_500_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_writer",
+        step_start=451,
+        step_end=500,
+    )
+    train_grad_norm_projector_steps_1_50_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_projector",
+        step_start=1,
+        step_end=head_window_end,
+    )
+    train_grad_norm_projector_tail_50_steps_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_projector",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_grad_norm_projector_steps_451_500_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_projector",
+        step_start=451,
+        step_end=500,
+    )
+    train_grad_norm_receiver_lora_steps_1_50_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_receiver_lora",
+        step_start=1,
+        step_end=head_window_end,
+    )
+    train_grad_norm_receiver_lora_tail_50_steps_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_receiver_lora",
+        step_start=tail_window_start,
+        step_end=train_steps,
+    )
+    train_grad_norm_receiver_lora_steps_451_500_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_receiver_lora",
+        step_start=451,
+        step_end=500,
     )
     metrics = {
         "mode": "train",
@@ -5377,6 +5553,8 @@ def run_shared_injection_pilot(
         "pilot_source_stub_weight_decay": source_stub_weight_decay,
         "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_receiver_lora_weight_decay": receiver_lora_weight_decay,
+        "pilot_lr_schedule": lr_schedule,
+        "pilot_lr_warmup_steps": lr_warmup_steps,
         "pilot_projector_warmup_steps": projector_warmup_steps,
         "pilot_train_support_mask_count": train_support_mask_count,
         "pilot_choice_ce_weight": choice_ce_weight,
@@ -5402,6 +5580,9 @@ def run_shared_injection_pilot(
         "snapshot_metrics": snapshot_metrics,
         "stage_c_choice_margin": choice_margin,
         "train_final_loss": train_events[-1]["loss"] if train_events else None,
+        "train_loss_steps_1_50_median": train_loss_steps_1_50_median,
+        "train_loss_tail_50_steps_median": train_loss_tail_50_steps_median,
+        "train_loss_steps_451_500_median": train_loss_steps_451_500_median,
         "train_final_choice_ce_loss": train_events[-1]["choice_ce_loss"] if train_events else None,
         "train_final_competitor_hinge_loss": (
             train_events[-1]["competitor_hinge_loss"] if train_events else None
@@ -5526,6 +5707,8 @@ def run_shared_injection_pilot(
         ),
         "train_grad_norm_reader_steps_1_4_median": train_grad_norm_reader_steps_1_4_median,
         "train_grad_norm_source_stub_steps_1_4_median": train_grad_norm_source_stub_steps_1_4_median,
+        "train_grad_norm_writer_steps_1_4_median": train_grad_norm_writer_steps_1_4_median,
+        "train_grad_norm_projector_steps_1_4_median": train_grad_norm_projector_steps_1_4_median,
         "train_grad_norm_fuser_steps_1_4_median": train_grad_norm_fuser_steps_1_4_median,
         "train_grad_norm_writer_adapter_steps_1_4_median": (
             train_grad_norm_writer_adapter_steps_1_4_median
@@ -5547,12 +5730,33 @@ def run_shared_injection_pilot(
         ),
         "train_grad_norm_reader_steps_5_8_median": train_grad_norm_reader_steps_5_8_median,
         "train_grad_norm_source_stub_steps_5_8_median": train_grad_norm_source_stub_steps_5_8_median,
+        "train_grad_norm_writer_steps_5_8_median": train_grad_norm_writer_steps_5_8_median,
+        "train_grad_norm_projector_steps_5_8_median": train_grad_norm_projector_steps_5_8_median,
         "train_grad_norm_fuser_steps_5_8_median": train_grad_norm_fuser_steps_5_8_median,
         "train_grad_norm_writer_adapter_steps_5_8_median": (
             train_grad_norm_writer_adapter_steps_5_8_median
         ),
         "train_grad_norm_receiver_lora_steps_5_8_median": (
             train_grad_norm_receiver_lora_steps_5_8_median
+        ),
+        "train_grad_norm_writer_steps_1_50_median": train_grad_norm_writer_steps_1_50_median,
+        "train_grad_norm_writer_tail_50_steps_median": train_grad_norm_writer_tail_50_steps_median,
+        "train_grad_norm_writer_steps_451_500_median": train_grad_norm_writer_steps_451_500_median,
+        "train_grad_norm_projector_steps_1_50_median": train_grad_norm_projector_steps_1_50_median,
+        "train_grad_norm_projector_tail_50_steps_median": (
+            train_grad_norm_projector_tail_50_steps_median
+        ),
+        "train_grad_norm_projector_steps_451_500_median": (
+            train_grad_norm_projector_steps_451_500_median
+        ),
+        "train_grad_norm_receiver_lora_steps_1_50_median": (
+            train_grad_norm_receiver_lora_steps_1_50_median
+        ),
+        "train_grad_norm_receiver_lora_tail_50_steps_median": (
+            train_grad_norm_receiver_lora_tail_50_steps_median
+        ),
+        "train_grad_norm_receiver_lora_steps_451_500_median": (
+            train_grad_norm_receiver_lora_steps_451_500_median
         ),
         "train_final_reader_to_support_grad_ratio": (
             train_events[-1]["reader_to_support_grad_ratio"] if train_events else None
@@ -5601,6 +5805,15 @@ def run_shared_injection_pilot(
         ),
         "train_final_prefix_projector_trainable_params": (
             train_events[-1]["prefix_projector_trainable_params"] if train_events else None
+        ),
+        "train_final_total_grad_norm_pre_clip": (
+            train_events[-1]["total_grad_norm_pre_clip"] if train_events else None
+        ),
+        "train_final_was_grad_clipped": (
+            train_events[-1]["was_grad_clipped"] if train_events else None
+        ),
+        "train_final_optimizer_lr_by_group": (
+            train_events[-1]["optimizer_lr_by_group"] if train_events else {}
         ),
         "train_final_projector_frozen": train_events[-1]["projector_frozen"] if train_events else None,
         "train_final_reader_fuser_bootstrap_active": (

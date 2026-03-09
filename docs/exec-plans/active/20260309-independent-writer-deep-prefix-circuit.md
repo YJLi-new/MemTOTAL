@@ -1,5 +1,10 @@
 # 20260309 Independent Writer Deep-Prefix Circuit
 
+## Status
+- Historical route-opening record only.
+- The live continuation of `PLANv5.md` is now tracked in `docs/exec-plans/active/20260309-planv5-addendum-writer-direct-validation.md`.
+- The old `stop_after_p2a` conclusion below is preserved for provenance, but it is no longer the governing decision rule for the project.
+
 ## Purpose
 Execute the first live branch authorized by `PLANv5.md`: open the attention -> deep-prefix -> source gradient circuit for the independent Writer before any substantial Writer usefulness training.
 
@@ -115,6 +120,10 @@ If both P1a and P2a fail to open the circuit, do **not** run bigger Writer or wr
   - `P1a` accuracy `0.5`
   - `P2a` accuracy `0.5`
   - both FEVER arms also had `delta_answer_logprob=0.0`.
+- 2026-03-09: Corrected interpretation recorded in the new addendum exec plan:
+  - the `source_stub` branch is retained as a route-liveness probe;
+  - `delta_answer_logprob > 0` is no longer treated as a valid usefulness gate for a static prefix source;
+  - the next live branch is the stable `writer_direct + sparse_deep_prefix + early4 receiver micro-LoRA` validation recipe.
 
 ## Decision Log
 - The branch did show mechanical liveness:
@@ -122,12 +131,8 @@ If both P1a and P2a fail to open the circuit, do **not** run bigger Writer or wr
   - receiver-LoRA gradients were strongly nonzero in P2a;
   - GSM8K and FEVER showed nontrivial prefix-attention mass on selected layers.
 - That was still insufficient for the `PLANv5` gate because the required usefulness signal never appeared on any non-FEVER task: `delta_answer_logprob` stayed exactly `0.0` for GSM8K and NarrativeQA in both P1a and P2a.
-- Per `PLANv5` Section 17.6 Stop Rule A, this closes the external independent-writer deep-prefix opening route at `P2a`. This exec plan does **not** authorize:
-  - `P1b`
-  - `P2b`
-  - bigger Writer retries
-  - writer-only adapter retries
-- The next authorized move is the fallback architecture decision in `PLANv5.md` Section 20.
+- Historical note: the original branch write-up treated the zero-mean `delta_answer_logprob` result as terminal. That specific interpretation is now revoked because `source_stub` is static and was never a valid usefulness substrate.
+- The next authorized move is defined by the addendum exec plan, not by the old `stop_after_p2a` line here.
 
 ## Surprises & Discoveries
 - The new diagnostics changed the backbone runtime contract: when prefix-attention auditing is requested, the HF Qwen path must provide attentions, which requires eager attention rather than `sdpa`.

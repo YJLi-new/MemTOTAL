@@ -4,6 +4,8 @@
 **Language:** English  
 **Status:** Active replacement for the narrow next-step branch after `PLANv4.md` reached its own terminal gates on the `W0 -> F1a -> F1b` path.
 
+> 2026-03-09 addendum: the historical `P1a/P2a` source-stub opening runs remain valid as route-liveness evidence, but their old `stop_after_p2a` usefulness interpretation is superseded by `docs/exec-plans/active/20260309-planv5-addendum-writer-direct-validation.md`.
+
 ---
 
 ## 0. Scope, Authority, and Intent
@@ -1254,4 +1256,3 @@ Recommended first line:
 - same tasks
 
 These three runs should happen before any new capacity, adapter, Reader, or Qwen3 work.
-
