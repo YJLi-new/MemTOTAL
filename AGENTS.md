@@ -1,285 +1,286 @@
-# AGENTS.md — 给 Codex / Agent 的长期指引（本仓库根目录）
+# AGENTS.md - Long-Lived Guidance for Codex / Agents (Repo Root)
 
-> 本文件是 **Codex/Agent 的地图，不是百科全书**。  
-> 它只负责四件事：**入口导航、执行循环、研究红线、交付格式**。  
-> 更深的知识请写入并维护在：`PLANv2.md`、`MAIN_IDEA.md`、`EXPERIMENTS_INFO.md`、`docs/exec-plans/` 与 `docs/`。
-
----
-
-## 0) 一句话 TL;DR（永远先做这件事）
-
-**任何任务开始之前：先打开并严格按 `PLANv2.md` 执行。**
-
-- `PLANv2.md`：唯一入口 / 当前执行计划 / DoD / 产物要求 / 里程碑顺序
-- `MAIN_IDEA.md`：方法定义 / 训练阶段 / 核心假设 / 与 MemGen 的关键差异
-- `EXPERIMENTS_INFO.md`：实验协议 / baseline / 主表与图 / 统计规范 / 论文产物口径
-
-> 规则：  
-> 1. **不要自行压缩或删除**这三份文档中的关键信息。  
-> 2. 允许重排结构、加目录、补交叉链接、改措辞；不允许删掉关键实验、对照、DoD、脚本入口或论文主张。  
-> 3. 若文档冲突：**方法口径以 `MAIN_IDEA.md` 为准；实验口径以 `EXPERIMENTS_INFO.md` 为准；执行顺序与验收以 `PLANv2.md` 为准。**
+> This file is the **map for Codex/agents, not an encyclopedia**.
+> It is responsible for only four things: **entry-point navigation, the execution loop, research guardrails, and delivery format**.
+> Deeper knowledge should be written into and maintained in: `PLANv3.md`, `docs/MAIN_IDEA.md`, `docs/EXPERIMENTS_INFO.md`, `docs/exec-plans/`, and `docs/`.
 
 ---
 
-## 1) 文档分工（先分工，再做事）
+## 0) One-Sentence TL;DR (always do this first)
 
-### `PLANv2.md` —— 单一权威 runbook / backlog
-所有任务都从这里开始。它负责：
-- 里程碑顺序（M0–M6）
-- P0/P1/P2 优先级
-- 每项任务的 Definition of Done（DoD）
-- 何时必须去读 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md`
-- harness-first 约束：ExecPlan、可复现、结果治理、交付格式
+**Before starting any task, open `PLANv3.md` first and execute against it strictly.**
 
-### `MAIN_IDEA.md` —— 方法与论文叙事的规格说明
-当任务涉及下面任一项时，必须读取：
-- Writer / Reader / Fuser / Injector 的定义与接口
-- `M_long / M_short / queries / segment` 的符号与形状
-- 训练阶段（Stage A/B/C）与冻结/适配策略
-- 核心论文主张：  
-  1) 通用 Writer  
-  2) 可 meta-train → few-shot 适配的 Reader queries  
-  3) 写长读短  
-  4) CDMI（跨大域记忆干扰）缓解
+- `PLANv3.md`: single entry point / current execution plan / DoD / artifact requirements / milestone order
+- `docs/MAIN_IDEA.md`: method definition / training stages / core hypotheses / key differences from MemGen
+- `docs/EXPERIMENTS_INFO.md`: experiment protocol / baselines / tables and figures / statistical rules / paper-facing artifact standards
 
-### `EXPERIMENTS_INFO.md` —— 实验协议与论文产物口径
-当任务涉及下面任一项时，必须读取：
-- 主表、跨域泛化、few-shot 曲线、CDMI、持续学习、效率、机制分析
-- baseline 清单与预算对齐
-- 任务套件、指标、统计规范
-- 图/表/CSV/TEX 的最终产出格式
+> Rules:
+> 1. Do **not** compress away or delete critical information from these three documents.
+> 2. You may reorganize structure, add a table of contents, improve cross-links, and tighten wording; you may not remove key experiments, controls, DoD items, script entry points, or paper claims.
+> 3. If documents conflict: **method authority belongs to `docs/MAIN_IDEA.md`; experiment authority belongs to `docs/EXPERIMENTS_INFO.md`; execution order and acceptance belong to `PLANv3.md`.**
 
 ---
 
-## 2) AGENTS 的定位：只做“地图”，不做“百科”
+## 1) Document Responsibilities (separate responsibilities before doing work)
 
-本文件刻意保持短小。不要把它写成超长手册。长期知识应进入：
-- `PLANv2.md`：任务分解、DoD、优先级、runbook
-- `MAIN_IDEA.md`：方法定义、假设、论文叙事
-- `EXPERIMENTS_INFO.md`：实验矩阵、baseline、统计、图表
-- `docs/exec-plans/`：多小时任务的执行计划与接力状态
-- `docs/`：架构、golden principles、设计决策、质量追踪、专题说明
+### `PLANv3.md` - the single authoritative runbook / backlog
+Every task starts here. It defines:
+- milestone order
+- P0/P1/P2 priorities
+- the Definition of Done (DoD) for each task
+- when you must read `docs/MAIN_IDEA.md` and/or `docs/EXPERIMENTS_INFO.md`
+- harness-first constraints: ExecPlans, reproducibility, results governance, and delivery format
 
-> 任何“重要但会被反复用到”的知识，都应被写回 repo 并版本化，而不是留在聊天记录或人脑里。
+### `docs/MAIN_IDEA.md` - method and paper-story specification
+Read this whenever the task touches any of the following:
+- the definition or interface of Writer / Reader / Fuser / Injector
+- the notation and shapes for `M_long / M_short / queries / segment`
+- the training stages (Stage A/B/C) and freeze/adaptation strategy
+- the core paper claims:
+  1. general Writer
+  2. Reader queries that meta-train and then adapt in few-shot form
+  3. write-long / read-short
+  4. CDMI mitigation across large domain gaps
+
+### `docs/EXPERIMENTS_INFO.md` - experiment protocol and paper-facing standards
+Read this whenever the task touches any of the following:
+- main tables, cross-domain generalization, few-shot curves, CDMI, continual learning, efficiency, or mechanism analysis
+- baseline lists and budget alignment
+- task suites, metrics, and statistical standards
+- the final output format for figures / tables / CSV / TeX
 
 ---
 
-## 3) 标准执行循环（必须按这个走）
+## 2) The Role of AGENTS: a map, not an encyclopedia
 
-### 3.1 Ask → Plan → Code → Validate → Record → PR
+This file should stay intentionally short. Do not turn it into a giant manual. Long-lived knowledge belongs in:
+- `PLANv3.md`: task breakdown, DoD, priorities, runbook
+- `docs/MAIN_IDEA.md`: method definition, hypotheses, paper narrative
+- `docs/EXPERIMENTS_INFO.md`: experiment matrix, baselines, statistics, figures
+- `docs/exec-plans/`: execution plans and relay status for multi-hour work
+- `docs/`: architecture, golden principles, design decisions, quality tracking, focused notes
 
-1. **Ask / Understand**  
-   先在 `PLANv2.md` 里定位对应里程碑、条目与 DoD。  
-   不允许脱离 PLAN “凭感觉”做事。
+> Any knowledge that is important and likely to be reused should be written back into the repo and versioned, not left in chat history or in a person's head.
 
-2. **Plan**  
-   - 若任务预计 ≤30–60 分钟且改动局部：可直接实现，但最终输出仍要包含复现与验证。  
-   - 若任务预计 >60 分钟、跨多个模块、或需要探索：先写 mini-plan。  
-   - 若任务是 multi-hour / 跨里程碑 / 可能中断：必须写 **ExecPlan**。
+---
 
-3. **Code**  
-   小步提交、保持可 review、可回滚。  
-   优先短 PR；不要一次性堆大改动。
+## 3) Standard Execution Loop (must follow this)
 
-4. **Validate**  
-   必须跑测试 / eval / sanity plot / 汇总脚本。  
-   “代码能跑”不等于“任务完成”。  
-   如果结果要进论文，必须验证：预算、seed、split、脚本入口、汇总路径都正确。
+### 3.1 Ask -> Plan -> Code -> Validate -> Record -> PR
 
-5. **Record**  
-   把新知识写回 repo：文档、注释、脚本、测试、配置、决策日志。  
-   不要把关键信息留在聊天记录里。  
-   如果一个问题重复出现两次，优先把它升级成脚本 / 测试 / lint / 结构检查，而不是继续口头提醒。
+1. **Ask / Understand**
+   First locate the relevant milestone, item, and DoD in `PLANv3.md`.
+   Do not work "by feel" outside the plan.
 
-6. **PR / Deliver**  
-   交付时必须写清：
-   - 完成了哪个 PLANv2 条目
-   - 改了哪些文件
-   - 复现命令
-   - 验证命令
-   - 结果与产物路径
-   - 已知问题与下一步
+2. **Plan**
+   - If the task is expected to take <=30-60 minutes and is local in scope: you may implement directly, but the final output still needs reproduction and validation.
+   - If the task is expected to take >60 minutes, spans multiple modules, or requires exploration: write a mini-plan first.
+   - If the task is multi-hour, cross-milestone, or likely to be interrupted: you must write an **ExecPlan**.
 
-### 3.2 ExecPlan 约定（多小时任务必须写）
+3. **Code**
+   Keep changes reviewable and reversible.
+   Prefer short PRs; do not dump one huge change set at once.
 
-满足任一条件必须写 ExecPlan：
-- 预计 >2 小时
-- 跨多个里程碑 / 模块
-- 需要 agent / 机器之间接力
-- 需要多轮试错或大量配置探索
+4. **Validate**
+   You must run tests / eval / sanity plots / summary scripts.
+   "The code runs" does not mean "the task is done."
+   If a result is paper-facing, you must verify that the budget, seed, split, script entry point, and summary path are all correct.
 
-路径约定：
+5. **Record**
+   Write new knowledge back into the repo: docs, comments, scripts, tests, configs, decision logs.
+   Do not leave critical knowledge only in chat.
+   If the same problem happens twice, prefer upgrading it into a script / test / lint / structural check instead of repeating verbal reminders.
+
+6. **PR / Deliver**
+   Every delivery must state clearly:
+   - which `PLANv3.md` item was completed
+   - which files changed
+   - reproduction commands
+   - validation commands
+   - results and artifact paths
+   - known issues and next steps
+
+### 3.2 ExecPlan Conventions (required for multi-hour tasks)
+
+You must write an ExecPlan if any of the following is true:
+- expected runtime >2 hours
+- spans multiple milestones or modules
+- requires a handoff across agents or machines
+- needs multiple rounds of trial and error or large config exploration
+
+Path convention:
 - `docs/exec-plans/active/<YYYYMMDD>-<short-name>.md`
 
-最低内容：
+Minimum content:
 - Purpose
 - Context
 - Plan of Work
 - Concrete Steps
 - Validation & Acceptance
-- Progress（带时间戳）
+- Progress (with timestamps)
 - Decision Log
 - Surprises & Discoveries
 
-> 计划必须 **self-contained**：只靠计划文件 + 当前 working tree，另一个 agent 也能继续。
+> The plan must be **self-contained**: another agent should be able to continue using only the plan file and the current working tree.
 
 ---
 
-## 4) Harness-first 原则（遇到失败时先修系统，不要盲目重试）
+## 4) Harness-First Principles (when something fails, fix the system before blindly retrying)
 
-### 4.1 Repo 是 system-of-record
-对 agent 来说，运行时看不见的知识就等于不存在。  
-因此：
-- 重要知识必须在 repo 内可发现、可版本化、可链接
-- 关键 split、预算、路径、决策、例外、坑点必须写进 markdown / yaml / 脚本
-- 不要把关键上下文只留在聊天、口头讨论、临时笔记里
+### 4.1 The repo is the system of record
+For an agent, knowledge that is not discoverable at runtime effectively does not exist.
+Therefore:
+- important knowledge must be discoverable, versioned, and linkable inside the repo
+- key splits, budgets, paths, decisions, exceptions, and traps must be written into markdown / YAML / scripts
+- do not leave critical context only in chat, verbal discussion, or temporary notes
 
 ### 4.2 Agent legibility is the goal
-你写的代码、脚本、配置、日志、表格，不只是给人看，也要给未来的 agent 看。  
-优先选择：
-- 稳定、明确、可在 repo 内推理的依赖与抽象
-- 单命令可运行的训练/评测/分析入口
-- 结构化日志、稳定命名、清晰目录、严格输出约定
+The code, scripts, configs, logs, and tables you write are not only for humans; they are also for future agents.
+Prefer:
+- stable, explicit dependencies and abstractions that can be reasoned about from inside the repo
+- single-command training / eval / analysis entry points
+- structured logs, stable naming, clear directories, and strict output contracts
 
-### 4.3 缺能力时，先补 harness
-当任务失败时，默认不要“再试一次”。先问：
-- 缺的是哪种能力？
-- 这能力能否通过脚本、测试、lint、文档、结构约束变成 repo 的长期能力？
+### 4.3 If capability is missing, patch the harness first
+When a task fails, do not default to "try again."
+First ask:
+- which capability is missing?
+- can that capability be turned into long-lived repo ability via a script, test, lint, doc, or structural constraint?
 
-典型修复方向：
-- 缺路径/依赖 → 补 `setup_*.sh`
-- 缺统一评测 → 补 `run_eval.py` / `report.py`
-- 缺结果治理 → 补 run 目录契约 / 自动汇总 / CI 检查
-- 缺重复规范 → 补 custom lint / 结构测试 / golden principles
+Typical repair directions:
+- missing path/dependency -> add `setup_*.sh`
+- missing unified eval -> add `run_eval.py` / `report.py`
+- missing result governance -> add run-directory contracts / automatic aggregation / CI checks
+- missing repeated standards -> add custom lint / structural tests / golden principles
 
-### 4.4 严边界、宽内部
-严格约束：
-- 文档口径
-- 任务顺序与 DoD
-- 预算对齐
-- 结果治理
-- run 命名、产物结构、复现命令
+### 4.4 Strict boundaries, flexible internals
+Constrain strictly:
+- doc authority
+- task order and DoD
+- budget alignment
+- result governance
+- run naming, artifact structure, and reproduction commands
 
-在这些边界之内，允许局部实现自由。  
-目标不是“符合某个人类审美”，而是**正确、可维护、可复现、对未来 agent 也可读**。
+Within those boundaries, local implementation freedom is fine.
+The goal is not "match one human's aesthetic"; the goal is **correct, maintainable, reproducible, and legible to future agents**.
 
-### 4.5 吞吐高时，优先短 PR 与 fix-forward
-- 保持 PR 短小、寿命短、可快速 review 与回滚
-- 对 infra / 脚本 / 文档 / 小型 refactor，倾向 fix-forward
-- 但任何会影响**论文数字、数据切分、预算公平性、主要结论**的改动，必须先验证再合并
+### 4.5 Under high throughput, prefer short PRs and fix-forward
+- Keep PRs short-lived, easy to review, and easy to revert
+- For infra / scripts / docs / small refactors, prefer fix-forward
+- But for anything affecting **paper numbers, dataset splits, budget fairness, or main conclusions**, validate before merge
 
-### 4.6 做“垃圾回收”（garbage collection）
-agent 会复制 repo 里已有模式，包括坏模式。  
-因此：
-- 持续清理 stale 配置、过时脚本、重复 helper、失效文档
-- 把 recurring review comment 升级为机械化规则
-- 维护 `docs/` 中的 golden principles / quality tracker / tech-debt tracker（若 PLANv2 要求）
-
----
-
-## 5) 研究导向的硬性红线（不能违反）
-
-### 5.1 论文主张红线
-本项目最终论文的核心卖点固定为四条，不得在执行中被稀释或改写为别的故事：
-
-1. **Writer 通用**：`M_long` 的生成器在 general field 上训练，一次训练，多域复用  
-2. **Reader 可快速适配**：queries 经 meta-train 后，对新域 few-shot / 少步数适配  
-3. **写长读短**：高容量写入、低带宽注入  
-4. **CDMI 缓解**：面对 math ↔ narrative 这类大域差时，我们比 MemGen 更稳
-
-### 5.2 口径红线
-- 不要把本方法实现成“另一个 MemGen”
-- 不要把 meta-learning 偷换成普通多任务训练
-- 不要把 CDMI 从主实验里删掉或降级成附录里的小例子
-- 不要在没有明确标注的情况下做不公平对比（shots、steps、参数量、训练 token、wall time）
-
-### 5.3 结果治理红线
-- **不允许手工抄数**；所有表/图都必须由脚本从 `metrics.json` / `jsonl` 自动汇总
-- **不允许只保留最好看的一次 run**；按 `EXPERIMENTS_INFO.md` 的 seed/CI 规范汇总
-- **不允许 silently 改 task split / metric / budget**；任何变化必须写回 repo 文档并记录原因
+### 4.6 Do garbage collection
+Agents copy existing repo patterns, including bad ones.
+Therefore:
+- continuously remove stale configs, outdated scripts, duplicate helpers, and dead docs
+- upgrade recurring review comments into mechanical rules
+- maintain the golden principles / quality tracker / tech-debt tracker in `docs/` when `PLANv3.md` requires it
 
 ---
 
-## 6) 最小仓库与产物契约（详细以 PLANv2 为准）
+## 5) Research-Critical Hard Guardrails (must not be violated)
 
-### 6.1 目录与知识位置
-推荐目录：
-- `src/`：核心代码
-- `configs/`：训练/评测 YAML
-- `scripts/`：单命令入口
-- `runs/`：原始实验产物（不要进 git）
-- `results/`：汇总表、图、tex、csv
-- `docs/`：exec plans、架构、设计与质量文档
+### 5.1 Paper-claim guardrails
+The final paper's core selling points are fixed and must not be diluted or rewritten into a different story:
 
-### 6.2 所有训练/评测入口都必须支持
+1. **General Writer**: `M_long` is generated by a writer trained on a general field and then reused across domains
+2. **Fast-adapting Reader**: queries meta-train and then adapt to new domains in few-shot / few-step form
+3. **Write long, read short**: high-capacity writing with low-bandwidth injection
+4. **CDMI mitigation**: across large domain gaps such as math vs narrative, we are more stable than MemGen
+
+### 5.2 Narrative guardrails
+- Do not turn this method into "another MemGen"
+- Do not relabel meta-learning as ordinary multi-task training
+- Do not remove CDMI from the main experiments or demote it into a tiny appendix example
+- Do not make unfair comparisons without explicit labeling (shots, steps, parameter count, training tokens, wall time)
+
+### 5.3 Result-governance guardrails
+- **No manual number copying**; every table and figure must be aggregated by script from `metrics.json` / `jsonl`
+- **Do not keep only the prettiest run**; aggregate according to the seed / CI rules in `docs/EXPERIMENTS_INFO.md`
+- **Do not silently change task splits, metrics, or budgets**; every change must be written back into the repo docs with a reason
+
+---
+
+## 6) Minimum Repo and Artifact Contract (details defer to `PLANv3.md`)
+
+### 6.1 Directory and knowledge layout
+Recommended layout:
+- `src/`: core code
+- `configs/`: training / eval YAMLs
+- `scripts/`: single-command entry points
+- `runs/`: raw experiment artifacts (do not commit)
+- `results/`: aggregated tables, figures, TeX, CSV
+- `docs/`: exec plans, architecture, design, and quality docs
+
+### 6.2 Every training/eval entry point should support
 - `--config <yaml>`
 - `--seed`
 - `--output_dir`
-- `--resume`（可选但推荐）
+- `--resume` (optional but recommended)
 
-### 6.3 每个 run 至少要保存
-- config 快照
+### 6.3 Every run should save at least
+- config snapshot
 - seed
 - git hash
-- metrics（json/jsonl/csv）
-- 关键日志
-- 关键图表或生成的中间 CSV
+- metrics (`json/jsonl/csv`)
+- key logs
+- key figures or generated intermediate CSVs
 
-### 6.4 单个 run 的定义
-一个 **run** = 固定 `{backbone, 方法变体, 任务/域, seed, 关键超参}` 的一次训练或一次完整评测。  
-shots × steps 网格应尽量在一个 run 内循环完成，而不是拆成大量零碎 job。
-
----
-
-## 7) 研究北极星（给 agent 的最小方法摘要）
-
-本项目研究一种面向推理型 LLM/Agent 的内部记忆机制：
-
-- 每个 reasoning segment 写入一个高容量 latent buffer：`M_long`
-- 多个 Reader queries 从 `M_long` 读取多个 facet
-- 读出结果融合为极短的 `M_short`
-- 只有 `M_short` 被注入下一段推理上下文
-- Writer 尽量通用；Reader queries 可 meta-train 并对新域快速适配
-
-> 细节与严格定义在 `MAIN_IDEA.md`。  
-> 任何实现若涉及接口、训练阶段、冻结/解冻、CDMI 叙事，必须回看 `MAIN_IDEA.md`，不要靠这里的简略描述硬猜。
+### 6.4 Definition of a single run
+One **run** = one training or one complete eval for a fixed `{backbone, method variant, task/domain, seed, key hyperparameters}`.
+Whenever possible, shots x steps grids should be looped within one run instead of fragmented into many tiny jobs.
 
 ---
 
-## 8) 验证与交付格式（每次都必须给）
+## 7) Research North Star (minimal method summary for agents)
 
-每次阶段性交付必须包含：
+This project studies an internal memory mechanism for reasoning LLMs / agents:
 
-1. **完成内容**：对应 PLANv2 条目与简短说明  
-2. **修改文件**：文件列表  
-3. **复现方式**：命令 + config + seed + output_dir  
-4. **验证方式**：tests / eval / plots  
-5. **结果**：关键指标 + 产物路径  
-6. **已知问题**：失败点、风险、下一步建议  
-7. **若有文档更新**：指出更新了哪些 repo 文档，以及为什么必须更新它们
+- each reasoning segment writes into a high-capacity latent buffer: `M_long`
+- multiple Reader queries read multiple facets from `M_long`
+- the readouts are fused into a very short `M_short`
+- only `M_short` is injected into the next reasoning context
+- the Writer should be as general as possible; the Reader queries should meta-train and then adapt quickly to new domains
 
----
-
-## 9) 遇到不确定时怎么做（不要硬猜）
-
-遇到以下情况时，不要编造命令或假设默认设置：
-- 数据下载权限 / 路径不明
-- benchmark harness 未接好
-- 需要大规模训练但显存 / 队列 / 存储不确定
-- 文档口径冲突
-- baseline 预算对齐不清楚
-
-正确处理流程：
-1. 先查 `PLANv2.md`
-2. 再查 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md`
-3. 仍不明确：列出 2–3 个方案，写清风险/成本/推荐方案，等待人类决策
+> The detailed and strict definitions live in `docs/MAIN_IDEA.md`.
+> If an implementation touches interfaces, training stages, freezing/unfreezing, or the CDMI narrative, go back to `docs/MAIN_IDEA.md` instead of guessing from this summary.
 
 ---
 
-## 10) 最后提醒（非常重要）
+## 8) Validation and Delivery Format (must be included every time)
 
-- **先做 paper-critical 的东西**：主表、跨域 few-shot、CDMI、持续学习、效率、机制分析
-- **AGENTS 是地图，不是百科**：不要把大量细节回填到这里
-- **Repo 是 system-of-record**：重要知识必须版本化写回仓库
-- **失败不是“再试一次”**：失败意味着缺脚本、缺测试、缺规则、缺知识入口；优先补 harness
-- **如果一个规则重要到会重复提醒，就把它升级成可执行机制**（脚本 / 测试 / lint / 结构检查）
+Every milestone delivery must include:
+
+1. **Completed work**: the corresponding `PLANv3.md` item and a short explanation
+2. **Modified files**: file list
+3. **Reproduction**: commands + config + seed + output directory
+4. **Validation**: tests / eval / plots
+5. **Results**: key metrics + artifact paths
+6. **Known issues**: failure points, risks, next-step suggestions
+7. **Doc updates**: which repo docs were updated, and why they had to be updated
+
+---
+
+## 9) What to do when things are unclear (do not guess)
+
+When any of the following is unclear, do not invent defaults or commands:
+- dataset download permissions or paths
+- benchmark harness integration state
+- large-scale training requirements when VRAM / queue / storage is uncertain
+- document authority conflicts
+- baseline budget alignment
+
+Correct handling sequence:
+1. Check `PLANv3.md`
+2. Then check `docs/MAIN_IDEA.md` and `docs/EXPERIMENTS_INFO.md`
+3. If still unclear: list 2-3 options with risks / cost / recommended option, and wait for human direction
+
+---
+
+## 10) Final reminders (important)
+
+- **Do the paper-critical work first**: main tables, cross-domain few-shot, CDMI, continual learning, efficiency, mechanism analysis
+- **AGENTS is a map, not an encyclopedia**: do not move large bodies of detail here
+- **The repo is the system of record**: important knowledge must be versioned back into the repo
+- **Failure does not mean "retry once more"**: it usually means missing scripts, tests, rules, or knowledge entry points; patch the harness first
+- **If a rule matters enough to repeat, upgrade it into an executable mechanism** (script / test / lint / structural check)

@@ -2232,6 +2232,7 @@ def summarize_m4_support_bank_run(
     fixed64_metrics = _load_optional_metrics(fixed64_metrics_json)
     fixed64_report_generated = bool(fixed64_metrics_json)
     total_cap = float(run_metrics.get("pilot_prefix_total_max_norm", 0.0))
+    forensics_summary = _v0_forensics_summary(run_metrics)
     summary = {
         "selection_passed": bool(selection.get("selection_passed", False)),
         "selected_suite": selection.get("selected_suite"),
@@ -2256,6 +2257,7 @@ def summarize_m4_support_bank_run(
         "cap_saturation_onset_step": _onset_step_from_prefix_norm_csv(prefix_norm_csv, total_cap=total_cap),
         "dominant_label_collapse_onset_step": _onset_step_from_dominant_label_csv(dynamics_summary_csv),
         "pilot_prefix_total_max_norm": total_cap,
+        **forensics_summary,
     }
     return summary
 
@@ -2616,16 +2618,34 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
     if not events:
         return {
             "final_memory_long_effective_rank": 0.0,
+            "final_memory_long_common_mode_energy_ratio": 0.0,
+            "final_memory_long_centered_effective_rank": 0.0,
+            "final_memory_long_top1_top2_ratio": 0.0,
             "final_memory_short_effective_rank": 0.0,
             "final_reader_attention_pairwise_cosine_mean": 0.0,
             "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
             "final_reader_context_overwrite_ratio": 0.0,
+            "final_reader_value_projected_effective_rank": 0.0,
+            "final_reader_value_projected_pairwise_cosine_mean": 0.0,
             "final_reader_readout_effective_rank": 0.0,
+            "final_reader_readout_centered_effective_rank": 0.0,
             "final_fuser_output_effective_rank": 0.0,
+            "final_fuser_rank_gain_over_readout": 0.0,
+            "final_fuser_diversity_without_semantic_gain_flag": 0.0,
+            "final_reader_to_support_grad_ratio": 0.0,
+            "final_fuser_to_support_grad_ratio": 0.0,
+            "final_receiver_lora_to_reader_grad_ratio": 0.0,
         }
     event = events[-1]
     return {
         "final_memory_long_effective_rank": float(event.get("memory_long_effective_rank", 0.0)),
+        "final_memory_long_common_mode_energy_ratio": float(
+            event.get("memory_long_common_mode_energy_ratio", 0.0)
+        ),
+        "final_memory_long_centered_effective_rank": float(
+            event.get("memory_long_centered_effective_rank", 0.0)
+        ),
+        "final_memory_long_top1_top2_ratio": float(event.get("memory_long_top1_top2_ratio", 0.0)),
         "final_memory_short_effective_rank": float(event.get("memory_short_effective_rank", 0.0)),
         "final_reader_attention_pairwise_cosine_mean": float(
             event.get("reader_attention_pairwise_cosine_mean", 0.0)
@@ -2636,11 +2656,29 @@ def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
         "final_reader_context_overwrite_ratio": float(
             event.get("reader_context_overwrite_ratio", 0.0)
         ),
+        "final_reader_value_projected_effective_rank": float(
+            event.get("reader_value_projected_effective_rank", 0.0)
+        ),
+        "final_reader_value_projected_pairwise_cosine_mean": float(
+            event.get("reader_value_projected_pairwise_cosine_mean", 0.0)
+        ),
         "final_reader_readout_effective_rank": float(
             event.get("reader_readout_effective_rank", 0.0)
         ),
+        "final_reader_readout_centered_effective_rank": float(
+            event.get("reader_readout_centered_effective_rank", 0.0)
+        ),
         "final_fuser_output_effective_rank": float(
             event.get("fuser_output_effective_rank", 0.0)
+        ),
+        "final_fuser_rank_gain_over_readout": float(event.get("fuser_rank_gain_over_readout", 0.0)),
+        "final_fuser_diversity_without_semantic_gain_flag": float(
+            event.get("fuser_diversity_without_semantic_gain_flag", 0.0)
+        ),
+        "final_reader_to_support_grad_ratio": float(event.get("reader_to_support_grad_ratio", 0.0)),
+        "final_fuser_to_support_grad_ratio": float(event.get("fuser_to_support_grad_ratio", 0.0)),
+        "final_receiver_lora_to_reader_grad_ratio": float(
+            event.get("receiver_lora_to_reader_grad_ratio", 0.0)
         ),
     }
 
@@ -2664,6 +2702,93 @@ def _load_train_events(train_events_json: str | None) -> list[dict[str, Any]]:
     if not isinstance(events, list):
         return []
     return [event for event in events if isinstance(event, dict)]
+
+
+def _v0_forensics_summary(run_metrics: dict[str, Any]) -> dict[str, Any]:
+    memory_long_top1_top2_ratio = float(run_metrics.get("memory_long_top1_top2_ratio", 0.0))
+    memory_long_common_mode_energy_ratio = float(
+        run_metrics.get("memory_long_common_mode_energy_ratio", 0.0)
+    )
+    memory_long_centered_effective_rank = float(
+        run_metrics.get("memory_long_centered_effective_rank", 0.0)
+    )
+    reader_value_projected_effective_rank = float(
+        run_metrics.get("reader_value_projected_effective_rank", 0.0)
+    )
+    reader_value_projected_pairwise_cosine_mean = float(
+        run_metrics.get("reader_value_projected_pairwise_cosine_mean", 0.0)
+    )
+    reader_readout_pairwise_cosine_mean = float(
+        run_metrics.get("reader_readout_pairwise_cosine_mean", 0.0)
+    )
+    reader_readout_effective_rank = float(run_metrics.get("reader_readout_effective_rank", 0.0))
+    reader_readout_centered_effective_rank = float(
+        run_metrics.get("reader_readout_centered_effective_rank", 0.0)
+    )
+    early_reader_to_support_grad_ratio = float(
+        run_metrics.get("train_reader_to_support_grad_ratio_steps_1_4_median", 0.0)
+    )
+    early_fuser_to_support_grad_ratio = float(
+        run_metrics.get("train_fuser_to_support_grad_ratio_steps_1_4_median", 0.0)
+    )
+
+    value_diversity_gate_passed = bool(
+        memory_long_top1_top2_ratio < 15.0
+        and memory_long_centered_effective_rank >= 3.0
+        and reader_readout_pairwise_cosine_mean < 0.95
+        and reader_readout_effective_rank > 2.0
+    )
+    common_mode_domination_flag = bool(
+        memory_long_common_mode_energy_ratio >= 0.55
+        or (
+            memory_long_top1_top2_ratio >= 15.0
+            and memory_long_centered_effective_rank >= 2.0
+        )
+    )
+    value_projected_homogenization_flag = bool(
+        not common_mode_domination_flag
+        and reader_value_projected_effective_rank < 2.0
+        and reader_value_projected_pairwise_cosine_mean >= 0.95
+        and reader_readout_pairwise_cosine_mean >= 0.95
+        and reader_readout_centered_effective_rank < 2.0
+    )
+    receiver_starvation_flag = bool(
+        not common_mode_domination_flag
+        and not value_projected_homogenization_flag
+        and memory_long_centered_effective_rank >= 3.0
+        and early_reader_to_support_grad_ratio < 0.25
+        and early_fuser_to_support_grad_ratio < 0.25
+    )
+
+    if common_mode_domination_flag:
+        primary_bottleneck = "common_mode_domination"
+        primary_bottleneck_note = (
+            "M_long remains dominated by a shared slot-wise component; writer value diversification is still the first fix."
+        )
+    elif value_projected_homogenization_flag:
+        primary_bottleneck = "value_projected_homogenization"
+        primary_bottleneck_note = (
+            "Value-projected slots and centered readouts are still too similar even when common-mode domination is not the leading failure."
+        )
+    elif receiver_starvation_flag:
+        primary_bottleneck = "receiver_starvation"
+        primary_bottleneck_note = (
+            "Writer-side value diversity is no longer the main bottleneck, but early reader/fuser gradient routing remains too weak."
+        )
+    else:
+        primary_bottleneck = "mixed_or_unclear"
+        primary_bottleneck_note = (
+            "The current metrics do not isolate a single dominant blocker; treat the failure as mixed and inspect the full diagnostics."
+        )
+
+    return {
+        "v0_value_diversity_gate_passed": value_diversity_gate_passed,
+        "v0_common_mode_domination_flag": common_mode_domination_flag,
+        "v0_value_projected_homogenization_flag": value_projected_homogenization_flag,
+        "v0_receiver_starvation_flag": receiver_starvation_flag,
+        "v0_primary_bottleneck": primary_bottleneck,
+        "v0_primary_bottleneck_note": primary_bottleneck_note,
+    }
 
 
 def _rg2_geometry_gate_summary(

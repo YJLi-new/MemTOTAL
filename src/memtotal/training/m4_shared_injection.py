@@ -55,6 +55,7 @@ class PrefixInjectionArtifacts:
     reader_queries: torch.Tensor | None = None
     reader_context: torch.Tensor | None = None
     reader_conditioned_queries: torch.Tensor | None = None
+    reader_value_projected_slots: torch.Tensor | None = None
     reader_readouts: torch.Tensor | None = None
 
 
@@ -741,6 +742,11 @@ PREFIX_SCALAR_KEYS = (
     "memory_long_slot_norm_max",
     "memory_long_slot_energy_cv",
     "memory_long_slot_variance_cv",
+    "memory_long_common_mode_vector_l2",
+    "memory_long_common_mode_energy_ratio",
+    "memory_long_centered_effective_rank",
+    "memory_long_top1_top2_ratio",
+    "memory_long_centered_top1_top2_ratio",
     "memory_long_singular_value_top1",
     "memory_long_singular_value_top2",
     "memory_long_singular_value_top3",
@@ -773,14 +779,19 @@ PREFIX_SCALAR_KEYS = (
     "reader_slot_coverage_fraction",
     "reader_argmax_mass_mean",
     "reader_argmax_mass_std",
+    "reader_value_projected_effective_rank",
+    "reader_value_projected_pairwise_cosine_mean",
     "reader_readout_pairwise_cosine_mean",
     "reader_readout_effective_rank",
+    "reader_readout_centered_effective_rank",
     "reader_query_to_slot_top1_agreement_rate",
     "reader_query_to_slot_top2_coverage_fraction",
     "fuser_input_pairwise_cosine_mean",
     "fuser_input_effective_rank",
     "fuser_output_pairwise_cosine_mean",
     "fuser_output_effective_rank",
+    "fuser_rank_gain_over_readout",
+    "fuser_diversity_without_semantic_gain_flag",
     "fuser_short_query_pairwise_cosine_mean",
     "fuser_linear_output_singular_value_top1",
     "fuser_linear_output_singular_value_top2",
@@ -834,6 +845,56 @@ def _top_singular_values(tensor: torch.Tensor | None, *, top_k: int = 3) -> list
     padded = torch.zeros(max(1, top_k), dtype=torch.float32, device=means.device)
     padded[: min(len(means), max(1, top_k))] = means[: max(1, top_k)]
     return [float(value) for value in padded.cpu().tolist()]
+
+
+def _top1_top2_ratio(tensor: torch.Tensor | None) -> float:
+    top_values = _top_singular_values(tensor, top_k=2)
+    top1 = float(top_values[0]) if top_values else 0.0
+    top2 = float(top_values[1]) if len(top_values) > 1 else 0.0
+    if top1 <= 0.0:
+        return 0.0
+    return float(top1 / max(top2, 1e-8))
+
+
+def _center_slot_matrix(slots: torch.Tensor | None) -> torch.Tensor | None:
+    if slots is None or slots.numel() == 0:
+        return None
+    if slots.ndim == 2:
+        slots = slots.unsqueeze(0)
+    elif slots.ndim != 3:
+        raise ValueError(f"Expected rank-2 or rank-3 slot tensor, got shape={tuple(slots.shape)}.")
+    centered = slots.detach().to(dtype=torch.float32) - slots.detach().to(dtype=torch.float32).mean(
+        dim=1,
+        keepdim=True,
+    )
+    return centered
+
+
+def _common_mode_vector_l2(slots: torch.Tensor | None) -> float:
+    if slots is None or slots.numel() == 0:
+        return 0.0
+    slots_fp32 = slots.detach().to(dtype=torch.float32)
+    if slots_fp32.ndim == 2:
+        slots_fp32 = slots_fp32.unsqueeze(0)
+    elif slots_fp32.ndim != 3:
+        raise ValueError(f"Expected rank-2 or rank-3 slot tensor, got shape={tuple(slots_fp32.shape)}.")
+    slot_mean = slots_fp32.mean(dim=1)
+    return float(slot_mean.norm(dim=-1).mean().item())
+
+
+def _common_mode_energy_ratio(slots: torch.Tensor | None) -> float:
+    if slots is None or slots.numel() == 0:
+        return 0.0
+    slots_fp32 = slots.detach().to(dtype=torch.float32)
+    if slots_fp32.ndim == 2:
+        slots_fp32 = slots_fp32.unsqueeze(0)
+    elif slots_fp32.ndim != 3:
+        raise ValueError(f"Expected rank-2 or rank-3 slot tensor, got shape={tuple(slots_fp32.shape)}.")
+    common_mode = slots_fp32.mean(dim=1, keepdim=True).expand_as(slots_fp32)
+    common_energy = common_mode.square().sum(dim=(1, 2))
+    total_energy = slots_fp32.square().sum(dim=(1, 2))
+    ratio = common_energy / total_energy.clamp_min(1e-8)
+    return float(ratio.mean().item())
 
 
 def _reader_pre_attention_stats(
@@ -920,6 +981,11 @@ def _memory_long_geometry_stats(memory_long: torch.Tensor | None) -> dict[str, A
     zero_stats: dict[str, Any] = {
         "memory_long_slot_energy_cv": 0.0,
         "memory_long_slot_variance_cv": 0.0,
+        "memory_long_common_mode_vector_l2": 0.0,
+        "memory_long_common_mode_energy_ratio": 0.0,
+        "memory_long_centered_effective_rank": 0.0,
+        "memory_long_top1_top2_ratio": 0.0,
+        "memory_long_centered_top1_top2_ratio": 0.0,
         "memory_long_singular_value_top1": 0.0,
         "memory_long_singular_value_top2": 0.0,
         "memory_long_singular_value_top3": 0.0,
@@ -936,10 +1002,16 @@ def _memory_long_geometry_stats(memory_long: torch.Tensor | None) -> dict[str, A
     slot_norms = memory_long_fp32.norm(dim=-1)
     slot_energy = memory_long_fp32.pow(2).sum(dim=-1)
     slot_variance = memory_long_fp32.var(dim=-1, unbiased=False)
+    centered_memory_long = _center_slot_matrix(memory_long_fp32)
     singular_values = _top_singular_values(memory_long_fp32, top_k=3)
     return {
         "memory_long_slot_energy_cv": _coefficient_of_variation(slot_energy),
         "memory_long_slot_variance_cv": _coefficient_of_variation(slot_variance),
+        "memory_long_common_mode_vector_l2": _common_mode_vector_l2(memory_long_fp32),
+        "memory_long_common_mode_energy_ratio": _common_mode_energy_ratio(memory_long_fp32),
+        "memory_long_centered_effective_rank": _effective_rank(centered_memory_long),
+        "memory_long_top1_top2_ratio": _top1_top2_ratio(memory_long_fp32),
+        "memory_long_centered_top1_top2_ratio": _top1_top2_ratio(centered_memory_long),
         "memory_long_singular_value_top1": singular_values[0],
         "memory_long_singular_value_top2": singular_values[1],
         "memory_long_singular_value_top3": singular_values[2],
@@ -962,12 +1034,24 @@ def _fuser_stats(
     short_queries = None
     if arch == "resampler" and fuser is not None:
         short_queries = getattr(fuser, "short_queries", None)
+    input_rank = _effective_rank(fuser_input)
+    output_rank = _effective_rank(memory_short)
+    input_pairwise = _pairwise_cosine_mean(fuser_input)
+    output_high_rank_threshold = 0.75 * float(memory_short.shape[1]) if memory_short is not None else 0.0
+    diversity_without_semantic_gain = bool(
+        memory_short is not None
+        and output_rank >= max(2.5, output_high_rank_threshold)
+        and input_rank <= 1.5
+        and input_pairwise >= 0.95
+    )
     linear_singular_values = _top_singular_values(memory_short, top_k=3) if arch == "linear" else [0.0, 0.0, 0.0]
     return {
-        "fuser_input_pairwise_cosine_mean": _pairwise_cosine_mean(fuser_input),
-        "fuser_input_effective_rank": _effective_rank(fuser_input),
+        "fuser_input_pairwise_cosine_mean": input_pairwise,
+        "fuser_input_effective_rank": input_rank,
         "fuser_output_pairwise_cosine_mean": _pairwise_cosine_mean(memory_short),
-        "fuser_output_effective_rank": _effective_rank(memory_short),
+        "fuser_output_effective_rank": output_rank,
+        "fuser_rank_gain_over_readout": float(output_rank - input_rank),
+        "fuser_diversity_without_semantic_gain_flag": float(diversity_without_semantic_gain),
         "fuser_short_query_pairwise_cosine_mean": _pairwise_cosine_mean(
             None if short_queries is None else short_queries.unsqueeze(0)
         ),
@@ -981,6 +1065,7 @@ def _reader_attention_stats(
     reader_attention: torch.Tensor | None,
     *,
     memory_long_slots: int,
+    reader_value_projected_slots: torch.Tensor | None = None,
     reader_readouts: torch.Tensor | None = None,
 ) -> dict[str, Any]:
     if reader_attention is None or reader_attention.numel() == 0:
@@ -994,8 +1079,11 @@ def _reader_attention_stats(
             "reader_slot_coverage_fraction": 0.0,
             "reader_argmax_mass_mean": 0.0,
             "reader_argmax_mass_std": 0.0,
+            "reader_value_projected_effective_rank": 0.0,
+            "reader_value_projected_pairwise_cosine_mean": 0.0,
             "reader_readout_pairwise_cosine_mean": 0.0,
             "reader_readout_effective_rank": 0.0,
+            "reader_readout_centered_effective_rank": 0.0,
             "reader_query_to_slot_top1_agreement_rate": 0.0,
             "reader_query_to_slot_top2_coverage_fraction": 0.0,
             "reader_query_entropy_by_query": [],
@@ -1018,8 +1106,15 @@ def _reader_attention_stats(
         "reader_slot_coverage_fraction": coverage_fraction,
         "reader_argmax_mass_mean": float(argmax_mass.mean().item()),
         "reader_argmax_mass_std": float(argmax_mass.std(unbiased=False).item()),
+        "reader_value_projected_effective_rank": _effective_rank(reader_value_projected_slots),
+        "reader_value_projected_pairwise_cosine_mean": _pairwise_cosine_mean(
+            reader_value_projected_slots
+        ),
         "reader_readout_pairwise_cosine_mean": _pairwise_cosine_mean(reader_readouts),
         "reader_readout_effective_rank": _effective_rank(reader_readouts),
+        "reader_readout_centered_effective_rank": _effective_rank(
+            _center_slot_matrix(reader_readouts)
+        ),
         "reader_query_to_slot_top1_agreement_rate": _reader_top1_agreement_rate(attention),
         "reader_query_to_slot_top2_coverage_fraction": _reader_top2_coverage_fraction(attention),
         "reader_query_entropy_by_query": [
@@ -1048,6 +1143,7 @@ def _prefix_stats(
     reader_base_queries: torch.Tensor | None = None,
     reader_conditioned_queries: torch.Tensor | None = None,
     reader_attention_logits: torch.Tensor | None = None,
+    reader_value_projected_slots: torch.Tensor | None = None,
     reader_readouts: torch.Tensor | None = None,
     fuser: MemoryFuser | None = None,
     memory_path_variant: str = "single_level",
@@ -1127,6 +1223,7 @@ def _prefix_stats(
     reader_stats = _reader_attention_stats(
         reader_attention,
         memory_long_slots=0 if memory_long is None else int(memory_long.shape[1]),
+        reader_value_projected_slots=reader_value_projected_slots,
         reader_readouts=reader_readouts,
     )
     memory_long_geometry_stats = _memory_long_geometry_stats(memory_long)
@@ -2125,6 +2222,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             "reader_base_queries": reader_outputs.get("base_queries"),
             "reader_conditioned_queries": reader_outputs.get("conditioned_queries"),
             "reader_attention_logits": reader_outputs.get("attention_logits"),
+            "reader_value_projected_slots": reader_outputs.get("value_projected_slots"),
             "reader_readouts": reader_outputs.get("readouts"),
         }
 
@@ -2146,6 +2244,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         reader_base_queries = None
         reader_conditioned_queries = None
         reader_attention_logits = None
+        reader_value_projected_slots = None
         reader_readouts = None
         projector_source = memory_long
         if self.memory_path_variant == "two_level":
@@ -2182,6 +2281,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_base_queries = two_level_outputs["reader_base_queries"]
                 reader_conditioned_queries = two_level_outputs["reader_conditioned_queries"]
                 reader_attention_logits = two_level_outputs["reader_attention_logits"]
+                reader_value_projected_slots = two_level_outputs["reader_value_projected_slots"]
                 reader_readouts = two_level_outputs["reader_readouts"]
             projector_source = memory_long if self.projector_token_source == "writer_slots" else memory_short
             if projector_source is None:
@@ -2198,6 +2298,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_base_queries=reader_base_queries,
                 reader_conditioned_queries=reader_conditioned_queries,
                 reader_attention_logits=reader_attention_logits,
+                reader_value_projected_slots=reader_value_projected_slots,
                 reader_readouts=reader_readouts,
                 fuser=self.fuser,
                 memory_path_variant=self.memory_path_variant,
@@ -2216,6 +2317,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_queries=None if self.reader is None else self.reader.queries.detach(),
                 reader_context=reader_context,
                 reader_conditioned_queries=reader_conditioned_queries,
+                reader_value_projected_slots=reader_value_projected_slots,
                 reader_readouts=reader_readouts,
             )
         layer_prefix_hidden_by_layer = self.prefix_projector(projector_source)
@@ -2229,6 +2331,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             reader_base_queries=reader_base_queries,
             reader_conditioned_queries=reader_conditioned_queries,
             reader_attention_logits=reader_attention_logits,
+            reader_value_projected_slots=reader_value_projected_slots,
             reader_readouts=reader_readouts,
             fuser=self.fuser,
             memory_path_variant=self.memory_path_variant,
@@ -2251,6 +2354,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             reader_queries=None if self.reader is None else self.reader.queries.detach(),
             reader_context=reader_context,
             reader_conditioned_queries=reader_conditioned_queries,
+            reader_value_projected_slots=reader_value_projected_slots,
             reader_readouts=reader_readouts,
         )
 
@@ -2614,6 +2718,28 @@ def _grad_norm(module: nn.Module | None) -> float:
         grad = parameter.grad.detach().to(dtype=torch.float32)
         total += float(torch.sum(grad * grad).item())
     return float(total ** 0.5)
+
+
+def _safe_grad_ratio(numerator: float, denominator: float) -> float:
+    return float(numerator / max(abs(denominator), 1e-8))
+
+
+def _median_train_event_metric(
+    train_events: list[dict[str, Any]],
+    *,
+    key: str,
+    step_start: int,
+    step_end: int,
+) -> float:
+    values = [
+        float(event.get(key, 0.0))
+        for event in train_events
+        if step_start <= int(event.get("step", 0)) <= step_end
+    ]
+    if not values:
+        return 0.0
+    values_tensor = torch.tensor(values, dtype=torch.float32)
+    return float(values_tensor.median().item())
 
 
 def _prediction_row(
@@ -3275,10 +3401,24 @@ def run_shared_injection_pilot(
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
             writer_grad_norm = _grad_norm(runtime.writer)
-            writer_to_projector_grad_ratio = (
-                0.0
-                if prefix_projector_grad_norm <= 0.0
-                else float((writer_grad_norm + support_encoder_grad_norm) / prefix_projector_grad_norm)
+            reader_grad_norm = _grad_norm(runtime.reader)
+            fuser_grad_norm = _grad_norm(runtime.fuser)
+            receiver_lora_grad_norm = 0.0
+            writer_to_projector_grad_ratio = _safe_grad_ratio(
+                writer_grad_norm + support_encoder_grad_norm,
+                prefix_projector_grad_norm,
+            )
+            reader_to_support_grad_ratio = _safe_grad_ratio(
+                reader_grad_norm,
+                support_encoder_grad_norm,
+            )
+            fuser_to_support_grad_ratio = _safe_grad_ratio(
+                fuser_grad_norm,
+                support_encoder_grad_norm,
+            )
+            receiver_lora_to_reader_grad_ratio = _safe_grad_ratio(
+                receiver_lora_grad_norm,
+                reader_grad_norm,
             )
             total_grad_norm = 0.0
             if gradient_clip_norm > 0.0:
@@ -3424,14 +3564,19 @@ def run_shared_injection_pilot(
                     "pilot_fuser_short_slots": int(runtime.fuser_short_slots),
                     "support_encoder_grad_norm": support_encoder_grad_norm,
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
-                    "reader_grad_norm": _grad_norm(runtime.reader),
-                    "fuser_grad_norm": _grad_norm(runtime.fuser),
+                    "reader_grad_norm": reader_grad_norm,
+                    "fuser_grad_norm": fuser_grad_norm,
                     "writer_grad_norm": writer_grad_norm,
                     "grad_norm_support_encoder": support_encoder_grad_norm,
+                    "grad_norm_projector": prefix_projector_grad_norm,
                     "grad_norm_prefix_projector": prefix_projector_grad_norm,
-                    "grad_norm_reader": _grad_norm(runtime.reader),
-                    "grad_norm_fuser": _grad_norm(runtime.fuser),
+                    "grad_norm_reader": reader_grad_norm,
+                    "grad_norm_fuser": fuser_grad_norm,
                     "grad_norm_writer": writer_grad_norm,
+                    "grad_norm_receiver_lora": receiver_lora_grad_norm,
+                    "reader_to_support_grad_ratio": reader_to_support_grad_ratio,
+                    "fuser_to_support_grad_ratio": fuser_to_support_grad_ratio,
+                    "receiver_lora_to_reader_grad_ratio": receiver_lora_to_reader_grad_ratio,
                     "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
                     "total_grad_norm_pre_clip": total_grad_norm,
                     "prefix_artifact_stats": prefix_artifacts.prefix_stats,
@@ -3516,6 +3661,42 @@ def run_shared_injection_pilot(
     task_case_dump_path = output_dir / "task_case_dump.jsonl"
     write_jsonl(task_case_dump_path, case_rows)
     final_prefix_scalar_stats = _prefix_scalar_summary(final_prefix_stats)
+    train_reader_to_support_grad_ratio_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="reader_to_support_grad_ratio",
+        step_start=1,
+        step_end=4,
+    )
+    train_fuser_to_support_grad_ratio_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="fuser_to_support_grad_ratio",
+        step_start=1,
+        step_end=4,
+    )
+    train_receiver_lora_to_reader_grad_ratio_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="receiver_lora_to_reader_grad_ratio",
+        step_start=1,
+        step_end=4,
+    )
+    train_reader_to_support_grad_ratio_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="reader_to_support_grad_ratio",
+        step_start=5,
+        step_end=8,
+    )
+    train_fuser_to_support_grad_ratio_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="fuser_to_support_grad_ratio",
+        step_start=5,
+        step_end=8,
+    )
+    train_receiver_lora_to_reader_grad_ratio_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="receiver_lora_to_reader_grad_ratio",
+        step_start=5,
+        step_end=8,
+    )
     metrics = {
         "mode": "train",
         "training_stage": "shared_injection_pilot",
@@ -3696,6 +3877,45 @@ def run_shared_injection_pilot(
         ),
         "train_final_support_state_effective_rank": (
             train_events[-1]["support_state_effective_rank"] if train_events else None
+        ),
+        "train_final_grad_norm_support_encoder": (
+            train_events[-1]["grad_norm_support_encoder"] if train_events else None
+        ),
+        "train_final_grad_norm_projector": (
+            train_events[-1]["grad_norm_projector"] if train_events else None
+        ),
+        "train_final_grad_norm_reader": train_events[-1]["grad_norm_reader"] if train_events else None,
+        "train_final_grad_norm_fuser": train_events[-1]["grad_norm_fuser"] if train_events else None,
+        "train_final_grad_norm_writer": train_events[-1]["grad_norm_writer"] if train_events else None,
+        "train_final_grad_norm_receiver_lora": (
+            train_events[-1]["grad_norm_receiver_lora"] if train_events else None
+        ),
+        "train_reader_to_support_grad_ratio_steps_1_4_median": (
+            train_reader_to_support_grad_ratio_steps_1_4_median
+        ),
+        "train_fuser_to_support_grad_ratio_steps_1_4_median": (
+            train_fuser_to_support_grad_ratio_steps_1_4_median
+        ),
+        "train_receiver_lora_to_reader_grad_ratio_steps_1_4_median": (
+            train_receiver_lora_to_reader_grad_ratio_steps_1_4_median
+        ),
+        "train_reader_to_support_grad_ratio_steps_5_8_median": (
+            train_reader_to_support_grad_ratio_steps_5_8_median
+        ),
+        "train_fuser_to_support_grad_ratio_steps_5_8_median": (
+            train_fuser_to_support_grad_ratio_steps_5_8_median
+        ),
+        "train_receiver_lora_to_reader_grad_ratio_steps_5_8_median": (
+            train_receiver_lora_to_reader_grad_ratio_steps_5_8_median
+        ),
+        "train_final_reader_to_support_grad_ratio": (
+            train_events[-1]["reader_to_support_grad_ratio"] if train_events else None
+        ),
+        "train_final_fuser_to_support_grad_ratio": (
+            train_events[-1]["fuser_to_support_grad_ratio"] if train_events else None
+        ),
+        "train_final_receiver_lora_to_reader_grad_ratio": (
+            train_events[-1]["receiver_lora_to_reader_grad_ratio"] if train_events else None
         ),
         "train_final_projector_frozen": train_events[-1]["projector_frozen"] if train_events else None,
         "train_final_reader_fuser_bootstrap_active": (

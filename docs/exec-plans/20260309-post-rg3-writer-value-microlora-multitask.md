@@ -2,12 +2,13 @@
 
 ## Purpose
 
-Execute the next hop after `PLANv2.md` stop-after-RG3. The live blocker is no longer just local Reader geometry. The next narrow branch must test Writer value diversification, a tiny receiver-side micro-LoRA, and immediate non-FEVER validation.
+Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLANv3.md` narrow authority. The live blocker is no longer just local Reader geometry. The next narrow branch must test Writer value diversification, a tiny receiver-side micro-LoRA, and immediate non-FEVER validation.
 
 ## Context
 
 - Macro authority remains `PLAN.md`
 - Narrow predecessor was `PLANv2.md`
+- Active narrow authority is `PLANv3.md`
 - `RG-3` is complete and terminal for the local Reader/Fuser rescue line
 - Current likely blocker: Writer common-mode domination + receiver gradient starvation
 - User-level requirements now adopted:
@@ -52,6 +53,10 @@ Execute the next hop after `PLANv2.md` stop-after-RG3. The live blocker is no lo
 ## Progress
 
 - 2026-03-09: Created this active exec-plan from `PLANv3.md`.
+- 2026-03-09: Downloaded `PLANv3.md`, moved this exec-plan under `docs/exec-plans/`, and rewrote `AGENTS.md` in English with `PLANv3.md` as the narrow authority reference.
+- 2026-03-09: Completed Phase V0 offline forensics patch in `src/memtotal/models/memory.py`, `src/memtotal/training/m4_shared_injection.py`, `src/memtotal/analysis/m4_shared_injection.py`, `scripts/update_m4_run_summary.py`, and `tests/test_m4_shared_injection.py`.
+- 2026-03-09: Verified V0 with targeted test coverage (`python -m unittest tests.test_m4_shared_injection tests.test_smoke_components -v`) and an injected dry-run smoke at `/root/autodl-tmp/runs/verify/tl-writer-value-v0-smoke-injected`.
+- 2026-03-09: Confirmed the new V0 metrics propagate through `train_events.json`, snapshot metrics, and final `metrics.json`; the smoke classification currently points to Writer-side common-mode domination rather than a Reader-only failure.
 
 ## Decision Log
 
@@ -59,9 +64,13 @@ Execute the next hop after `PLANv2.md` stop-after-RG3. The live blocker is no lo
 - Do not open broad receiver fallback.
 - Introduce only tiny diagnostic LoRA inside Workstream B.
 - Use repo-supported non-FEVER tasks before onboarding new datasets.
+- Treat Phase V0 as complete only after the full repo test suite passes and the milestone is committed/pushed.
+- The first active post-V0 training step remains the architecture-first FEVER Writer matrix (`W0/W1/W2`) before any Writer penalties or receiver LoRA.
 
 ## Surprises & Discoveries
 
 - Hard partition proved that attention specialization can be forced without producing semantically diverse readouts.
 - The strongest current bottleneck is likely common-mode domination in `M_long`, not merely attention symmetry.
 - Receiver gradients became too small for local Reader rescue to be a meaningful next hop.
+- The first injected V0 smoke accidentally stayed on `shared_injection_arm=base_only`; once rerun with `shared_injection_arm=injected`, the new metrics became non-zero and internally consistent across train/snapshot/final outputs.
+- The injected V0 smoke shows extreme shared Writer energy (`memory_long_common_mode_energy_ratio≈0.999`, `memory_long_top1_top2_ratio≈70.7`) even while centered rank stays healthy, which strengthens the common-mode bottleneck hypothesis and justifies prioritizing V1 Writer diversification before V2 LoRA.

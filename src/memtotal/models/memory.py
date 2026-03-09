@@ -373,10 +373,15 @@ class MemoryReader(ManagedMemoryModule):
         memory: torch.Tensor,
         *,
         key_padding_mask: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         projected_queries, projected_keys, projected_values = self._project_attention_inputs(
             queries,
             memory,
+        )
+        value_projected_slots = projected_values.transpose(1, 2).contiguous().view(
+            memory.shape[0],
+            memory.shape[1],
+            self.embed_dim,
         )
         logits = torch.matmul(projected_queries, projected_keys.transpose(-2, -1))
         logits = logits * (1.0 / math.sqrt(projected_queries.shape[-1]))
@@ -417,7 +422,7 @@ class MemoryReader(ManagedMemoryModule):
             self.cross_attn.out_proj.weight,
             self.cross_attn.out_proj.bias,
         )
-        return readouts, attention_weights.mean(dim=1), attention_logits
+        return readouts, attention_weights.mean(dim=1), attention_logits, value_projected_slots
 
     def read(
         self,
@@ -463,7 +468,7 @@ class MemoryReader(ManagedMemoryModule):
         context_shift = conditioned_queries - base_queries
 
         key_padding_mask = self._build_key_padding_mask(memory, memory_mask)
-        readouts, attention, attention_logits = self._manual_attention(
+        readouts, attention, attention_logits, value_projected_slots = self._manual_attention(
             conditioned_queries,
             memory,
             key_padding_mask=key_padding_mask,
@@ -496,6 +501,7 @@ class MemoryReader(ManagedMemoryModule):
             "conditioned_queries": conditioned_queries,
             "context_shift": context_shift,
             "attention_logits": attention_logits,
+            "value_projected_slots": value_projected_slots,
         }
 
 

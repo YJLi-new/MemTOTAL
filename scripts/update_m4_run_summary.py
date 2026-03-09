@@ -55,7 +55,14 @@ def main() -> int:
         f"- milestone_gate_passed: {summary['milestone_gate_passed']}",
         f"- cap_saturation_onset_step: {summary['cap_saturation_onset_step']}",
         f"- dominant_label_collapse_onset_step: {summary['dominant_label_collapse_onset_step']}",
+        f"- v0_primary_bottleneck: {summary['v0_primary_bottleneck']}",
+        f"- v0_value_diversity_gate_passed: {summary['v0_value_diversity_gate_passed']}",
+        f"- v0_common_mode_domination_flag: {summary['v0_common_mode_domination_flag']}",
+        f"- v0_value_projected_homogenization_flag: {summary['v0_value_projected_homogenization_flag']}",
+        f"- v0_receiver_starvation_flag: {summary['v0_receiver_starvation_flag']}",
     ]
+    if summary.get("v0_primary_bottleneck_note"):
+        report_lines.append(f"- v0_primary_bottleneck_note: {summary['v0_primary_bottleneck_note']}")
     if summary["heldout_results"]:
         report_lines.extend(["", "## Heldout Banks"])
         for name, result in sorted(summary["heldout_results"].items()):

@@ -29,6 +29,7 @@ from memtotal.analysis.m4_shared_injection import (
     run_m4_shared_injection_dynamics_recovery,
     run_m4_shared_injection_dynamics_audit,
     run_m4_writer_information_audit,
+    _v0_forensics_summary,
 )
 from memtotal.models.memory import MemoryFuser, MemoryWriter
 from memtotal.training.m4_shared_injection import (
@@ -584,6 +585,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         base_queries = torch.randn(1, 4, 6)
         conditioned_queries = base_queries + 0.5
         attention_logits = torch.randn(1, 2, 4, 8)
+        reader_value_projected_slots = torch.randn(1, 8, 6)
         reader_readouts = torch.randn(1, 4, 6)
         fuser = MemoryFuser(embed_dim=6, num_queries=4, short_slots=4, arch="linear", hidden_dim=12)
         stats = _prefix_stats(
@@ -594,6 +596,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             reader_base_queries=base_queries,
             reader_conditioned_queries=conditioned_queries,
             reader_attention_logits=attention_logits,
+            reader_value_projected_slots=reader_value_projected_slots,
             reader_readouts=reader_readouts,
             fuser=fuser,
             memory_path_variant="two_level",
@@ -606,8 +609,15 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertEqual(stats["reader_num_queries"], 4.0)
         self.assertGreaterEqual(stats["reader_attention_entropy_mean"], 0.0)
         self.assertGreaterEqual(stats["reader_context_overwrite_ratio"], 0.0)
+        self.assertGreaterEqual(stats["memory_long_common_mode_energy_ratio"], 0.0)
+        self.assertGreaterEqual(stats["memory_long_top1_top2_ratio"], 0.0)
+        self.assertGreaterEqual(stats["memory_long_centered_effective_rank"], 0.0)
+        self.assertGreaterEqual(stats["reader_value_projected_effective_rank"], 0.0)
+        self.assertGreaterEqual(stats["reader_value_projected_pairwise_cosine_mean"], -1.0)
         self.assertGreater(stats["reader_readout_effective_rank"], 0.0)
+        self.assertGreaterEqual(stats["reader_readout_centered_effective_rank"], 0.0)
         self.assertGreaterEqual(stats["fuser_output_effective_rank"], 0.0)
+        self.assertGreaterEqual(stats["fuser_rank_gain_over_readout"], -4.0)
         self.assertEqual(len(stats["memory_long_slot_norm_histogram_counts"]), 4)
         self.assertGreaterEqual(stats["memory_long_singular_value_top1"], 0.0)
 
@@ -972,6 +982,63 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
         (snapshot_dir / "task_case_dump.jsonl").write_text(
             "\n".join(json.dumps(row) for row in case_rows) + "\n"
         )
+
+    def test_v0_forensics_summary_prefers_common_mode_domination(self) -> None:
+        summary = _v0_forensics_summary(
+            {
+                "memory_long_top1_top2_ratio": 72.0,
+                "memory_long_common_mode_energy_ratio": 0.82,
+                "memory_long_centered_effective_rank": 3.4,
+                "reader_value_projected_effective_rank": 1.3,
+                "reader_value_projected_pairwise_cosine_mean": 0.98,
+                "reader_readout_pairwise_cosine_mean": 0.99,
+                "reader_readout_effective_rank": 1.2,
+                "reader_readout_centered_effective_rank": 1.3,
+                "train_reader_to_support_grad_ratio_steps_1_4_median": 0.05,
+                "train_fuser_to_support_grad_ratio_steps_1_4_median": 0.05,
+            }
+        )
+        self.assertFalse(summary["v0_value_diversity_gate_passed"])
+        self.assertTrue(summary["v0_common_mode_domination_flag"])
+        self.assertEqual(summary["v0_primary_bottleneck"], "common_mode_domination")
+
+    def test_v0_forensics_summary_prefers_value_projected_homogenization(self) -> None:
+        summary = _v0_forensics_summary(
+            {
+                "memory_long_top1_top2_ratio": 9.0,
+                "memory_long_common_mode_energy_ratio": 0.25,
+                "memory_long_centered_effective_rank": 3.2,
+                "reader_value_projected_effective_rank": 1.4,
+                "reader_value_projected_pairwise_cosine_mean": 0.97,
+                "reader_readout_pairwise_cosine_mean": 0.98,
+                "reader_readout_effective_rank": 1.5,
+                "reader_readout_centered_effective_rank": 1.4,
+                "train_reader_to_support_grad_ratio_steps_1_4_median": 0.7,
+                "train_fuser_to_support_grad_ratio_steps_1_4_median": 0.6,
+            }
+        )
+        self.assertFalse(summary["v0_common_mode_domination_flag"])
+        self.assertTrue(summary["v0_value_projected_homogenization_flag"])
+        self.assertEqual(summary["v0_primary_bottleneck"], "value_projected_homogenization")
+
+    def test_v0_forensics_summary_prefers_receiver_starvation(self) -> None:
+        summary = _v0_forensics_summary(
+            {
+                "memory_long_top1_top2_ratio": 8.0,
+                "memory_long_common_mode_energy_ratio": 0.20,
+                "memory_long_centered_effective_rank": 3.5,
+                "reader_value_projected_effective_rank": 2.5,
+                "reader_value_projected_pairwise_cosine_mean": 0.80,
+                "reader_readout_pairwise_cosine_mean": 0.93,
+                "reader_readout_effective_rank": 2.2,
+                "reader_readout_centered_effective_rank": 2.1,
+                "train_reader_to_support_grad_ratio_steps_1_4_median": 0.10,
+                "train_fuser_to_support_grad_ratio_steps_1_4_median": 0.12,
+            }
+        )
+        self.assertTrue(summary["v0_value_diversity_gate_passed"])
+        self.assertTrue(summary["v0_receiver_starvation_flag"])
+        self.assertEqual(summary["v0_primary_bottleneck"], "receiver_starvation")
 
     @mock.patch("memtotal.analysis.m4_shared_injection._load_task_dataset_with_path")
     def test_prepare_fever_validation_splits_is_stable_and_balanced(self, mock_load_dataset) -> None:
@@ -1397,7 +1464,23 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
                 )
             )
             run_metrics_path = root / "run_metrics.json"
-            run_metrics_path.write_text(json.dumps({"pilot_prefix_total_max_norm": 192.0}))
+            run_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "pilot_prefix_total_max_norm": 192.0,
+                        "memory_long_top1_top2_ratio": 42.0,
+                        "memory_long_common_mode_energy_ratio": 0.71,
+                        "memory_long_centered_effective_rank": 3.1,
+                        "reader_value_projected_effective_rank": 1.4,
+                        "reader_value_projected_pairwise_cosine_mean": 0.98,
+                        "reader_readout_pairwise_cosine_mean": 0.99,
+                        "reader_readout_effective_rank": 1.2,
+                        "reader_readout_centered_effective_rank": 1.3,
+                        "train_reader_to_support_grad_ratio_steps_1_4_median": 0.2,
+                        "train_fuser_to_support_grad_ratio_steps_1_4_median": 0.2,
+                    }
+                )
+            )
             summary_csv = root / "summary.csv"
             summary_csv.write_text(
                 "alias,dominant_label_fraction,step\n"
@@ -1455,6 +1538,7 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertEqual(summary["cap_saturation_onset_step"], 16)
             self.assertEqual(summary["dominant_label_collapse_onset_step"], 16)
             self.assertFalse(summary["milestone_gate_passed"])
+            self.assertEqual(summary["v0_primary_bottleneck"], "common_mode_domination")
 
     def test_compare_m4_anti_shortcut_runs_prefers_run_a_when_only_run_a_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
