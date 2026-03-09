@@ -1,0 +1,21 @@
+{
+  "access": "public",
+  "benchmark_id": "gsm8k",
+  "data_files": null,
+  "dataset_config": "main",
+  "dataset_configs": null,
+  "dataset_name": "gsm8k",
+  "display_name": "GSM8K",
+  "homepage": null,
+  "license_note": "Hugging Face metadata currently does not expose a structured license field; verify upstream dataset card before redistribution.",
+  "materialized_path": "/root/autodl-tmp/runs/verify/writer-deep-prefix-jointpeft-qwen25/materialized-sources/gsm8k/eval-real-smoke128.jsonl",
+  "max_examples": 128,
+  "notes": "",
+  "num_rows": 128,
+  "output_filename": "eval-real-smoke128.jsonl",
+  "seed": 60917,
+  "source_kind": "huggingface",
+  "source_url": "https://huggingface.co/datasets/gsm8k",
+  "split": "test",
+  "status": "materialized"
+}

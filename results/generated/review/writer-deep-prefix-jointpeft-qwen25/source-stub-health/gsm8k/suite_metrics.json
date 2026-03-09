@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "I_source_stub_health",
+      "arm": "injected",
+      "macro_f1": 0.0,
+      "subdir": "pilot-I-source-stub-health",
+      "task_score": 0.0,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "task_native",
+  "selected_support_serialization": "example_blocks_raw8"
+}

@@ -1,0 +1,21 @@
+{
+  "access": "public",
+  "benchmark_id": "narrativeqa",
+  "data_files": null,
+  "dataset_config": null,
+  "dataset_configs": null,
+  "dataset_name": "deepmind/narrativeqa",
+  "display_name": "NarrativeQA",
+  "homepage": "https://github.com/deepmind/narrativeqa",
+  "license_note": "Apache-2.0 (from the official Hugging Face dataset card metadata).",
+  "materialized_path": "/root/autodl-tmp/runs/verify/writer-deep-prefix-jointpeft-qwen25/materialized-sources/narrativeqa/eval-real-smoke64.jsonl",
+  "max_examples": 64,
+  "notes": "Current smoke materializes the official full story text from the validation split, then converts it into a segment-aware excerpt with question-aware chunk selection plus chronological anchors. This keeps the local smoke runnable while making the NarrativeQA path closer to the paper-critical M_long -> M_short setting than the older summary-only scaffold.",
+  "num_rows": 64,
+  "output_filename": "eval-real-smoke64.jsonl",
+  "seed": 61018,
+  "source_kind": "huggingface_streaming",
+  "source_url": "https://huggingface.co/datasets/deepmind/narrativeqa",
+  "split": "validation",
+  "status": "materialized"
+}

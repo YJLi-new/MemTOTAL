@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "II_writer_direct",
+      "arm": "injected",
+      "macro_f1": 0.5345911949685535,
+      "subdir": "pilot-I-writer-direct",
+      "task_score": 0.671875,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "flat_raw8"
+}
