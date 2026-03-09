@@ -51,6 +51,18 @@ TASK_GENERATION_EVALUATOR_TYPES = (
     "qa_f1",
     "memoryagentbench",
 )
+POOLED_SUPPORT_MODES = {"pooled_block"}
+ITEMWISE_SUPPORT_MODES = {
+    "structured_support_set",
+    "multi_item_cross_attn_raw",
+    "multi_item_cross_attn_encoded",
+    "hybrid_pooled_plus_items",
+}
+ENCODED_SUPPORT_MODES = {
+    "structured_support_set",
+    "multi_item_cross_attn_encoded",
+    "hybrid_pooled_plus_items",
+}
 
 
 @dataclass(frozen=True)
@@ -453,12 +465,53 @@ def _resolve_lr_warmup_steps(config: dict[str, Any]) -> int:
 
 def _resolve_support_encoder_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_support_encoder_mode", "pooled_block"))
-    if mode not in {"pooled_block", "structured_support_set"}:
+    if mode not in (POOLED_SUPPORT_MODES | ITEMWISE_SUPPORT_MODES):
         raise ValueError(
             f"Unsupported runtime.pilot_support_encoder_mode={mode}. "
-            "Expected one of pooled_block, structured_support_set."
+            "Expected one of pooled_block, structured_support_set, multi_item_cross_attn_raw, "
+            "multi_item_cross_attn_encoded, hybrid_pooled_plus_items."
         )
     return mode
+
+
+def _support_mode_uses_item_rows(mode: str) -> bool:
+    return str(mode) in ITEMWISE_SUPPORT_MODES
+
+
+def _support_mode_uses_encoder(mode: str) -> bool:
+    return str(mode) in ENCODED_SUPPORT_MODES
+
+
+def _resolve_context_support_balance_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_context_support_balance_mode", "off"))
+    if mode not in {"off", "layernorm_learned_scalar"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_context_support_balance_mode={mode}. "
+            "Expected one of off, layernorm_learned_scalar."
+        )
+    return mode
+
+
+def _resolve_context_balance_scale_init(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_context_balance_scale_init", 1.0))
+
+
+def _resolve_support_balance_scale_init(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_support_balance_scale_init", 1.0))
+
+
+def _resolve_support_encoder_learning_rate(config: dict[str, Any]) -> float | None:
+    raw_value = config["runtime"].get("pilot_support_encoder_learning_rate")
+    if raw_value is None:
+        return None
+    return float(raw_value)
+
+
+def _resolve_support_encoder_weight_decay(config: dict[str, Any]) -> float | None:
+    raw_value = config["runtime"].get("pilot_support_encoder_weight_decay")
+    if raw_value is None:
+        return None
+    return float(raw_value)
 
 
 def _resolve_trainable_variant(config: dict[str, Any]) -> str:
@@ -644,6 +697,106 @@ def _resolve_gradient_probe_modules(config: dict[str, Any]) -> tuple[str, ...]:
             "Expected only writer, support_encoder, projector, receiver_lora, and/or source_stub."
         )
     return modules
+
+
+def _resolve_aux_loss_mode(config: dict[str, Any]) -> str:
+    raw_mode = str(config["runtime"].get("pilot_aux_loss_mode", "legacy")).strip().lower()
+    aliases = {
+        "l0": "task_only",
+        "l0_task_only": "task_only",
+        "task_only": "task_only",
+        "off": "task_only",
+        "l1": "legacy",
+        "l1_legacy": "legacy",
+        "legacy": "legacy",
+        "l2": "contrastive",
+        "l2_contrastive": "contrastive",
+        "contrastive": "contrastive",
+        "l3": "vicreg",
+        "l3_vicreg": "vicreg",
+        "vicreg": "vicreg",
+        "vcreg": "vicreg",
+        "l4": "barlow",
+        "l4_barlow": "barlow",
+        "barlow": "barlow",
+        "l5": "orthogonality_coverage",
+        "l5_orthogonality_coverage": "orthogonality_coverage",
+        "orthogonality_coverage": "orthogonality_coverage",
+    }
+    resolved = aliases.get(raw_mode)
+    if resolved is None:
+        raise ValueError(
+            f"Unsupported runtime.pilot_aux_loss_mode={raw_mode}. Expected one of "
+            "L0/task_only, L1/legacy, L2/contrastive, L3/vicreg, L4/barlow, or L5/orthogonality_coverage."
+        )
+    return resolved
+
+
+def _resolve_aux_projection_dim(config: dict[str, Any]) -> int:
+    return max(0, int(config["runtime"].get("pilot_aux_projection_dim", 0)))
+
+
+def _resolve_aux_projection_hidden_dim(config: dict[str, Any]) -> int | None:
+    raw = config["runtime"].get("pilot_aux_projection_hidden_dim")
+    if raw is None:
+        return None
+    return max(1, int(raw))
+
+
+def _resolve_support_row_dropout(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_support_row_dropout", 0.0))
+
+
+def _resolve_context_token_dropout(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_context_token_dropout", 0.0))
+
+
+def _resolve_contrastive_temperature(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_contrastive_temperature", 0.1))
+
+
+def _resolve_contrastive_loss_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_contrastive_loss_weight", 0.05))
+
+
+def _resolve_contrastive_queue_size(config: dict[str, Any]) -> int:
+    return max(0, int(config["runtime"].get("pilot_contrastive_queue_size", 64)))
+
+
+def _resolve_vicreg_invariance_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_vicreg_invariance_weight", 1.0))
+
+
+def _resolve_vicreg_variance_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_vicreg_variance_weight", 1.0))
+
+
+def _resolve_vicreg_covariance_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_vicreg_covariance_weight", 1.0))
+
+
+def _resolve_vicreg_loss_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_vicreg_loss_weight", 0.05))
+
+
+def _resolve_vicreg_variance_target(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_vicreg_variance_target", 1.0))
+
+
+def _resolve_barlow_loss_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_barlow_loss_weight", 0.05))
+
+
+def _resolve_barlow_lambda(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_barlow_lambda", 5e-3))
+
+
+def _resolve_writer_slot_orthogonality_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_slot_orthogonality_weight", 0.05))
+
+
+def _resolve_writer_support_coverage_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_writer_support_coverage_weight", 0.05))
 
 
 def _resolve_groupwise_grad_clip(config: dict[str, Any]) -> bool:
@@ -1007,6 +1160,8 @@ PREFIX_SCALAR_KEYS = (
     "writer_context_hidden_norm_mean",
     "writer_context_hidden_norm_std",
     "writer_context_hidden_norm_max",
+    "writer_context_balance_scale",
+    "writer_support_balance_scale",
     "memory_long_l2",
     "memory_long_slots",
     "memory_long_slot_norm_mean",
@@ -1518,6 +1673,8 @@ def _prefix_stats(
     projector_token_source: str = "writer_slots",
     prefix_source_mode: str = "writer",
     deep_prefix_init_mode: str = "random",
+    support_interface_mode: str = "pooled_block",
+    context_support_balance_mode: str = "off",
 ) -> dict[str, Any]:
     memory_long = memory_slots if memory_long is None else memory_long
     memory_short = memory_long if memory_short is None else memory_short
@@ -1607,6 +1764,12 @@ def _prefix_stats(
         "writer_context_hidden_norm_mean": 0.0,
         "writer_context_hidden_norm_std": 0.0,
         "writer_context_hidden_norm_max": 0.0,
+        "writer_context_balance_scale": float(
+            1.0 if writer_diagnostics is None else writer_diagnostics.get("context_balance_scale", 1.0)
+        ),
+        "writer_support_balance_scale": float(
+            1.0 if writer_diagnostics is None else writer_diagnostics.get("support_balance_scale", 1.0)
+        ),
     }
     if writer_context_states is not None and writer_context_states.numel() > 0:
         writer_context_summary = _slot_norm_summary(writer_context_states)
@@ -1616,6 +1779,8 @@ def _prefix_stats(
             "writer_context_hidden_norm_mean": float(writer_context_summary["slot_norm_mean"]),
             "writer_context_hidden_norm_std": float(writer_context_summary["slot_norm_std"]),
             "writer_context_hidden_norm_max": float(writer_context_summary["slot_norm_max"]),
+            "writer_context_balance_scale": float(writer_context_stats["writer_context_balance_scale"]),
+            "writer_support_balance_scale": float(writer_context_stats["writer_support_balance_scale"]),
         }
     reader_pre_stats = _reader_pre_attention_stats(
         base_queries=reader_base_queries,
@@ -1656,7 +1821,8 @@ def _prefix_stats(
                 "pilot_injection_mode": "sparse_deep_prefix",
                 "pilot_prefix_source_mode": prefix_source_mode,
                 "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
-                "pilot_support_encoder_mode": "pooled_block",
+                "pilot_support_encoder_mode": support_interface_mode,
+                "pilot_context_support_balance_mode": context_support_balance_mode,
                 "active_prefix_layers": [],
                 "layer_hidden_l2_by_layer": {},
                 "layer_slot_norm_mean_by_layer": {},
@@ -1706,9 +1872,8 @@ def _prefix_stats(
             "pilot_injection_mode": "sparse_deep_prefix",
             "pilot_prefix_source_mode": prefix_source_mode,
             "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
-            "pilot_support_encoder_mode": (
-                "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
-            ),
+            "pilot_support_encoder_mode": support_interface_mode,
+            "pilot_context_support_balance_mode": context_support_balance_mode,
             "active_prefix_layers": ordered_layers,
             "layer_hidden_l2_by_layer": layer_hidden_l2_by_layer,
             "layer_slot_norm_mean_by_layer": layer_slot_norm_mean_by_layer,
@@ -1741,9 +1906,8 @@ def _prefix_stats(
             "pilot_injection_mode": "shallow_prefix",
             "pilot_prefix_source_mode": prefix_source_mode,
             "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
-            "pilot_support_encoder_mode": (
-                "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
-            ),
+            "pilot_support_encoder_mode": support_interface_mode,
+            "pilot_context_support_balance_mode": context_support_balance_mode,
             "active_prefix_layers": [],
             "layer_hidden_l2_by_layer": {},
             "layer_slot_norm_mean_by_layer": {},
@@ -1776,9 +1940,8 @@ def _prefix_stats(
         "pilot_injection_mode": "shallow_prefix",
         "pilot_prefix_source_mode": prefix_source_mode,
         "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
-        "pilot_support_encoder_mode": (
-            "structured_support_set" if support_item_states is not None and support_item_states.numel() > 0 else "pooled_block"
-        ),
+        "pilot_support_encoder_mode": support_interface_mode,
+        "pilot_context_support_balance_mode": context_support_balance_mode,
         "active_prefix_layers": [],
         "layer_hidden_l2_by_layer": {},
         "layer_slot_norm_mean_by_layer": {},
@@ -1917,6 +2080,9 @@ def _save_shared_injection_checkpoint(
             "pilot_writer_context_query_residual_scale": float(
                 getattr(runtime.writer, "context_query_residual_scale", 0.0)
             ),
+            "pilot_context_support_balance_mode": str(runtime.context_support_balance_mode),
+            "pilot_context_balance_scale_init": float(runtime.context_balance_scale_init),
+            "pilot_support_balance_scale_init": float(runtime.support_balance_scale_init),
             "pilot_writer_conditioning_layers": int(
                 getattr(runtime.writer, "conditioning_layers", 1)
             ),
@@ -2255,6 +2421,63 @@ def _build_support_text_block(
     )
 
 
+def _drop_support_rows_for_aux_view(
+    support_rows: list[dict[str, Any]],
+    *,
+    dropout_probability: float,
+    generator: torch.Generator,
+) -> list[dict[str, Any]]:
+    if not support_rows or dropout_probability <= 0.0:
+        return [dict(row) for row in support_rows]
+    keep_rows: list[dict[str, Any]] = []
+    keep_probability = max(0.0, min(1.0, 1.0 - float(dropout_probability)))
+    for row in support_rows:
+        keep = bool(torch.rand((), generator=generator).item() < keep_probability)
+        if keep:
+            keep_rows.append(dict(row))
+    if keep_rows:
+        return keep_rows
+    rescue_index = int(torch.randint(len(support_rows), (1,), generator=generator).item())
+    return [dict(support_rows[rescue_index])]
+
+
+def _drop_prompt_tokens_for_aux_view(
+    prompt_text: str,
+    *,
+    dropout_probability: float,
+    generator: torch.Generator,
+) -> str:
+    normalized = str(prompt_text).strip()
+    if not normalized or dropout_probability <= 0.0:
+        return normalized
+    tokens = normalized.split()
+    if len(tokens) <= 1:
+        return normalized
+    keep_probability = max(0.0, min(1.0, 1.0 - float(dropout_probability)))
+    kept_tokens = [
+        token
+        for token in tokens
+        if bool(torch.rand((), generator=generator).item() < keep_probability)
+    ]
+    if not kept_tokens:
+        rescue_index = int(torch.randint(len(tokens), (1,), generator=generator).item())
+        kept_tokens = [tokens[rescue_index]]
+    return " ".join(kept_tokens)
+
+
+def _build_aux_support_text_block(
+    support_rows: list[dict[str, Any]],
+    *,
+    support_serialization_variant: str,
+) -> str:
+    return "\n\n".join(
+        _serialize_support_rows(
+            support_rows,
+            support_serialization_variant=support_serialization_variant,
+        )
+    )
+
+
 def _support_label_ids(
     support_rows: list[dict[str, Any]],
     *,
@@ -2337,6 +2560,12 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.bridge_mode = _resolve_bridge_mode(config)
         self.writer_stimulus_mode = _resolve_writer_stimulus_mode(config)
         self.writer_context_tokens = _resolve_writer_context_tokens(config)
+        support_encoder_mode = _resolve_support_encoder_mode(config)
+        context_support_balance_mode = _resolve_context_support_balance_mode(config)
+        context_balance_scale_init = _resolve_context_balance_scale_init(config)
+        support_balance_scale_init = _resolve_support_balance_scale_init(config)
+        aux_projection_dim = _resolve_aux_projection_dim(config)
+        aux_projection_hidden_dim = _resolve_aux_projection_hidden_dim(config)
         if self.bridge_mode == "writer_direct":
             self.writer = WriterWeaverHead(
                 embed_dim=self.backbone.hidden_size,
@@ -2351,7 +2580,15 @@ class SharedInjectionPilotRuntime(nn.Module):
                 ),
                 support_query_residual_scale=float(writer_cfg.get("support_query_residual_scale", 1.0)),
                 output_slot_basis_scale=float(writer_cfg.get("output_slot_basis_scale", 0.0)),
+                balance_mode=context_support_balance_mode,
+                context_balance_scale_init=context_balance_scale_init,
+                support_balance_scale_init=support_balance_scale_init,
             )
+            if aux_projection_dim > 0:
+                self.writer.enable_aux_projection_head(
+                    projection_dim=aux_projection_dim,
+                    hidden_dim=aux_projection_hidden_dim,
+                )
         else:
             self.writer = MemoryWriter(
                 embed_dim=self.backbone.hidden_size,
@@ -2370,7 +2607,13 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.injection_mode = _resolve_injection_mode(config)
         self.reader_context_mode = _resolve_reader_context_mode(config)
         self.projector_token_source = _resolve_projector_token_source(config)
-        self.support_encoder_mode = _resolve_support_encoder_mode(config)
+        self.support_encoder_mode = support_encoder_mode
+        self.context_support_balance_mode = context_support_balance_mode
+        self.context_balance_scale_init = float(context_balance_scale_init)
+        self.support_balance_scale_init = float(support_balance_scale_init)
+        self.aux_loss_mode = _resolve_aux_loss_mode(config)
+        self.aux_projection_dim = int(aux_projection_dim)
+        self.aux_projection_hidden_dim = aux_projection_hidden_dim
         self.trainable_variant = _resolve_trainable_variant(config)
         self.alignment_aux_mode = _resolve_alignment_aux_mode(config)
         self.alignment_aux_weight_max = _resolve_alignment_aux_weight_max(config)
@@ -2440,7 +2683,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.reader: MemoryReader | None = None
         self.fuser: MemoryFuser | None = None
         self.support_encoder: StructuredSupportSetEncoder | None = None
-        if self.support_encoder_mode == "structured_support_set":
+        if _support_mode_uses_encoder(self.support_encoder_mode):
             self.support_encoder = StructuredSupportSetEncoder(
                 hidden_size=self.backbone.hidden_size,
                 label_count=len(FEVER_LABEL_ORDER),
@@ -3159,25 +3402,39 @@ class SharedInjectionPilotRuntime(nn.Module):
         *,
         support_rows: list[dict[str, Any]] | None,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        if self.support_encoder_mode == "structured_support_set":
+        if not _support_mode_uses_item_rows(self.support_encoder_mode):
+            support_state = self.backbone.summarize_texts([support_text_block]).unsqueeze(1)
+            return support_state, support_state
+        if not support_rows:
+            raise ValueError(
+                f"pilot_support_encoder_mode={self.support_encoder_mode} requires non-empty support_rows "
+                "for injected arms."
+            )
+        support_row_texts = _serialize_support_rows(
+            support_rows,
+            support_serialization_variant=self.support_serialization_variant,
+        )
+        support_item_states = self.backbone.summarize_texts(support_row_texts).unsqueeze(0)
+        if self.support_encoder_mode == "multi_item_cross_attn_raw":
+            return support_item_states, support_item_states
+        pooled_support_state = self.backbone.summarize_texts([support_text_block]).unsqueeze(1)
+        writer_support_states = support_item_states
+        if _support_mode_uses_encoder(self.support_encoder_mode):
             if not support_rows:
                 raise ValueError(
-                    "Structured support-set encoding requires non-empty support_rows for injected arms."
+                    f"pilot_support_encoder_mode={self.support_encoder_mode} requires non-empty support_rows."
                 )
-            support_row_texts = _serialize_support_rows(
-                support_rows,
-                support_serialization_variant=self.support_serialization_variant,
-            )
-            support_item_states = self.backbone.summarize_texts(support_row_texts).unsqueeze(0)
             if self.support_encoder is None:
-                raise RuntimeError("support_encoder_mode=structured_support_set requires support_encoder.")
-            encoded_support_states = self.support_encoder(
+                raise RuntimeError(
+                    f"pilot_support_encoder_mode={self.support_encoder_mode} requires support_encoder."
+                )
+            writer_support_states = self.support_encoder(
                 support_item_states,
                 _support_label_ids(support_rows, device=self.backbone.device),
             )
-            return support_item_states, encoded_support_states
-        support_state = self.backbone.summarize_texts([support_text_block]).unsqueeze(1)
-        return support_state, support_state
+        if self.support_encoder_mode == "hybrid_pooled_plus_items":
+            writer_support_states = torch.cat([pooled_support_state, writer_support_states], dim=1)
+        return support_item_states, writer_support_states
 
     def _two_level_memory_short(
         self,
@@ -3338,6 +3595,8 @@ class SharedInjectionPilotRuntime(nn.Module):
                 projector_token_source=self.projector_token_source,
                 prefix_source_mode=self.prefix_source_mode,
                 deep_prefix_init_mode=self.deep_prefix_init_mode,
+                support_interface_mode=self.support_encoder_mode,
+                context_support_balance_mode=self.context_support_balance_mode,
             )
             return PrefixInjectionArtifacts(
                 prefix_embeddings=prefix_embeddings,
@@ -3384,6 +3643,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             projector_token_source=self.projector_token_source,
             prefix_source_mode=self.prefix_source_mode,
             deep_prefix_init_mode=self.deep_prefix_init_mode,
+            support_interface_mode=self.support_encoder_mode,
+            context_support_balance_mode=self.context_support_balance_mode,
         )
         prefix_stats = self._augment_prefix_stats_with_projection(
             prefix_stats=prefix_stats,
@@ -3708,25 +3969,36 @@ def _reference_latent_targets(
             device=runtime.backbone.device,
         )
         return None, reference_memory_slots
-    if runtime.support_encoder_mode == "structured_support_set":
+    if _support_mode_uses_item_rows(runtime.support_encoder_mode):
         if not support_rows:
-            raise ValueError("Latent anchor reference requires support_rows for structured support-set mode.")
-        if reference_support_encoder is None:
-            raise RuntimeError("Structured latent anchor reference requires reference_support_encoder.")
+            raise ValueError(
+                f"Latent anchor reference requires support_rows for pilot_support_encoder_mode="
+                f"{runtime.support_encoder_mode}."
+            )
         support_row_texts = _serialize_support_rows(
             support_rows,
             support_serialization_variant=runtime.support_serialization_variant,
         )
         support_item_states = runtime.backbone.summarize_texts(support_row_texts).unsqueeze(0)
-        encoded_support_states = reference_support_encoder(
-            support_item_states,
-            _support_label_ids(support_rows, device=runtime.backbone.device),
-        )
+        writer_support_states = support_item_states
+        if _support_mode_uses_encoder(runtime.support_encoder_mode):
+            if reference_support_encoder is None:
+                raise RuntimeError(
+                    f"Latent anchor reference requires reference_support_encoder for "
+                    f"pilot_support_encoder_mode={runtime.support_encoder_mode}."
+                )
+            writer_support_states = reference_support_encoder(
+                support_item_states,
+                _support_label_ids(support_rows, device=runtime.backbone.device),
+            )
+        if runtime.support_encoder_mode == "hybrid_pooled_plus_items":
+            pooled_support_state = runtime.backbone.summarize_texts([support_text_block]).unsqueeze(1)
+            writer_support_states = torch.cat([pooled_support_state, writer_support_states], dim=1)
         reference_memory_slots = reference_writer.write(
-            encoded_support_states,
+            writer_support_states,
             input_schema="support_set",
         )
-        return encoded_support_states, reference_memory_slots
+        return writer_support_states, reference_memory_slots
     support_state = runtime.backbone.summarize_texts([support_text_block])
     reference_memory_slots = reference_writer.write(support_state, input_schema="pooled_state")
     return None, reference_memory_slots
@@ -3830,6 +4102,197 @@ def _writer_common_mode_penalty(memory_long: torch.Tensor | None) -> torch.Tenso
     common_energy = common_mode.square().sum(dim=-1) * float(slots_fp32.shape[1])
     total_energy = slots_fp32.square().sum(dim=(1, 2)).clamp_min(1e-6)
     return torch.mean(common_energy / total_energy)
+
+
+def _writer_aux_projection_mean(
+    runtime: "SharedInjectionPilotRuntime",
+    prefix_artifacts: PrefixInjectionArtifacts,
+) -> torch.Tensor | None:
+    if not hasattr(runtime.writer, "project_auxiliary"):
+        return None
+    if prefix_artifacts.memory_slots is None:
+        return None
+    return runtime.writer.project_auxiliary(prefix_artifacts.memory_slots, reduction="mean")
+
+
+def _writer_aux_projection_slots(
+    runtime: "SharedInjectionPilotRuntime",
+    prefix_artifacts: PrefixInjectionArtifacts,
+) -> torch.Tensor | None:
+    if not hasattr(runtime.writer, "project_auxiliary"):
+        return None
+    if prefix_artifacts.memory_slots is None:
+        return None
+    return runtime.writer.project_auxiliary(prefix_artifacts.memory_slots, reduction="slots")
+
+
+def _contrastive_aux_loss(
+    *,
+    anchor: torch.Tensor | None,
+    positive: torch.Tensor | None,
+    negative_queue: list[torch.Tensor],
+    temperature: float,
+) -> tuple[torch.Tensor | None, dict[str, float]]:
+    diagnostics = {
+        "contrastive_positive_cosine": 0.0,
+        "contrastive_negative_cosine": 0.0,
+        "contrastive_queue_size": float(len(negative_queue)),
+    }
+    if anchor is None or positive is None:
+        return None, diagnostics
+    if anchor.ndim != 2 or positive.ndim != 2 or anchor.shape != positive.shape:
+        return None, diagnostics
+    anchor_norm = F.normalize(anchor.to(dtype=torch.float32), dim=-1)
+    positive_norm = F.normalize(positive.to(dtype=torch.float32), dim=-1)
+    diagnostics["contrastive_positive_cosine"] = float(
+        torch.sum(anchor_norm * positive_norm, dim=-1).mean().item()
+    )
+    queue_tensor = None
+    if negative_queue:
+        queue_tensor = torch.stack(
+            [value.to(device=anchor.device, dtype=torch.float32) for value in negative_queue],
+            dim=0,
+        )
+        queue_tensor = F.normalize(queue_tensor, dim=-1)
+        diagnostics["contrastive_negative_cosine"] = float(
+            torch.matmul(anchor_norm, queue_tensor.transpose(0, 1)).mean().item()
+        )
+    safe_temperature = max(float(temperature), 1e-6)
+
+    def directional_loss(query: torch.Tensor, key: torch.Tensor) -> torch.Tensor:
+        positive_logits = torch.sum(query * key, dim=-1, keepdim=True) / safe_temperature
+        if queue_tensor is None or queue_tensor.numel() == 0:
+            return 1.0 - torch.sum(query * key, dim=-1).mean()
+        negative_logits = torch.matmul(query, queue_tensor.transpose(0, 1)) / safe_temperature
+        logits = torch.cat([positive_logits, negative_logits], dim=-1)
+        targets = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
+        return F.cross_entropy(logits, targets)
+
+    loss = 0.5 * (
+        directional_loss(anchor_norm, positive_norm)
+        + directional_loss(positive_norm, anchor_norm)
+    )
+    return loss, diagnostics
+
+
+def _variance_penalty(embeddings: torch.Tensor, *, target: float) -> torch.Tensor:
+    centered = embeddings - embeddings.mean(dim=0, keepdim=True)
+    variance = centered.var(dim=0, unbiased=False)
+    std = torch.sqrt(variance + 1e-4)
+    return torch.relu(float(target) - std).mean()
+
+
+def _covariance_penalty(embeddings: torch.Tensor) -> torch.Tensor:
+    sample_count = embeddings.shape[0]
+    if sample_count <= 1:
+        return torch.zeros((), dtype=torch.float32, device=embeddings.device)
+    centered = embeddings - embeddings.mean(dim=0, keepdim=True)
+    covariance = centered.transpose(0, 1) @ centered / max(1, sample_count - 1)
+    feature_count = covariance.shape[0]
+    mask = ~torch.eye(feature_count, dtype=torch.bool, device=covariance.device)
+    off_diag = covariance.masked_select(mask)
+    if off_diag.numel() == 0:
+        return torch.zeros((), dtype=torch.float32, device=embeddings.device)
+    return torch.mean(off_diag.square())
+
+
+def _vicreg_aux_loss(
+    *,
+    view_a: torch.Tensor | None,
+    view_b: torch.Tensor | None,
+    invariance_weight: float,
+    variance_weight: float,
+    covariance_weight: float,
+    variance_target: float,
+) -> tuple[torch.Tensor | None, dict[str, float]]:
+    diagnostics = {
+        "vicreg_invariance_loss": 0.0,
+        "vicreg_variance_loss": 0.0,
+        "vicreg_covariance_loss": 0.0,
+    }
+    if view_a is None or view_b is None:
+        return None, diagnostics
+    if view_a.ndim != 3 or view_b.ndim != 3 or view_a.shape != view_b.shape:
+        return None, diagnostics
+    flat_a = view_a.reshape(-1, view_a.shape[-1]).to(dtype=torch.float32)
+    flat_b = view_b.reshape(-1, view_b.shape[-1]).to(dtype=torch.float32)
+    if flat_a.shape[0] <= 1:
+        return None, diagnostics
+    invariance = F.mse_loss(flat_a, flat_b)
+    variance = 0.5 * (
+        _variance_penalty(flat_a, target=variance_target)
+        + _variance_penalty(flat_b, target=variance_target)
+    )
+    covariance = 0.5 * (_covariance_penalty(flat_a) + _covariance_penalty(flat_b))
+    diagnostics.update(
+        {
+            "vicreg_invariance_loss": float(invariance.item()),
+            "vicreg_variance_loss": float(variance.item()),
+            "vicreg_covariance_loss": float(covariance.item()),
+        }
+    )
+    total = (
+        float(invariance_weight) * invariance
+        + float(variance_weight) * variance
+        + float(covariance_weight) * covariance
+    )
+    return total, diagnostics
+
+
+def _barlow_aux_loss(
+    *,
+    view_a: torch.Tensor | None,
+    view_b: torch.Tensor | None,
+    lambd: float,
+) -> tuple[torch.Tensor | None, dict[str, float]]:
+    diagnostics = {
+        "barlow_on_diag_loss": 0.0,
+        "barlow_off_diag_loss": 0.0,
+    }
+    if view_a is None or view_b is None:
+        return None, diagnostics
+    if view_a.ndim != 3 or view_b.ndim != 3 or view_a.shape != view_b.shape:
+        return None, diagnostics
+    flat_a = view_a.reshape(-1, view_a.shape[-1]).to(dtype=torch.float32)
+    flat_b = view_b.reshape(-1, view_b.shape[-1]).to(dtype=torch.float32)
+    if flat_a.shape[0] <= 1:
+        return None, diagnostics
+    flat_a = (flat_a - flat_a.mean(dim=0, keepdim=True)) / flat_a.std(dim=0, unbiased=False, keepdim=True).clamp_min(1e-4)
+    flat_b = (flat_b - flat_b.mean(dim=0, keepdim=True)) / flat_b.std(dim=0, unbiased=False, keepdim=True).clamp_min(1e-4)
+    correlation = flat_a.transpose(0, 1) @ flat_b / float(flat_a.shape[0])
+    on_diag = torch.diagonal(correlation).add_(-1.0).square().mean()
+    off_diag_mask = ~torch.eye(correlation.shape[0], dtype=torch.bool, device=correlation.device)
+    off_diag = correlation.masked_select(off_diag_mask).square().mean()
+    diagnostics.update(
+        {
+            "barlow_on_diag_loss": float(on_diag.item()),
+            "barlow_off_diag_loss": float(off_diag.item()),
+        }
+    )
+    return on_diag + (float(lambd) * off_diag), diagnostics
+
+
+def _writer_support_coverage_loss(
+    prefix_artifacts: PrefixInjectionArtifacts,
+) -> tuple[torch.Tensor | None, dict[str, float]]:
+    coverage_entropy = float(
+        prefix_artifacts.prefix_stats.get("writer_support_attention_item_coverage_entropy_mean", 0.0)
+    )
+    diagnostics = {
+        "writer_support_coverage_entropy_mean": coverage_entropy,
+        "writer_support_coverage_loss": 0.0,
+    }
+    if prefix_artifacts.memory_slots is None:
+        return None, diagnostics
+    if coverage_entropy <= 0.0:
+        return None, diagnostics
+    loss = torch.tensor(
+        max(0.0, 1.0 - coverage_entropy),
+        dtype=torch.float32,
+        device=prefix_artifacts.memory_slots.device,
+    )
+    diagnostics["writer_support_coverage_loss"] = float(loss.item())
+    return loss, diagnostics
 
 
 def _reader_fuser_bootstrap_active(*, current_step: int, bootstrap_steps: int) -> bool:
@@ -4568,11 +5031,17 @@ def run_shared_injection_pilot(
     lr_schedule = _resolve_lr_schedule(config)
     lr_warmup_steps = _resolve_lr_warmup_steps(config)
     writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 1e-4))
+    support_encoder_learning_rate = _resolve_support_encoder_learning_rate(config)
+    if support_encoder_learning_rate is None:
+        support_encoder_learning_rate = writer_learning_rate
     writer_adapter_learning_rate = _resolve_writer_adapter_learning_rate(config)
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
     source_stub_learning_rate = _resolve_source_stub_learning_rate(config)
     receiver_lora_learning_rate = _resolve_receiver_lora_learning_rate(config)
     writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
+    support_encoder_weight_decay = _resolve_support_encoder_weight_decay(config)
+    if support_encoder_weight_decay is None:
+        support_encoder_weight_decay = writer_weight_decay
     writer_adapter_weight_decay = _resolve_writer_adapter_weight_decay(config)
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
     source_stub_weight_decay = _resolve_source_stub_weight_decay(config)
@@ -4901,8 +5370,8 @@ def run_shared_injection_pilot(
                 {
                     "name": "support_encoder",
                     "params": list(runtime.support_encoder.parameters()),
-                    "lr": writer_learning_rate,
-                    "weight_decay": writer_weight_decay,
+                    "lr": support_encoder_learning_rate,
+                    "weight_decay": support_encoder_weight_decay,
                 }
             )
         if runtime.reader is not None:
@@ -5611,6 +6080,9 @@ def run_shared_injection_pilot(
                     "masked_support_ids": [str(row["id"]) for row in masked_support_rows],
                     "pilot_bridge_mode": runtime.bridge_mode,
                     "pilot_support_encoder_mode": support_encoder_mode,
+                    "pilot_context_support_balance_mode": runtime.context_support_balance_mode,
+                    "pilot_context_balance_scale_init": float(runtime.context_balance_scale_init),
+                    "pilot_support_balance_scale_init": float(runtime.support_balance_scale_init),
                     "pilot_trainable_variant": trainable_variant,
                     "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
                     "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
@@ -5676,6 +6148,12 @@ def run_shared_injection_pilot(
                             "writer_support_attention_distinct_top_items_mean",
                             0.0,
                         )
+                    ),
+                    "writer_context_balance_scale": float(
+                        prefix_artifacts.prefix_stats.get("writer_context_balance_scale", 1.0)
+                    ),
+                    "writer_support_balance_scale": float(
+                        prefix_artifacts.prefix_stats.get("writer_support_balance_scale", 1.0)
                     ),
                     "pilot_memory_path_variant": runtime.memory_path_variant,
                     "pilot_writer_slot_conditioning_mode": getattr(
@@ -6231,6 +6709,9 @@ def run_shared_injection_pilot(
         "pilot_prefix_source_mode": runtime.prefix_source_mode,
         "pilot_deep_prefix_init_mode": runtime.deep_prefix_init_mode,
         "pilot_support_encoder_mode": support_encoder_mode,
+        "pilot_context_support_balance_mode": runtime.context_support_balance_mode,
+        "pilot_context_balance_scale_init": float(runtime.context_balance_scale_init),
+        "pilot_support_balance_scale_init": float(runtime.support_balance_scale_init),
         "pilot_trainable_variant": trainable_variant,
         "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
         "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
@@ -6346,10 +6827,12 @@ def run_shared_injection_pilot(
         "task_case_dump_path": str(task_case_dump_path.resolve()),
         "pilot_train_steps": train_steps,
         "pilot_writer_learning_rate": writer_learning_rate,
+        "pilot_support_encoder_learning_rate": support_encoder_learning_rate,
         "pilot_source_stub_learning_rate": source_stub_learning_rate,
         "pilot_projector_learning_rate": projector_learning_rate,
         "pilot_receiver_lora_learning_rate": receiver_lora_learning_rate,
         "pilot_writer_weight_decay": writer_weight_decay,
+        "pilot_support_encoder_weight_decay": support_encoder_weight_decay,
         "pilot_source_stub_weight_decay": source_stub_weight_decay,
         "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_receiver_lora_weight_decay": receiver_lora_weight_decay,

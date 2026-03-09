@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "V6_2_S4_C1_L0",
+      "arm": "injected",
+      "macro_f1": 0.23484848484848483,
+      "subdir": "pilot-I-s4_multi_item_cross_attn_encoded",
+      "task_score": 0.3125,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "flat_raw8"
+}

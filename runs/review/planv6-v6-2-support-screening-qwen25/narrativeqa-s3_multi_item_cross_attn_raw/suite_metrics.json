@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "V6_2_S3_C0_L0",
+      "arm": "injected",
+      "macro_f1": 0.078127990430622,
+      "subdir": "pilot-I-s3_multi_item_cross_attn_raw",
+      "task_score": 0.078127990430622,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "task_native",
+  "selected_support_serialization": "example_blocks_raw8"
+}

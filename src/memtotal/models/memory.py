@@ -125,6 +125,70 @@ class WriterAuxProjectionHead(nn.Module):
         return F.normalize(projected, dim=-1)
 
 
+class SupportContextBalanceGate(nn.Module):
+    def __init__(
+        self,
+        *,
+        embed_dim: int,
+        mode: str = "off",
+        context_scale_init: float = 1.0,
+        support_scale_init: float = 1.0,
+    ) -> None:
+        super().__init__()
+        resolved_mode = str(mode)
+        if resolved_mode not in {"off", "layernorm_learned_scalar"}:
+            raise ValueError(
+                f"Unsupported SupportContextBalanceGate mode={resolved_mode}. "
+                "Expected one of off, layernorm_learned_scalar."
+            )
+        self.mode = resolved_mode
+        self.enabled = self.mode != "off"
+        if not self.enabled:
+            self.context_norm = None
+            self.support_norm = None
+            self.context_log_scale = None
+            self.support_log_scale = None
+            return
+        self.context_norm = nn.LayerNorm(int(embed_dim))
+        self.support_norm = nn.LayerNorm(int(embed_dim))
+        self.context_log_scale = nn.Parameter(
+            torch.tensor(math.log(max(float(context_scale_init), 1e-6)), dtype=torch.float32)
+        )
+        self.support_log_scale = nn.Parameter(
+            torch.tensor(math.log(max(float(support_scale_init), 1e-6)), dtype=torch.float32)
+        )
+
+    def context_scale(self) -> float:
+        if not self.enabled or self.context_log_scale is None:
+            return 1.0
+        return float(torch.exp(self.context_log_scale.detach()).item())
+
+    def support_scale(self) -> float:
+        if not self.enabled or self.support_log_scale is None:
+            return 1.0
+        return float(torch.exp(self.support_log_scale.detach()).item())
+
+    def forward(
+        self,
+        *,
+        context_states: torch.Tensor | None,
+        support_states: torch.Tensor | None,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        if not self.enabled:
+            return context_states, support_states
+        balanced_context = context_states
+        if balanced_context is not None:
+            assert self.context_norm is not None
+            assert self.context_log_scale is not None
+            balanced_context = self.context_norm(balanced_context) * torch.exp(self.context_log_scale)
+        balanced_support = support_states
+        if balanced_support is not None:
+            assert self.support_norm is not None
+            assert self.support_log_scale is not None
+            balanced_support = self.support_norm(balanced_support) * torch.exp(self.support_log_scale)
+        return balanced_context, balanced_support
+
+
 class SourceStubMemory(ManagedMemoryModule):
     def __init__(
         self,
@@ -547,6 +611,9 @@ class WriterWeaverHead(ManagedMemoryModule):
         context_query_residual_scale: float = 1.0,
         support_query_residual_scale: float = 1.0,
         output_slot_basis_scale: float = 0.0,
+        balance_mode: str = "off",
+        context_balance_scale_init: float = 1.0,
+        support_balance_scale_init: float = 1.0,
     ) -> None:
         super().__init__()
         self.embed_dim = int(embed_dim)
@@ -555,6 +622,7 @@ class WriterWeaverHead(ManagedMemoryModule):
         self.context_query_residual_scale = float(context_query_residual_scale)
         self.support_query_residual_scale = float(support_query_residual_scale)
         self.output_slot_basis_scale = float(output_slot_basis_scale)
+        self.balance_mode = str(balance_mode)
         self.slot_conditioning_mode = "writer_weaver"
         self.shared_state_scale = 1.0
         self.conditioning_layers = int(conditioning_layers)
@@ -596,6 +664,12 @@ class WriterWeaverHead(ManagedMemoryModule):
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=int(transformer_layers))
         self.output_norm = nn.LayerNorm(self.embed_dim)
+        self.support_context_balance = SupportContextBalanceGate(
+            embed_dim=self.embed_dim,
+            mode=self.balance_mode,
+            context_scale_init=float(context_balance_scale_init),
+            support_scale_init=float(support_balance_scale_init),
+        )
         self._writer_lora_targets: dict[str, MicroLoRALinear] = {}
         self._writer_lora_config: dict[str, object] = {
             "enabled": False,
@@ -892,6 +966,10 @@ class WriterWeaverHead(ManagedMemoryModule):
             raise ValueError(
                 f"WriterWeaverHead stimulus_mode={stimulus_mode} requires non-empty support_states."
             )
+        normalized_context, normalized_support = self.support_context_balance(
+            context_states=normalized_context,
+            support_states=normalized_support,
+        )
         source_state = normalized_context if normalized_context is not None else normalized_support
         if source_state is None:
             raise ValueError("WriterWeaverHead requires at least one stimulus source.")
@@ -928,7 +1006,12 @@ class WriterWeaverHead(ManagedMemoryModule):
             encoded = encoded + (self.output_slot_basis_scale * slots)
         if not return_diagnostics:
             return encoded
-        return encoded, {"support_attention_weights_by_layer": support_attention_by_layer}
+        return encoded, {
+            "support_attention_weights_by_layer": support_attention_by_layer,
+            "context_balance_scale": float(self.support_context_balance.context_scale()),
+            "support_balance_scale": float(self.support_context_balance.support_scale()),
+            "balance_mode": self.balance_mode,
+        }
 
 
 class MemoryReader(ManagedMemoryModule):

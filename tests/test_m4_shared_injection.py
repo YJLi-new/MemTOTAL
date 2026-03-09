@@ -186,6 +186,28 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertEqual(list(outputs.shape), [3, 4])
         self.assertTrue(torch.allclose(norms, torch.ones_like(norms), atol=1e-5))
 
+    def test_writer_weaver_head_supports_context_support_balance_gate(self) -> None:
+        writer = WriterWeaverHead(
+            embed_dim=6,
+            memory_slots=4,
+            hidden_dim=12,
+            num_heads=2,
+            transformer_layers=1,
+            balance_mode="layernorm_learned_scalar",
+            context_balance_scale_init=0.75,
+            support_balance_scale_init=1.25,
+        )
+        encoded, diagnostics = writer.write(
+            context_states=torch.randn(1, 3, 6),
+            support_states=torch.randn(1, 2, 6),
+            stimulus_mode="support_and_context",
+            return_diagnostics=True,
+        )
+        self.assertEqual(list(encoded.shape), [1, 4, 6])
+        self.assertAlmostEqual(diagnostics["context_balance_scale"], 0.75, places=5)
+        self.assertAlmostEqual(diagnostics["support_balance_scale"], 1.25, places=5)
+        self.assertEqual(diagnostics["balance_mode"], "layernorm_learned_scalar")
+
     def test_writer_weaver_head_supports_writer_micro_lora(self) -> None:
         writer = WriterWeaverHead(
             embed_dim=6,
@@ -1103,6 +1125,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                 "pilot_writer_context_tokens": 3,
                 "pilot_memory_path_variant": "single_level",
                 "pilot_injection_mode": "shallow_prefix",
+                "pilot_support_encoder_num_heads": 2,
             },
         }
         runtime = SharedInjectionPilotRuntime(
@@ -1195,6 +1218,115 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         runtime.set_writer_adapter_trainable(True)
         self.assertFalse(runtime.writer.slot_embeddings.requires_grad)
         self.assertTrue(all(parameter.requires_grad for parameter in runtime.writer_adapter_parameters()))
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_threads_v6_support_modes(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                rows = []
+                for index, _text in enumerate(texts):
+                    rows.append(torch.full((self.hidden_size,), float(index + 1), dtype=torch.float32))
+                return torch.stack(rows, dim=0)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {}
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                hidden = torch.ones(len(texts), max_tokens, self.hidden_size, dtype=torch.float32)
+                mask = torch.ones(len(texts), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        support_rows = [
+            {"id": "1", "label": "SUPPORTS", "claim": "c1", "evidence": "e1"},
+            {"id": "2", "label": "REFUTES", "claim": "c2", "evidence": "e2"},
+            {"id": "3", "label": "NOT_ENOUGH_INFO", "claim": "c3", "evidence": "e3"},
+        ]
+        base_config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 3,
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "shallow_prefix",
+                "pilot_support_encoder_num_heads": 2,
+            },
+        }
+        mode_expectations = {
+            "pooled_block": (1, 1),
+            "structured_support_set": (3, 3),
+            "multi_item_cross_attn_raw": (3, 3),
+            "multi_item_cross_attn_encoded": (3, 3),
+            "hybrid_pooled_plus_items": (3, 4),
+        }
+        for support_mode, (item_count, writer_state_count) in mode_expectations.items():
+            with self.subTest(support_mode=support_mode):
+                config = json.loads(json.dumps(base_config))
+                config["runtime"]["pilot_support_encoder_mode"] = support_mode
+                if support_mode == "pooled_block":
+                    config["runtime"]["pilot_context_support_balance_mode"] = "layernorm_learned_scalar"
+                    config["runtime"]["pilot_context_balance_scale_init"] = 0.8
+                    config["runtime"]["pilot_support_balance_scale_init"] = 1.2
+                runtime = SharedInjectionPilotRuntime(
+                    config=config,
+                    seed=23,
+                    arm="injected",
+                    writer_memory_control="real",
+                )
+                prefix_artifacts = runtime.build_prefix_artifacts(
+                    "Support bank",
+                    support_rows=support_rows,
+                    prompt_text="Need context now",
+                )
+                self.assertEqual(
+                    int(prefix_artifacts.prefix_stats["support_item_count"]),
+                    item_count,
+                )
+                self.assertEqual(
+                    int(prefix_artifacts.prefix_stats["writer_support_state_count"]),
+                    writer_state_count,
+                )
+                self.assertEqual(
+                    prefix_artifacts.prefix_stats["pilot_support_encoder_mode"],
+                    support_mode,
+                )
+                if support_mode == "pooled_block":
+                    self.assertEqual(
+                        prefix_artifacts.prefix_stats["pilot_context_support_balance_mode"],
+                        "layernorm_learned_scalar",
+                    )
+                    self.assertAlmostEqual(
+                        prefix_artifacts.prefix_stats["writer_context_balance_scale"],
+                        0.8,
+                        places=5,
+                    )
+                    self.assertAlmostEqual(
+                        prefix_artifacts.prefix_stats["writer_support_balance_scale"],
+                        1.2,
+                        places=5,
+                    )
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_writer_direct_runtime_allows_receiver_lora_under_sparse_deep_prefix(self, mock_backbone_cls) -> None:
