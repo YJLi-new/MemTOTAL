@@ -60,6 +60,7 @@ from memtotal.training.m4_shared_injection import (
     _conditioned_query_orthogonality_loss,
     _effective_rank,
     _latent_anchor_loss,
+    _median_train_event_metric,
     _prefix_stats,
     _reader_attention_diversity_loss,
     _reader_fuser_bootstrap_active,
@@ -246,6 +247,33 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         total_norm, was_clipped = _clip_parameter_group([parameter], max_norm=1.0)
         self.assertGreater(total_norm, 1.0)
         self.assertTrue(was_clipped)
+
+    def test_median_train_event_metric_can_filter_to_probe_steps(self) -> None:
+        events = [
+            {"step": 11, "gradient_probe_step_active": False, "grad_probe_writer_task_only_norm": 0.0},
+            {"step": 15, "gradient_probe_step_active": True, "grad_probe_writer_task_only_norm": 3.0},
+            {"step": 20, "gradient_probe_step_active": False, "grad_probe_writer_task_only_norm": 0.0},
+            {"step": 25, "gradient_probe_step_active": True, "grad_probe_writer_task_only_norm": 5.0},
+        ]
+        self.assertEqual(
+            _median_train_event_metric(
+                events,
+                key="grad_probe_writer_task_only_norm",
+                step_start=11,
+                step_end=25,
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            _median_train_event_metric(
+                events,
+                key="grad_probe_writer_task_only_norm",
+                step_start=11,
+                step_end=25,
+                active_only_key="gradient_probe_step_active",
+            ),
+            3.0,
+        )
 
     def test_support_text_block_respects_modes_and_triad_variant(self) -> None:
         support_rows = [

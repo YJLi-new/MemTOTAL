@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
 class RepoLintTest(unittest.TestCase):
     def test_governing_doc_cross_links_exist(self) -> None:
         checks = {
-            ROOT / "AGENTS.md": ["PLANv5.md", "MAIN_IDEA.md", "EXPERIMENTS_INFO.md"],
+            ROOT / "AGENTS.md": ["PLANv6.md", "MAIN_IDEA.md", "EXPERIMENTS_INFO.md"],
             ROOT / "docs/TODO_LIST.md": ["MAIN_IDEA.md", "EXPERIMENTS_INFO.md"],
         }
         for path, required_tokens in checks.items():

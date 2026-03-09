@@ -4125,11 +4125,13 @@ def _median_train_event_metric(
     key: str,
     step_start: int,
     step_end: int,
+    active_only_key: str | None = None,
 ) -> float:
     values = [
         float(event.get(key, 0.0))
         for event in train_events
         if step_start <= int(event.get("step", 0)) <= step_end
+        and (active_only_key is None or bool(event.get(active_only_key, False)))
     ]
     if not values:
         return 0.0
@@ -6138,36 +6140,42 @@ def run_shared_injection_pilot(
         key="grad_probe_writer_task_only_norm",
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
+        active_only_key="gradient_probe_step_active",
     )
     train_grad_probe_writer_aux_only_post_unfreeze_median = _median_train_event_metric(
         train_events,
         key="grad_probe_writer_aux_only_norm",
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
+        active_only_key="gradient_probe_step_active",
     )
     train_grad_probe_writer_total_post_unfreeze_median = _median_train_event_metric(
         train_events,
         key="grad_probe_writer_total_norm",
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
+        active_only_key="gradient_probe_step_active",
     )
     train_grad_probe_writer_task_aux_cosine_post_unfreeze_median = _median_train_event_metric(
         train_events,
         key="grad_probe_writer_task_aux_cosine",
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
+        active_only_key="gradient_probe_step_active",
     )
     train_grad_probe_writer_task_total_cosine_post_unfreeze_median = _median_train_event_metric(
         train_events,
         key="grad_probe_writer_task_total_cosine",
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
+        active_only_key="gradient_probe_step_active",
     )
     train_grad_probe_writer_aux_total_cosine_post_unfreeze_median = _median_train_event_metric(
         train_events,
         key="grad_probe_writer_aux_total_cosine",
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
+        active_only_key="gradient_probe_step_active",
     )
     train_writer_clip_fraction_tail_50 = _fraction_train_event_metric(
         train_events,

@@ -117,6 +117,9 @@ sync_first_available "runs/review/writer-circuit-opening-qwen25" \
 sync_first_available "runs/review/writer-deep-prefix-jointpeft-qwen25" \
   "runs/verify/writer-deep-prefix-jointpeft-qwen25" \
   "/root/autodl-tmp/runs/verify/writer-deep-prefix-jointpeft-qwen25"
+sync_first_available "runs/review/planv6-v6-1-clean-baseline-qwen25" \
+  "runs/verify/planv6-v6-1-clean-baseline-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv6-v6-1-clean-baseline-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -187,6 +190,9 @@ sync_first_available "results/generated/review/writer-circuit-opening-qwen25" \
 sync_first_available "results/generated/review/writer-deep-prefix-jointpeft-qwen25" \
   "results/generated/writer-deep-prefix-jointpeft-qwen25" \
   "/root/autodl-tmp/results/generated/writer-deep-prefix-jointpeft-qwen25"
+sync_first_available "results/generated/review/planv6-v6-1-clean-baseline-qwen25" \
+  "results/generated/planv6-v6-1-clean-baseline-qwen25" \
+  "/root/autodl-tmp/results/generated/planv6-v6-1-clean-baseline-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

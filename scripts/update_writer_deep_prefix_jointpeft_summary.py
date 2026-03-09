@@ -68,11 +68,13 @@ def _window_values(
     key: str,
     start_step: int,
     end_step: int,
+    active_only_key: str | None = None,
 ) -> list[float]:
     return [
         float(event.get(key, 0.0))
         for event in train_events
         if start_step <= int(event.get("step", 0)) <= end_step
+        and (active_only_key is None or bool(event.get(active_only_key, False)))
     ]
 
 
@@ -82,8 +84,17 @@ def _window_median(
     key: str,
     start_step: int,
     end_step: int,
+    active_only_key: str | None = None,
 ) -> float:
-    return _median(_window_values(train_events, key=key, start_step=start_step, end_step=end_step))
+    return _median(
+        _window_values(
+            train_events,
+            key=key,
+            start_step=start_step,
+            end_step=end_step,
+            active_only_key=active_only_key,
+        )
+    )
 
 
 def _window_fraction(
@@ -318,6 +329,7 @@ def _task_summary(
         start_step: int,
         end_step: int,
         default: float = 0.0,
+        active_only_key: str | None = None,
     ) -> float:
         if writer_train_events:
             value = _window_median(
@@ -325,6 +337,7 @@ def _task_summary(
                 key=event_key,
                 start_step=start_step,
                 end_step=end_step,
+                active_only_key=active_only_key,
             )
             if value != 0.0:
                 return value
@@ -383,36 +396,42 @@ def _task_summary(
         "train_grad_probe_writer_task_only_post_unfreeze_median",
         start_step=post_unfreeze_start,
         end_step=post_unfreeze_end,
+        active_only_key="gradient_probe_step_active",
     )
     writer_aux_only_grad = event_or_metric(
         "grad_probe_writer_aux_only_norm",
         "train_grad_probe_writer_aux_only_post_unfreeze_median",
         start_step=post_unfreeze_start,
         end_step=post_unfreeze_end,
+        active_only_key="gradient_probe_step_active",
     )
     writer_total_grad = event_or_metric(
         "grad_probe_writer_total_norm",
         "train_grad_probe_writer_total_post_unfreeze_median",
         start_step=post_unfreeze_start,
         end_step=post_unfreeze_end,
+        active_only_key="gradient_probe_step_active",
     )
     writer_task_aux_cosine = event_or_metric(
         "grad_probe_writer_task_aux_cosine",
         "train_grad_probe_writer_task_aux_cosine_post_unfreeze_median",
         start_step=post_unfreeze_start,
         end_step=post_unfreeze_end,
+        active_only_key="gradient_probe_step_active",
     )
     writer_task_total_cosine = event_or_metric(
         "grad_probe_writer_task_total_cosine",
         "train_grad_probe_writer_task_total_cosine_post_unfreeze_median",
         start_step=post_unfreeze_start,
         end_step=post_unfreeze_end,
+        active_only_key="gradient_probe_step_active",
     )
     writer_aux_total_cosine = event_or_metric(
         "grad_probe_writer_aux_total_cosine",
         "train_grad_probe_writer_aux_total_cosine_post_unfreeze_median",
         start_step=post_unfreeze_start,
         end_step=post_unfreeze_end,
+        active_only_key="gradient_probe_step_active",
     )
     writer_clip_fraction_tail = (
         _window_fraction(

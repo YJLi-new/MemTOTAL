@@ -174,7 +174,7 @@ Agents copy existing repo patterns, including bad ones.
 Therefore:
 - continuously remove stale configs, outdated scripts, duplicate helpers, and dead docs
 - upgrade recurring review comments into mechanical rules
-- maintain the golden principles / quality tracker / tech-debt tracker in `docs/` when `PLANv5.md` requires it
+- maintain the golden principles / quality tracker / tech-debt tracker in `docs/` when `PLANv6.md` requires it
 
 ---
 
@@ -201,7 +201,7 @@ The final paper's core selling points are fixed and must not be diluted or rewri
 
 ---
 
-## 6) Minimum Repo and Artifact Contract (details defer to `PLANv5.md`)
+## 6) Minimum Repo and Artifact Contract (details defer to `PLANv6.md`)
 
 ### 6.1 Directory and knowledge layout
 Recommended layout:
@@ -251,7 +251,7 @@ This project studies an internal memory mechanism for reasoning LLMs / agents:
 
 Every milestone delivery must include:
 
-1. **Completed work**: the corresponding `PLANv5.md` item and a short explanation
+1. **Completed work**: the corresponding `PLANv6.md` item and a short explanation
 2. **Modified files**: file list
 3. **Reproduction**: commands + config + seed + output directory
 4. **Validation**: tests / eval / plots
@@ -271,7 +271,7 @@ When any of the following is unclear, do not invent defaults or commands:
 - baseline budget alignment
 
 Correct handling sequence:
-1. Check `PLANv5.md`
+1. Check `PLANv6.md`
 2. Then check `docs/MAIN_IDEA.md` and `docs/EXPERIMENTS_INFO.md`
 3. If still unclear: list 2-3 options with risks / cost / recommended option, and wait for human direction
 
