@@ -4167,3 +4167,397 @@ def compare_tl_writer_value_runs(
         "stop_after_v1_architecture": stop_after_v1_architecture,
         "failure_reason": failure_reason,
     }
+
+
+def _train_event_list(train_events_json: str | None) -> list[dict[str, Any]]:
+    if not train_events_json:
+        return []
+    payload = json.loads(Path(train_events_json).read_text())
+    if isinstance(payload, dict):
+        events = payload.get("events", [])
+        return list(events) if isinstance(events, list) else []
+    return list(payload) if isinstance(payload, list) else []
+
+
+def _median_train_event_window(
+    train_events: list[dict[str, Any]],
+    *,
+    key: str,
+    step_start: int,
+    step_end: int,
+) -> float:
+    values = [
+        float(event[key])
+        for event in train_events
+        if step_start <= int(event.get("step", -1)) <= step_end and event.get(key) is not None
+    ]
+    if not values:
+        return 0.0
+    values.sort()
+    midpoint = len(values) // 2
+    if len(values) % 2 == 1:
+        return float(values[midpoint])
+    return float((values[midpoint - 1] + values[midpoint]) / 2.0)
+
+
+def _micro_lora_arm_summary(
+    *,
+    metrics_json: str,
+    run_summary_json: str,
+    train_events_json: str | None = None,
+) -> dict[str, Any]:
+    run_metrics = json.loads(Path(metrics_json).read_text())
+    run_summary = json.loads(Path(run_summary_json).read_text())
+    train_events = _train_event_list(train_events_json)
+    return {
+        "receiver_lora_enabled": bool(run_metrics.get("pilot_receiver_lora_enabled", False)),
+        "receiver_lora_rank": int(run_metrics.get("pilot_receiver_lora_rank", 0)),
+        "receiver_lora_alpha": float(run_metrics.get("pilot_receiver_lora_alpha", 0.0)),
+        "receiver_lora_dropout": float(run_metrics.get("pilot_receiver_lora_dropout", 0.0)),
+        "receiver_lora_target_layers": [
+            int(layer_index)
+            for layer_index in run_metrics.get("pilot_receiver_lora_target_layers", [])
+        ],
+        "receiver_lora_target_modules": [
+            str(module_name)
+            for module_name in run_metrics.get("pilot_receiver_lora_target_modules", [])
+        ],
+        "receiver_lora_trainable_params": int(
+            run_metrics.get("pilot_receiver_lora_trainable_params", 0)
+        ),
+        "best_adapt_task_score": float(run_metrics.get("best_adapt_task_score", 0.0)),
+        "best_adapt_macro_f1": float(run_metrics.get("best_adapt_macro_f1", 0.0)),
+        "dominant_label_fraction": float(run_metrics.get("dominant_label_fraction", 0.0)),
+        "dominant_label_collapse_onset_step": int(
+            0
+            if run_summary.get(
+                "dominant_label_collapse_onset_step",
+                _collapse_onset_from_snapshot_metrics(run_metrics),
+            )
+            is None
+            else run_summary.get(
+                "dominant_label_collapse_onset_step",
+                _collapse_onset_from_snapshot_metrics(run_metrics),
+            )
+        ),
+        "selection_passed": bool(run_summary.get("selection_passed", False)),
+        "screen248_test_gate_passed": bool(run_summary.get("screen248_test_gate_passed", False)),
+        "fixed64_gate_passed": bool(run_summary.get("fixed64_gate_passed", False)),
+        "memory_long_top1_top2_ratio": float(run_metrics.get("memory_long_top1_top2_ratio", 0.0)),
+        "memory_long_common_mode_energy_ratio": float(
+            run_metrics.get("memory_long_common_mode_energy_ratio", 0.0)
+        ),
+        "reader_readout_effective_rank": float(run_metrics.get("reader_readout_effective_rank", 0.0)),
+        "reader_readout_pairwise_cosine_mean": float(
+            run_metrics.get("reader_readout_pairwise_cosine_mean", 0.0)
+        ),
+        "train_grad_norm_reader_steps_1_4_median": float(
+            run_metrics.get(
+                "train_grad_norm_reader_steps_1_4_median",
+                _median_train_event_window(train_events, key="grad_norm_reader", step_start=1, step_end=4),
+            )
+        ),
+        "train_grad_norm_fuser_steps_1_4_median": float(
+            run_metrics.get(
+                "train_grad_norm_fuser_steps_1_4_median",
+                _median_train_event_window(train_events, key="grad_norm_fuser", step_start=1, step_end=4),
+            )
+        ),
+        "train_grad_norm_receiver_lora_steps_1_4_median": float(
+            run_metrics.get(
+                "train_grad_norm_receiver_lora_steps_1_4_median",
+                _median_train_event_window(
+                    train_events,
+                    key="grad_norm_receiver_lora",
+                    step_start=1,
+                    step_end=4,
+                ),
+            )
+        ),
+        "train_reader_to_support_grad_ratio_steps_1_4_median": float(
+            run_metrics.get("train_reader_to_support_grad_ratio_steps_1_4_median", 0.0)
+        ),
+        "train_fuser_to_support_grad_ratio_steps_1_4_median": float(
+            run_metrics.get("train_fuser_to_support_grad_ratio_steps_1_4_median", 0.0)
+        ),
+        "train_receiver_lora_to_reader_grad_ratio_steps_1_4_median": float(
+            run_metrics.get("train_receiver_lora_to_reader_grad_ratio_steps_1_4_median", 0.0)
+        ),
+    }
+
+
+def _micro_lora_candidate_delta(
+    *,
+    reference: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    reader_grad_boost = float(
+        candidate["train_grad_norm_reader_steps_1_4_median"]
+        / max(reference["train_grad_norm_reader_steps_1_4_median"], 1e-8)
+    )
+    fuser_grad_boost = float(
+        candidate["train_grad_norm_fuser_steps_1_4_median"]
+        / max(reference["train_grad_norm_fuser_steps_1_4_median"], 1e-8)
+    )
+    task_score_delta = float(candidate["best_adapt_task_score"] - reference["best_adapt_task_score"])
+    macro_f1_delta = float(candidate["best_adapt_macro_f1"] - reference["best_adapt_macro_f1"])
+    collapse_delayed = bool(
+        _later_onset(
+            candidate["dominant_label_collapse_onset_step"],
+            reference["dominant_label_collapse_onset_step"],
+        )
+    )
+    selection_upgraded = bool(candidate["selection_passed"] and not reference["selection_passed"])
+    screen248_upgraded = bool(
+        candidate["screen248_test_gate_passed"] and not reference["screen248_test_gate_passed"]
+    )
+    fixed64_upgraded = bool(candidate["fixed64_gate_passed"] and not reference["fixed64_gate_passed"])
+    no_obvious_label_collapse = bool(
+        candidate["dominant_label_fraction"]
+        <= min(0.98, reference["dominant_label_fraction"] + 0.02)
+    )
+    diagnostic_success = bool(
+        reader_grad_boost >= 10.0
+        or fuser_grad_boost >= 10.0
+        or collapse_delayed
+        or selection_upgraded
+        or screen248_upgraded
+        or fixed64_upgraded
+        or task_score_delta >= 0.05
+    )
+    partial_evidence = bool(
+        candidate["train_grad_norm_receiver_lora_steps_1_4_median"] > 0.0
+        and (
+            reader_grad_boost >= 3.0
+            or fuser_grad_boost >= 3.0
+            or collapse_delayed
+            or task_score_delta >= 0.02
+            or macro_f1_delta >= 0.02
+        )
+    )
+    medium_success = bool(
+        diagnostic_success
+        and no_obvious_label_collapse
+        and (
+            task_score_delta >= 0.05
+            or macro_f1_delta >= 0.05
+            or selection_upgraded
+            or screen248_upgraded
+            or fixed64_upgraded
+        )
+    )
+    strong_success = bool(selection_upgraded or screen248_upgraded or fixed64_upgraded)
+    return {
+        "reader_grad_boost": reader_grad_boost,
+        "fuser_grad_boost": fuser_grad_boost,
+        "task_score_delta": task_score_delta,
+        "macro_f1_delta": macro_f1_delta,
+        "collapse_delayed": collapse_delayed,
+        "selection_upgraded": selection_upgraded,
+        "screen248_upgraded": screen248_upgraded,
+        "fixed64_upgraded": fixed64_upgraded,
+        "no_obvious_label_collapse": no_obvious_label_collapse,
+        "diagnostic_success": diagnostic_success,
+        "partial_evidence": partial_evidence,
+        "medium_success": medium_success,
+        "strong_success": strong_success,
+    }
+
+
+def compare_tl_micro_lora_runs(
+    *,
+    control_metrics_json: str,
+    control_run_summary_json: str,
+    late3_metrics_json: str,
+    late3_run_summary_json: str,
+    control_train_events_json: str | None = None,
+    late3_train_events_json: str | None = None,
+    all5_metrics_json: str | None = None,
+    all5_run_summary_json: str | None = None,
+    all5_train_events_json: str | None = None,
+    rank4_metrics_json: str | None = None,
+    rank4_run_summary_json: str | None = None,
+    rank4_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _micro_lora_arm_summary(
+        metrics_json=control_metrics_json,
+        run_summary_json=control_run_summary_json,
+        train_events_json=control_train_events_json,
+    )
+    late3 = _micro_lora_arm_summary(
+        metrics_json=late3_metrics_json,
+        run_summary_json=late3_run_summary_json,
+        train_events_json=late3_train_events_json,
+    )
+    candidate_rows: list[dict[str, Any]] = [
+        {
+            "arm": "micro_lora_r2_late3",
+            "prefix": "late3",
+            "preference": 2,
+            **late3,
+            **_micro_lora_candidate_delta(reference=control, candidate=late3),
+        }
+    ]
+    all5: dict[str, Any] | None = None
+    rank4: dict[str, Any] | None = None
+    if all5_metrics_json and all5_run_summary_json:
+        all5 = _micro_lora_arm_summary(
+            metrics_json=all5_metrics_json,
+            run_summary_json=all5_run_summary_json,
+            train_events_json=all5_train_events_json,
+        )
+        candidate_rows.append(
+            {
+                "arm": "micro_lora_r2_all5",
+                "prefix": "all5",
+                "preference": 1,
+                **all5,
+                **_micro_lora_candidate_delta(reference=control, candidate=all5),
+            }
+        )
+    if rank4_metrics_json and rank4_run_summary_json:
+        rank4 = _micro_lora_arm_summary(
+            metrics_json=rank4_metrics_json,
+            run_summary_json=rank4_run_summary_json,
+            train_events_json=rank4_train_events_json,
+        )
+        candidate_rows.append(
+            {
+                "arm": "micro_lora_r4",
+                "prefix": "rank4",
+                "preference": 0,
+                **rank4,
+                **_micro_lora_candidate_delta(reference=control, candidate=rank4),
+            }
+        )
+    best_candidate = max(
+        candidate_rows,
+        key=lambda row: (
+            bool(row["strong_success"]),
+            bool(row["medium_success"]),
+            bool(row["diagnostic_success"]),
+            bool(row["partial_evidence"]),
+            float(row["task_score_delta"]),
+            float(row["reader_grad_boost"]),
+            float(row["fuser_grad_boost"]),
+            int(row["preference"]),
+        ),
+    )
+
+    continue_to_l2 = False
+    continue_to_l3 = False
+    move_to_v3 = False
+    move_to_v4 = False
+    failure_reason = ""
+    if bool(best_candidate["strong_success"]):
+        comparison_conclusion = "strong_success"
+        primary_interpretation = "micro_lora_unblocked_bridge"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v3 = True
+    elif bool(best_candidate["medium_success"]):
+        comparison_conclusion = "move_to_v3"
+        primary_interpretation = "micro_lora_helped_without_gate_pass"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v3 = True
+    elif bool(best_candidate["partial_evidence"]) and all5 is None and best_candidate["prefix"] == "late3":
+        comparison_conclusion = "expand_to_l2"
+        primary_interpretation = "late3_micro_lora_partial_signal"
+        recommended_arm = str(best_candidate["arm"])
+        continue_to_l2 = True
+    elif bool(best_candidate["partial_evidence"]) and rank4 is None:
+        comparison_conclusion = "expand_to_l3"
+        primary_interpretation = "rank2_micro_lora_partial_signal"
+        recommended_arm = str(best_candidate["arm"])
+        continue_to_l3 = True
+    else:
+        comparison_conclusion = "move_to_v4"
+        primary_interpretation = "micro_lora_no_actionable_signal"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v4 = True
+        if not bool(best_candidate["diagnostic_success"]):
+            failure_reason = "no_gradient_or_capability_gain"
+        elif not bool(best_candidate["no_obvious_label_collapse"]):
+            failure_reason = "label_collapse_tradeoff"
+        else:
+            failure_reason = "partial_signal_exhausted"
+
+    summary: dict[str, Any] = {
+        "control_receiver_lora_enabled": control["receiver_lora_enabled"],
+        "control_best_adapt_task_score": control["best_adapt_task_score"],
+        "control_best_adapt_macro_f1": control["best_adapt_macro_f1"],
+        "control_dominant_label_fraction": control["dominant_label_fraction"],
+        "control_dominant_label_collapse_onset_step": control["dominant_label_collapse_onset_step"],
+        "control_selection_passed": control["selection_passed"],
+        "control_screen248_test_gate_passed": control["screen248_test_gate_passed"],
+        "control_fixed64_gate_passed": control["fixed64_gate_passed"],
+        "control_memory_long_top1_top2_ratio": control["memory_long_top1_top2_ratio"],
+        "control_reader_readout_effective_rank": control["reader_readout_effective_rank"],
+        "control_reader_readout_pairwise_cosine_mean": control["reader_readout_pairwise_cosine_mean"],
+        "control_train_grad_norm_reader_steps_1_4_median": (
+            control["train_grad_norm_reader_steps_1_4_median"]
+        ),
+        "control_train_grad_norm_fuser_steps_1_4_median": (
+            control["train_grad_norm_fuser_steps_1_4_median"]
+        ),
+    }
+    for row in candidate_rows:
+        prefix = str(row["prefix"])
+        summary.update(
+            {
+                f"{prefix}_receiver_lora_enabled": row["receiver_lora_enabled"],
+                f"{prefix}_receiver_lora_rank": row["receiver_lora_rank"],
+                f"{prefix}_receiver_lora_alpha": row["receiver_lora_alpha"],
+                f"{prefix}_receiver_lora_dropout": row["receiver_lora_dropout"],
+                f"{prefix}_receiver_lora_target_layers": row["receiver_lora_target_layers"],
+                f"{prefix}_receiver_lora_target_modules": row["receiver_lora_target_modules"],
+                f"{prefix}_receiver_lora_trainable_params": row["receiver_lora_trainable_params"],
+                f"{prefix}_best_adapt_task_score": row["best_adapt_task_score"],
+                f"{prefix}_best_adapt_macro_f1": row["best_adapt_macro_f1"],
+                f"{prefix}_dominant_label_fraction": row["dominant_label_fraction"],
+                f"{prefix}_dominant_label_collapse_onset_step": row[
+                    "dominant_label_collapse_onset_step"
+                ],
+                f"{prefix}_selection_passed": row["selection_passed"],
+                f"{prefix}_screen248_test_gate_passed": row["screen248_test_gate_passed"],
+                f"{prefix}_fixed64_gate_passed": row["fixed64_gate_passed"],
+                f"{prefix}_memory_long_top1_top2_ratio": row["memory_long_top1_top2_ratio"],
+                f"{prefix}_reader_readout_effective_rank": row["reader_readout_effective_rank"],
+                f"{prefix}_reader_readout_pairwise_cosine_mean": row[
+                    "reader_readout_pairwise_cosine_mean"
+                ],
+                f"{prefix}_train_grad_norm_reader_steps_1_4_median": row[
+                    "train_grad_norm_reader_steps_1_4_median"
+                ],
+                f"{prefix}_train_grad_norm_fuser_steps_1_4_median": row[
+                    "train_grad_norm_fuser_steps_1_4_median"
+                ],
+                f"{prefix}_train_grad_norm_receiver_lora_steps_1_4_median": row[
+                    "train_grad_norm_receiver_lora_steps_1_4_median"
+                ],
+                f"{prefix}_reader_grad_boost": row["reader_grad_boost"],
+                f"{prefix}_fuser_grad_boost": row["fuser_grad_boost"],
+                f"{prefix}_task_score_delta": row["task_score_delta"],
+                f"{prefix}_macro_f1_delta": row["macro_f1_delta"],
+                f"{prefix}_collapse_delayed": row["collapse_delayed"],
+                f"{prefix}_selection_upgraded": row["selection_upgraded"],
+                f"{prefix}_screen248_upgraded": row["screen248_upgraded"],
+                f"{prefix}_fixed64_upgraded": row["fixed64_upgraded"],
+                f"{prefix}_diagnostic_success": row["diagnostic_success"],
+                f"{prefix}_partial_evidence": row["partial_evidence"],
+                f"{prefix}_medium_success": row["medium_success"],
+                f"{prefix}_strong_success": row["strong_success"],
+            }
+        )
+    summary.update(
+        {
+            "recommended_arm": recommended_arm,
+            "primary_interpretation": primary_interpretation,
+            "comparison_conclusion": comparison_conclusion,
+            "continue_to_l2": continue_to_l2,
+            "continue_to_l3": continue_to_l3,
+            "move_to_v3": move_to_v3,
+            "move_to_v4": move_to_v4,
+            "failure_reason": failure_reason,
+        }
+    )
+    return summary

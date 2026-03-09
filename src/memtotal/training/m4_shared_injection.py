@@ -549,6 +549,50 @@ def _resolve_writer_orthogonalize_slot_basis(config: dict[str, Any]) -> bool:
     return bool(config["runtime"].get("pilot_writer_orthogonalize_slot_basis", False))
 
 
+def _resolve_receiver_lora_enabled(config: dict[str, Any]) -> bool:
+    return bool(config.get("method", {}).get("receiver_lora", {}).get("enabled", False))
+
+
+def _resolve_receiver_lora_target_layers(config: dict[str, Any]) -> tuple[int, ...]:
+    layers = config.get("method", {}).get("receiver_lora", {}).get("target_layers", [])
+    return tuple(int(layer_index) for layer_index in layers)
+
+
+def _resolve_receiver_lora_target_modules(config: dict[str, Any]) -> tuple[str, ...]:
+    target_modules = config.get("method", {}).get("receiver_lora", {}).get(
+        "target_modules",
+        ("k_proj", "v_proj"),
+    )
+    normalized = tuple(str(module_name) for module_name in target_modules)
+    unsupported = sorted(set(normalized) - {"k_proj", "v_proj"})
+    if unsupported:
+        raise ValueError(
+            f"Unsupported method.receiver_lora.target_modules={unsupported}. "
+            "Expected only k_proj and/or v_proj."
+        )
+    return normalized
+
+
+def _resolve_receiver_lora_rank(config: dict[str, Any]) -> int:
+    return int(config.get("method", {}).get("receiver_lora", {}).get("rank", 0))
+
+
+def _resolve_receiver_lora_alpha(config: dict[str, Any]) -> float:
+    return float(config.get("method", {}).get("receiver_lora", {}).get("alpha", 4.0))
+
+
+def _resolve_receiver_lora_dropout(config: dict[str, Any]) -> float:
+    return float(config.get("method", {}).get("receiver_lora", {}).get("dropout", 0.0))
+
+
+def _resolve_receiver_lora_learning_rate(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_receiver_lora_learning_rate", 5e-5))
+
+
+def _resolve_receiver_lora_weight_decay(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_receiver_lora_weight_decay", 0.0))
+
+
 def _resolve_train_support_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_train_support_mode", "static_support_rows"))
     if mode not in {"static_support_rows", "episode_bank"}:
@@ -1476,6 +1520,18 @@ def _save_shared_injection_checkpoint(
             "pilot_writer_support_query_residual_scale": float(
                 getattr(runtime.writer, "support_query_residual_scale", 0.0)
             ),
+            "receiver_lora_state": (
+                None
+                if not hasattr(runtime.backbone, "receiver_lora_state_dict")
+                else runtime.backbone.receiver_lora_state_dict()
+            ),
+            "pilot_receiver_lora_enabled": bool(runtime.receiver_lora_enabled),
+            "pilot_receiver_lora_target_layers": list(runtime.receiver_lora_target_layers),
+            "pilot_receiver_lora_target_modules": list(runtime.receiver_lora_target_modules),
+            "pilot_receiver_lora_rank": int(runtime.receiver_lora_rank),
+            "pilot_receiver_lora_alpha": float(runtime.receiver_lora_alpha),
+            "pilot_receiver_lora_dropout": float(runtime.receiver_lora_dropout),
+            "pilot_receiver_lora_trainable_params": int(runtime.receiver_lora_trainable_params),
             "pilot_support_encoder_max_items": (
                 None if runtime.support_encoder is None else int(runtime.support_encoder.max_items)
             ),
@@ -1840,6 +1896,25 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
         self.support_serialization_variant = _resolve_support_serialization_variant(config)
+        self.receiver_lora_enabled = _resolve_receiver_lora_enabled(config)
+        self.receiver_lora_target_layers = _resolve_receiver_lora_target_layers(config)
+        self.receiver_lora_target_modules = _resolve_receiver_lora_target_modules(config)
+        self.receiver_lora_rank = _resolve_receiver_lora_rank(config)
+        self.receiver_lora_alpha = _resolve_receiver_lora_alpha(config)
+        self.receiver_lora_dropout = _resolve_receiver_lora_dropout(config)
+        if self.receiver_lora_enabled:
+            if not hasattr(self.backbone, "enable_receiver_micro_lora"):
+                raise RuntimeError("Configured receiver micro-LoRA, but BackboneWrapper lacks support.")
+            self.backbone.enable_receiver_micro_lora(
+                layer_indices=self.receiver_lora_target_layers,
+                target_modules=self.receiver_lora_target_modules,
+                rank=self.receiver_lora_rank,
+                alpha=self.receiver_lora_alpha,
+                dropout=self.receiver_lora_dropout,
+            )
+        self.receiver_lora_trainable_params = int(
+            getattr(self.backbone, "receiver_lora_parameter_count", lambda: 0)()
+        )
         self.reader: MemoryReader | None = None
         self.fuser: MemoryFuser | None = None
         self.support_encoder: StructuredSupportSetEncoder | None = None
@@ -1908,6 +1983,9 @@ class SharedInjectionPilotRuntime(nn.Module):
         self._prompt_summary_cache: dict[str, torch.Tensor] = {}
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(False)
+        set_receiver_lora_trainable = getattr(self.backbone, "set_receiver_lora_trainable", None)
+        if callable(set_receiver_lora_trainable):
+            set_receiver_lora_trainable(self.receiver_lora_enabled)
         self.to(self.backbone.device)
 
     def orthogonalize_writer_slot_basis(self) -> None:
@@ -1923,6 +2001,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         checkpoint: dict[str, Any],
         checkpoint_path: Path,
         allow_single_level_init_for_two_level: bool = False,
+        allow_missing_receiver_lora_state: bool = False,
     ) -> None:
         checkpoint_memory_path_variant = str(
             checkpoint.get(
@@ -2091,6 +2170,76 @@ class SharedInjectionPilotRuntime(nn.Module):
                     checkpoint_state=fuser_state,
                     checkpoint_path=checkpoint_path,
                 )
+        checkpoint_receiver_lora_enabled = bool(
+            checkpoint.get("pilot_receiver_lora_enabled", checkpoint.get("receiver_lora_state") is not None)
+        )
+        if checkpoint_receiver_lora_enabled != self.receiver_lora_enabled:
+            if not (
+                allow_missing_receiver_lora_state
+                and self.receiver_lora_enabled
+                and not checkpoint_receiver_lora_enabled
+            ):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_enabled="
+                    f"{checkpoint_receiver_lora_enabled}, expected {self.receiver_lora_enabled}."
+                )
+        if self.receiver_lora_enabled and checkpoint_receiver_lora_enabled:
+            checkpoint_receiver_lora_layers = tuple(
+                int(layer_index) for layer_index in checkpoint.get("pilot_receiver_lora_target_layers", [])
+            )
+            checkpoint_receiver_lora_modules = tuple(
+                str(module_name)
+                for module_name in checkpoint.get("pilot_receiver_lora_target_modules", [])
+            )
+            if checkpoint_receiver_lora_layers != self.receiver_lora_target_layers:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_target_layers="
+                    f"{list(checkpoint_receiver_lora_layers)}, expected {list(self.receiver_lora_target_layers)}."
+                )
+            if checkpoint_receiver_lora_modules != self.receiver_lora_target_modules:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_target_modules="
+                    f"{list(checkpoint_receiver_lora_modules)}, expected {list(self.receiver_lora_target_modules)}."
+                )
+            checkpoint_receiver_lora_rank = int(
+                checkpoint.get("pilot_receiver_lora_rank", self.receiver_lora_rank)
+            )
+            checkpoint_receiver_lora_alpha = float(
+                checkpoint.get("pilot_receiver_lora_alpha", self.receiver_lora_alpha)
+            )
+            checkpoint_receiver_lora_dropout = float(
+                checkpoint.get("pilot_receiver_lora_dropout", self.receiver_lora_dropout)
+            )
+            if checkpoint_receiver_lora_rank != int(self.receiver_lora_rank):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_rank="
+                    f"{checkpoint_receiver_lora_rank}, expected {self.receiver_lora_rank}."
+                )
+            if abs(checkpoint_receiver_lora_alpha - float(self.receiver_lora_alpha)) > 1e-8:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_alpha="
+                    f"{checkpoint_receiver_lora_alpha}, expected {self.receiver_lora_alpha}."
+                )
+            if abs(checkpoint_receiver_lora_dropout - float(self.receiver_lora_dropout)) > 1e-8:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_dropout="
+                    f"{checkpoint_receiver_lora_dropout}, expected {self.receiver_lora_dropout}."
+                )
+            receiver_lora_state = checkpoint.get("receiver_lora_state")
+            if receiver_lora_state is None:
+                if not allow_missing_receiver_lora_state:
+                    raise ValueError(
+                        f"Warm-start checkpoint {checkpoint_path} is missing receiver_lora_state."
+                    )
+            elif not isinstance(receiver_lora_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} has invalid receiver_lora_state."
+                )
+            else:
+                self.backbone.validate_receiver_lora_state_dict(
+                    receiver_lora_state,
+                    checkpoint_path=str(checkpoint_path),
+                )
 
     def warm_start_from_injection_checkpoint(self, checkpoint_path: str | Path) -> dict[str, Any]:
         checkpoint_path = Path(checkpoint_path).resolve()
@@ -2099,11 +2248,17 @@ class SharedInjectionPilotRuntime(nn.Module):
             checkpoint=checkpoint,
             checkpoint_path=checkpoint_path,
             allow_single_level_init_for_two_level=True,
+            allow_missing_receiver_lora_state=True,
         )
         self.writer.load_state_dict(checkpoint["writer_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
         self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
+        if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
+            self.backbone.load_receiver_lora_state_dict(
+                checkpoint["receiver_lora_state"],
+                checkpoint_path=str(checkpoint_path),
+            )
         if (
             self.memory_path_variant == "two_level"
             and checkpoint.get("pilot_memory_path_variant") == "two_level"
@@ -2121,11 +2276,17 @@ class SharedInjectionPilotRuntime(nn.Module):
             checkpoint=checkpoint,
             checkpoint_path=checkpoint_path,
             allow_single_level_init_for_two_level=False,
+            allow_missing_receiver_lora_state=False,
         )
         self.writer.load_state_dict(checkpoint["writer_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
         self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
+        if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
+            self.backbone.load_receiver_lora_state_dict(
+                checkpoint["receiver_lora_state"],
+                checkpoint_path=str(checkpoint_path),
+            )
         if self.memory_path_variant == "two_level":
             if self.reader is None or self.fuser is None:
                 raise RuntimeError("two_level runtime requires reader and fuser modules.")
@@ -2757,6 +2918,16 @@ def _grad_norm(module: nn.Module | None) -> float:
     return float(total ** 0.5)
 
 
+def _parameters_grad_norm(parameters: list[nn.Parameter]) -> float:
+    total = 0.0
+    for parameter in parameters:
+        if parameter.grad is None:
+            continue
+        grad = parameter.grad.detach().to(dtype=torch.float32)
+        total += float(torch.sum(grad * grad).item())
+    return float(total ** 0.5)
+
+
 def _safe_grad_ratio(numerator: float, denominator: float) -> float:
     return float(numerator / max(abs(denominator), 1e-8))
 
@@ -2939,8 +3110,10 @@ def run_shared_injection_pilot(
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
     writer_learning_rate = float(config["runtime"].get("pilot_writer_learning_rate", 1e-4))
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
+    receiver_lora_learning_rate = _resolve_receiver_lora_learning_rate(config)
     writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
+    receiver_lora_weight_decay = _resolve_receiver_lora_weight_decay(config)
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
     choice_margin = float(config["runtime"].get("stage_c_choice_margin", 0.1))
     injection_checkpoint_path = config["runtime"].get("pilot_checkpoint_path")
@@ -3218,6 +3391,17 @@ def run_shared_injection_pilot(
                     "weight_decay": writer_weight_decay,
                 }
             )
+        receiver_lora_parameters = list(
+            getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])()
+        )
+        if receiver_lora_parameters:
+            optimizer_groups.append(
+                {
+                    "params": receiver_lora_parameters,
+                    "lr": receiver_lora_learning_rate,
+                    "weight_decay": receiver_lora_weight_decay,
+                }
+            )
         optimizer = torch.optim.AdamW(
             optimizer_groups
         )
@@ -3458,7 +3642,9 @@ def run_shared_injection_pilot(
             writer_grad_norm = _grad_norm(runtime.writer)
             reader_grad_norm = _grad_norm(runtime.reader)
             fuser_grad_norm = _grad_norm(runtime.fuser)
-            receiver_lora_grad_norm = 0.0
+            receiver_lora_grad_norm = _parameters_grad_norm(
+                list(getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])())
+            )
             writer_to_projector_grad_ratio = _safe_grad_ratio(
                 writer_grad_norm + support_encoder_grad_norm,
                 prefix_projector_grad_norm,
@@ -3641,6 +3827,13 @@ def run_shared_injection_pilot(
                     "pilot_projector_token_source": runtime.projector_token_source,
                     "pilot_reader_num_queries": int(runtime.reader_num_queries),
                     "pilot_fuser_short_slots": int(runtime.fuser_short_slots),
+                    "pilot_receiver_lora_enabled": bool(runtime.receiver_lora_enabled),
+                    "pilot_receiver_lora_target_layers": list(runtime.receiver_lora_target_layers),
+                    "pilot_receiver_lora_target_modules": list(runtime.receiver_lora_target_modules),
+                    "pilot_receiver_lora_rank": int(runtime.receiver_lora_rank),
+                    "pilot_receiver_lora_alpha": float(runtime.receiver_lora_alpha),
+                    "pilot_receiver_lora_dropout": float(runtime.receiver_lora_dropout),
+                    "pilot_receiver_lora_trainable_params": int(runtime.receiver_lora_trainable_params),
                     "support_encoder_grad_norm": support_encoder_grad_norm,
                     "prefix_projector_grad_norm": prefix_projector_grad_norm,
                     "reader_grad_norm": reader_grad_norm,
@@ -3758,6 +3951,24 @@ def run_shared_injection_pilot(
         step_start=1,
         step_end=4,
     )
+    train_grad_norm_reader_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_reader",
+        step_start=1,
+        step_end=4,
+    )
+    train_grad_norm_fuser_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_fuser",
+        step_start=1,
+        step_end=4,
+    )
+    train_grad_norm_receiver_lora_steps_1_4_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_receiver_lora",
+        step_start=1,
+        step_end=4,
+    )
     train_reader_to_support_grad_ratio_steps_5_8_median = _median_train_event_metric(
         train_events,
         key="reader_to_support_grad_ratio",
@@ -3773,6 +3984,24 @@ def run_shared_injection_pilot(
     train_receiver_lora_to_reader_grad_ratio_steps_5_8_median = _median_train_event_metric(
         train_events,
         key="receiver_lora_to_reader_grad_ratio",
+        step_start=5,
+        step_end=8,
+    )
+    train_grad_norm_reader_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_reader",
+        step_start=5,
+        step_end=8,
+    )
+    train_grad_norm_fuser_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_fuser",
+        step_start=5,
+        step_end=8,
+    )
+    train_grad_norm_receiver_lora_steps_5_8_median = _median_train_event_metric(
+        train_events,
+        key="grad_norm_receiver_lora",
         step_start=5,
         step_end=8,
     )
@@ -3819,6 +4048,13 @@ def run_shared_injection_pilot(
         "pilot_writer_orthogonalize_slot_basis": orthogonalize_writer_slot_basis,
         "pilot_writer_slot_energy_balance_weight": writer_slot_energy_balance_weight,
         "pilot_writer_common_mode_penalty_weight": writer_common_mode_penalty_weight,
+        "pilot_receiver_lora_enabled": bool(runtime.receiver_lora_enabled),
+        "pilot_receiver_lora_target_layers": list(runtime.receiver_lora_target_layers),
+        "pilot_receiver_lora_target_modules": list(runtime.receiver_lora_target_modules),
+        "pilot_receiver_lora_rank": int(runtime.receiver_lora_rank),
+        "pilot_receiver_lora_alpha": float(runtime.receiver_lora_alpha),
+        "pilot_receiver_lora_dropout": float(runtime.receiver_lora_dropout),
+        "pilot_receiver_lora_trainable_params": int(runtime.receiver_lora_trainable_params),
         "pilot_alignment_aux_mode": alignment_aux_mode,
         "pilot_alignment_aux_weight": alignment_aux_weight_max,
         "pilot_alignment_aux_weight_max": alignment_aux_weight_max,
@@ -3864,8 +4100,10 @@ def run_shared_injection_pilot(
         "pilot_train_steps": train_steps,
         "pilot_writer_learning_rate": writer_learning_rate,
         "pilot_projector_learning_rate": projector_learning_rate,
+        "pilot_receiver_lora_learning_rate": receiver_lora_learning_rate,
         "pilot_writer_weight_decay": writer_weight_decay,
         "pilot_projector_weight_decay": projector_weight_decay,
+        "pilot_receiver_lora_weight_decay": receiver_lora_weight_decay,
         "pilot_projector_warmup_steps": projector_warmup_steps,
         "pilot_train_support_mask_count": train_support_mask_count,
         "pilot_choice_ce_weight": choice_ce_weight,
@@ -3992,6 +4230,11 @@ def run_shared_injection_pilot(
         "train_receiver_lora_to_reader_grad_ratio_steps_1_4_median": (
             train_receiver_lora_to_reader_grad_ratio_steps_1_4_median
         ),
+        "train_grad_norm_reader_steps_1_4_median": train_grad_norm_reader_steps_1_4_median,
+        "train_grad_norm_fuser_steps_1_4_median": train_grad_norm_fuser_steps_1_4_median,
+        "train_grad_norm_receiver_lora_steps_1_4_median": (
+            train_grad_norm_receiver_lora_steps_1_4_median
+        ),
         "train_reader_to_support_grad_ratio_steps_5_8_median": (
             train_reader_to_support_grad_ratio_steps_5_8_median
         ),
@@ -4000,6 +4243,11 @@ def run_shared_injection_pilot(
         ),
         "train_receiver_lora_to_reader_grad_ratio_steps_5_8_median": (
             train_receiver_lora_to_reader_grad_ratio_steps_5_8_median
+        ),
+        "train_grad_norm_reader_steps_5_8_median": train_grad_norm_reader_steps_5_8_median,
+        "train_grad_norm_fuser_steps_5_8_median": train_grad_norm_fuser_steps_5_8_median,
+        "train_grad_norm_receiver_lora_steps_5_8_median": (
+            train_grad_norm_receiver_lora_steps_5_8_median
         ),
         "train_final_reader_to_support_grad_ratio": (
             train_events[-1]["reader_to_support_grad_ratio"] if train_events else None

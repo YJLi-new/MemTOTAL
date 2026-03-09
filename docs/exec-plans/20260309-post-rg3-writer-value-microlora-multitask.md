@@ -64,6 +64,9 @@ Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLA
 - 2026-03-09: Completed the real Step-2 FEVER Writer matrix at `/root/autodl-tmp/runs/verify/tl-writer-value-fever-qwen25` with review outputs under `/root/autodl-tmp/results/generated/tl-writer-value-fever-qwen25`.
 - 2026-03-09: The real V1 matrix was flat across all three Writer arms: `W0/W1/W2` all stayed at `memory_long_top1_top2_ratio≈70.7`, `memory_long_common_mode_energy_ratio≈0.9986`, `reader_readout_effective_rank≈1.23`, and `reader_readout_pairwise_cosine_mean≈0.9993`, with no collapse delay and identical FEVER task scores (`best_adapt_task_score≈0.2951`).
 - 2026-03-09: Recorded the real Step-2 decision as a V1 architecture hard stop: `comparison_conclusion=failure`, `failure_reason=common_mode_domination_persists`, `recommended_arm=control`, and under the `PLANv3` hard-stop rule the least-bad Writer arm now carries forward to V2 micro-LoRA without running V1 penalties first.
+- 2026-03-09: Implemented the V2 micro-LoRA surface in `src/memtotal/models/backbone.py`, `src/memtotal/training/m4_shared_injection.py`, and `src/memtotal/analysis/m4_shared_injection.py`, including targetable `k_proj`/`v_proj` wrappers, checkpoint save/load support, LoRA param-count logging, early-step grad medians, FEVER V2 configs, the V2 runner, and the V2 summary comparator.
+- 2026-03-09: Added V2 unit coverage for exact layer/module targeting, zero-init preservation, frozen-backbone invariants, runtime LoRA threading, and V2 summary decisions; targeted validation now passes with `python -m unittest tests.test_backbone_real_mode tests.test_m4_shared_injection tests.test_repo_contract tests.test_repo_lints -v`.
+- 2026-03-09: Verified the canonical L1 path with a real injected dry-run smoke at `/root/autodl-tmp/runs/verify/tl-micro-lora-v2-smoke-late3-injected`; the harness now records `pilot_receiver_lora_enabled=true`, `pilot_receiver_lora_trainable_params=21504`, and finite non-zero receiver-LoRA / Reader grad medians on the FEVER pilot path.
 
 ## Decision Log
 
@@ -75,6 +78,7 @@ Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLA
 - The first active post-V0 training step remains the architecture-first FEVER Writer matrix (`W0/W1/W2`) before any Writer penalties or receiver LoRA.
 - Do not read the 2-step V1 smoke as a Step-2 decision; it is only a pipeline validation and an early sanity check on whether the new Writer modes alter immediate geometry.
 - Treat the fully flat V1 architecture matrix as a `PLANv3` hard stop for Writer-only architectural tweaks: skip V1 penalty refinement and carry the least-bad Writer arm into V2 micro-LoRA.
+- Keep the first live V2 run at the Step-4 minimum (`L0` frozen control plus `L1` late3 `r=2`) and expand to `L2/L3` only if the V2 summary reports partial evidence.
 
 ## Surprises & Discoveries
 
@@ -85,3 +89,4 @@ Execute the next hop after the `PLANv2.md` stop-after-RG3 result, now under `PLA
 - The injected V0 smoke shows extreme shared Writer energy (`memory_long_common_mode_energy_ratio≈0.999`, `memory_long_top1_top2_ratio≈70.7`) even while centered rank stays healthy, which strengthens the common-mode bottleneck hypothesis and justifies prioritizing V1 Writer diversification before V2 LoRA.
 - The first real V1 dry-run smokes execute correctly for `shared_add_scaled` and `slot_query_only`, but at 2 steps both remain almost identical to control (`top1/top2≈70.7`, `readout cosine≈0.999`), so the new modes are wired correctly without yet showing immediate rescue under the inherited warm-start.
 - The full FEVER Step-2 matrix matched the dry-run direction almost exactly: both `shared_add_scaled(alpha=0.02)` and `slot_query_only` were effectively indistinguishable from control, which strengthens the view that the next live uncertainty is receiver readability rather than another Writer-only tweak.
+- The first direct V2 smoke accidentally inherited `runtime.shared_injection_arm=base_only`, which produced the expected zero-step/zero-grad profile; rerunning the same config with `shared_injection_arm=injected` confirmed that the new receiver-LoRA path is actually trainable inside the active FEVER harness.

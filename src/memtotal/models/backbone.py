@@ -11,6 +11,103 @@ from torch import nn
 from memtotal.utils.repro import validate_backbone_name
 
 
+class ReceiverMicroLoRALinear(nn.Module):
+    def __init__(
+        self,
+        base_linear: nn.Linear,
+        *,
+        rank: int,
+        alpha: float,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        if rank <= 0:
+            raise ValueError(f"Receiver micro-LoRA rank must be positive, got {rank}.")
+        if dropout < 0.0 or dropout >= 1.0:
+            raise ValueError(f"Receiver micro-LoRA dropout must be in [0, 1), got {dropout}.")
+        if not isinstance(base_linear, nn.Linear):
+            raise TypeError("Receiver micro-LoRA can wrap only nn.Linear modules.")
+        self.base_linear = base_linear
+        for parameter in self.base_linear.parameters():
+            parameter.requires_grad_(False)
+        self.rank = int(rank)
+        self.alpha = float(alpha)
+        self.scale = float(alpha / max(1, rank))
+        self.dropout = nn.Dropout(float(dropout)) if dropout > 0.0 else nn.Identity()
+        self.down = nn.Linear(base_linear.in_features, self.rank, bias=False)
+        self.up = nn.Linear(self.rank, base_linear.out_features, bias=False)
+        self.down.to(device=base_linear.weight.device, dtype=base_linear.weight.dtype)
+        self.up.to(device=base_linear.weight.device, dtype=base_linear.weight.dtype)
+        nn.init.normal_(self.down.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(self.up.weight)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        delta = self.up(self.down(self.dropout(inputs)))
+        return self.base_linear(inputs) + (self.scale * delta)
+
+    def lora_parameters(self) -> list[nn.Parameter]:
+        return [self.down.weight, self.up.weight]
+
+    def lora_parameter_count(self) -> int:
+        return int(sum(parameter.numel() for parameter in self.lora_parameters()))
+
+    def lora_state_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            "down.weight": self.down.weight.detach().cpu(),
+            "up.weight": self.up.weight.detach().cpu(),
+        }
+
+    def validate_lora_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        *,
+        module_path: str,
+        checkpoint_path: str,
+    ) -> None:
+        expected = {
+            "down.weight": self.down.weight,
+            "up.weight": self.up.weight,
+        }
+        for key, expected_tensor in expected.items():
+            if key not in state_dict:
+                raise ValueError(
+                    f"Receiver micro-LoRA checkpoint {checkpoint_path} is missing '{module_path}.{key}'."
+                )
+            actual_tensor = state_dict[key]
+            if tuple(actual_tensor.shape) != tuple(expected_tensor.shape):
+                raise ValueError(
+                    f"Receiver micro-LoRA checkpoint {checkpoint_path} has incompatible "
+                    f"'{module_path}.{key}': expected shape {tuple(expected_tensor.shape)}, "
+                    f"got {tuple(actual_tensor.shape)}."
+                )
+
+    def load_lora_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        *,
+        module_path: str,
+        checkpoint_path: str,
+    ) -> None:
+        self.validate_lora_state_dict(
+            state_dict,
+            module_path=module_path,
+            checkpoint_path=checkpoint_path,
+        )
+        with torch.no_grad():
+            self.down.weight.copy_(
+                state_dict["down.weight"].to(
+                    device=self.down.weight.device,
+                    dtype=self.down.weight.dtype,
+                )
+            )
+            self.up.weight.copy_(
+                state_dict["up.weight"].to(
+                    device=self.up.weight.device,
+                    dtype=self.up.weight.dtype,
+                )
+            )
+
+
 class BackboneWrapper(nn.Module):
     def __init__(
         self,
@@ -39,6 +136,15 @@ class BackboneWrapper(nn.Module):
         self.max_new_tokens = int(max_new_tokens)
         self.tokenizer = None
         self.model = None
+        self._receiver_lora_targets: dict[str, ReceiverMicroLoRALinear] = {}
+        self._receiver_lora_config: dict[str, Any] = {
+            "enabled": False,
+            "target_layers": [],
+            "target_modules": [],
+            "rank": 0,
+            "alpha": 0.0,
+            "dropout": 0.0,
+        }
         if load_mode == "stub":
             if hidden_size is None:
                 raise ValueError("Stub backbone requires hidden_size.")
@@ -267,6 +373,160 @@ class BackboneWrapper(nn.Module):
                 "layer_prefix_hidden_by_layer requires a decoder backbone exposing model.layers."
             )
         return list(layers)
+
+    def enable_receiver_micro_lora(
+        self,
+        *,
+        layer_indices: Iterable[int],
+        target_modules: Iterable[str],
+        rank: int,
+        alpha: float,
+        dropout: float,
+    ) -> None:
+        if self.load_mode != "hf_causal_lm":
+            raise ValueError("Receiver micro-LoRA requires backbone.load_mode='hf_causal_lm'.")
+        normalized_layers = tuple(sorted({int(layer_index) for layer_index in layer_indices}))
+        normalized_targets = tuple(dict.fromkeys(str(name) for name in target_modules))
+        if not normalized_layers:
+            raise ValueError("Receiver micro-LoRA requires at least one target layer.")
+        if not normalized_targets:
+            raise ValueError("Receiver micro-LoRA requires at least one target projection.")
+        if rank <= 0:
+            raise ValueError(f"Receiver micro-LoRA rank must be positive, got {rank}.")
+        if alpha <= 0.0:
+            raise ValueError(f"Receiver micro-LoRA alpha must be positive, got {alpha}.")
+        decoder_layers = self._decoder_layers()
+        for layer_index in normalized_layers:
+            if layer_index < 0 or layer_index >= len(decoder_layers):
+                raise ValueError(
+                    f"Receiver micro-LoRA layer index {layer_index} is out of range for "
+                    f"{len(decoder_layers)} decoder layers."
+                )
+            self_attn = getattr(decoder_layers[layer_index], "self_attn", None)
+            if self_attn is None:
+                raise NotImplementedError(
+                    "Receiver micro-LoRA requires decoder layers exposing self_attn."
+                )
+            for module_name in normalized_targets:
+                target_module = getattr(self_attn, module_name, None)
+                if target_module is None:
+                    raise ValueError(
+                        f"Receiver micro-LoRA target '{module_name}' is missing on decoder layer {layer_index}."
+                    )
+                target_path = f"layers.{layer_index}.self_attn.{module_name}"
+                if isinstance(target_module, ReceiverMicroLoRALinear):
+                    adapter = target_module
+                    if (
+                        adapter.rank != int(rank)
+                        or abs(adapter.alpha - float(alpha)) > 1e-8
+                        or type(adapter.dropout) is not (nn.Dropout if dropout > 0.0 else nn.Identity)
+                    ):
+                        raise ValueError(
+                            f"Receiver micro-LoRA target '{target_path}' is already configured "
+                            "with a different adapter shape."
+                        )
+                else:
+                    if not isinstance(target_module, nn.Linear):
+                        raise ValueError(
+                            f"Receiver micro-LoRA target '{target_path}' must be nn.Linear, "
+                            f"got {type(target_module).__name__}."
+                        )
+                    adapter = ReceiverMicroLoRALinear(
+                        target_module,
+                        rank=int(rank),
+                        alpha=float(alpha),
+                        dropout=float(dropout),
+                    )
+                    adapter.train(bool(self.model.training))
+                    setattr(self_attn, module_name, adapter)
+                self._receiver_lora_targets[target_path] = adapter
+        self._receiver_lora_config = {
+            "enabled": True,
+            "target_layers": list(normalized_layers),
+            "target_modules": list(normalized_targets),
+            "rank": int(rank),
+            "alpha": float(alpha),
+            "dropout": float(dropout),
+        }
+
+    def receiver_lora_enabled(self) -> bool:
+        return bool(self._receiver_lora_targets)
+
+    def receiver_lora_parameters(self) -> list[nn.Parameter]:
+        parameters: list[nn.Parameter] = []
+        for target_path in sorted(self._receiver_lora_targets):
+            parameters.extend(self._receiver_lora_targets[target_path].lora_parameters())
+        return parameters
+
+    def set_receiver_lora_trainable(self, enabled: bool) -> None:
+        for parameter in self.receiver_lora_parameters():
+            parameter.requires_grad_(enabled)
+
+    def receiver_lora_parameter_count(self) -> int:
+        return int(sum(parameter.numel() for parameter in self.receiver_lora_parameters()))
+
+    def receiver_lora_metadata(self) -> dict[str, Any]:
+        metadata = dict(self._receiver_lora_config)
+        metadata["target_paths"] = sorted(self._receiver_lora_targets)
+        metadata["trainable_params"] = self.receiver_lora_parameter_count()
+        return metadata
+
+    def receiver_lora_state_dict(self) -> dict[str, dict[str, torch.Tensor]] | None:
+        if not self.receiver_lora_enabled():
+            return None
+        return {
+            target_path: adapter.lora_state_dict()
+            for target_path, adapter in sorted(self._receiver_lora_targets.items())
+        }
+
+    def validate_receiver_lora_state_dict(
+        self,
+        state_dict: dict[str, dict[str, torch.Tensor]],
+        *,
+        checkpoint_path: str,
+    ) -> None:
+        if not self.receiver_lora_enabled():
+            if state_dict:
+                raise ValueError(
+                    f"Receiver micro-LoRA checkpoint {checkpoint_path} includes adapter weights, "
+                    "but the current backbone has receiver micro-LoRA disabled."
+                )
+            return
+        expected_paths = set(self._receiver_lora_targets)
+        actual_paths = set(state_dict)
+        missing = sorted(expected_paths - actual_paths)
+        unexpected = sorted(actual_paths - expected_paths)
+        if missing:
+            raise ValueError(
+                f"Receiver micro-LoRA checkpoint {checkpoint_path} is missing targets: {missing}."
+            )
+        if unexpected:
+            raise ValueError(
+                f"Receiver micro-LoRA checkpoint {checkpoint_path} includes unexpected targets: {unexpected}."
+            )
+        for target_path, adapter in self._receiver_lora_targets.items():
+            adapter.validate_lora_state_dict(
+                state_dict[target_path],
+                module_path=target_path,
+                checkpoint_path=checkpoint_path,
+            )
+
+    def load_receiver_lora_state_dict(
+        self,
+        state_dict: dict[str, dict[str, torch.Tensor]],
+        *,
+        checkpoint_path: str,
+    ) -> None:
+        self.validate_receiver_lora_state_dict(
+            state_dict,
+            checkpoint_path=checkpoint_path,
+        )
+        for target_path, adapter in self._receiver_lora_targets.items():
+            adapter.load_lora_state_dict(
+                state_dict[target_path],
+                module_path=target_path,
+                checkpoint_path=checkpoint_path,
+            )
 
     def _expand_layer_prefix_hidden(
         self,

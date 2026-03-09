@@ -14,6 +14,7 @@ from memtotal.analysis.m4_shared_injection import (
     compare_m5_alignment_runs,
     compare_m5_dense_teacher_runs,
     compare_m5_objective_runs,
+    compare_tl_micro_lora_runs,
     compare_tl_writer_value_runs,
     compare_tl_reader_geometry_runs,
     compare_tl_reader_rg2_runs,
@@ -976,6 +977,202 @@ class SharedInjectionHelpersTest(unittest.TestCase):
 
         self.assertEqual(runtime.writer.slot_conditioning_mode, "slot_query_only")
         self.assertAlmostEqual(runtime.writer.shared_state_scale, 0.02)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_runtime_threads_receiver_lora_modes(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.enable_calls: list[dict[str, object]] = []
+                self.receiver_lora_trainable_enabled = False
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def enable_receiver_micro_lora(self, **kwargs):
+                self.enable_calls.append(dict(kwargs))
+
+            def receiver_lora_parameter_count(self) -> int:
+                return 24
+
+            def set_receiver_lora_trainable(self, enabled: bool) -> None:
+                self.receiver_lora_trainable_enabled = bool(enabled)
+
+            def receiver_lora_state_dict(self):
+                return None
+
+            def load_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def validate_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {"memory_slots": 8, "arch": "transformer", "num_heads": 2, "transformer_layers": 1},
+                "reader": {"num_queries": 4, "num_heads": 2},
+                "fuser": {"short_slots": 4, "arch": "linear", "num_heads": 2},
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [0, 1],
+                    "target_modules": ["k_proj", "v_proj"],
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=13,
+            arm="injected",
+            writer_memory_control="real",
+        )
+
+        self.assertTrue(runtime.receiver_lora_enabled)
+        self.assertEqual(runtime.receiver_lora_target_layers, (0, 1))
+        self.assertEqual(runtime.receiver_lora_target_modules, ("k_proj", "v_proj"))
+        self.assertEqual(runtime.receiver_lora_rank, 2)
+        self.assertEqual(runtime.receiver_lora_trainable_params, 24)
+        self.assertEqual(
+            fake_backbone.enable_calls,
+            [
+                {
+                    "layer_indices": (0, 1),
+                    "target_modules": ("k_proj", "v_proj"),
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                }
+            ],
+        )
+        self.assertTrue(fake_backbone.receiver_lora_trainable_enabled)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_two_level_warm_start_allows_missing_receiver_lora_state(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def enable_receiver_micro_lora(self, **_kwargs):
+                return None
+
+            def receiver_lora_parameter_count(self) -> int:
+                return 24
+
+            def set_receiver_lora_trainable(self, *_args, **_kwargs):
+                return None
+
+            def receiver_lora_state_dict(self):
+                return {
+                    "layers.0.self_attn.k_proj": {
+                        "down.weight": torch.zeros(2, 6),
+                        "up.weight": torch.zeros(6, 2),
+                    }
+                }
+
+            def validate_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def load_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {"memory_slots": 8, "arch": "mlp", "hidden_dim": 12},
+                "reader": {"num_queries": 4, "num_heads": 2, "query_residual_scale": 1.0},
+                "fuser": {"short_slots": 4, "arch": "linear", "num_heads": 2},
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [0],
+                    "target_modules": ["k_proj"],
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=17,
+            arm="injected",
+            writer_memory_control="real",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "legacy_checkpoint.pt"
+            torch.save(
+                {
+                    "writer_state": runtime.writer.state_dict(),
+                    "support_encoder_state": None,
+                    "reader_state": runtime.reader.state_dict(),
+                    "fuser_state": runtime.fuser.state_dict(),
+                    "prefix_projector_state": runtime.prefix_projector.state_dict(),
+                    "pilot_memory_path_variant": "two_level",
+                    "pilot_support_encoder_mode": "pooled_block",
+                    "pilot_injection_mode": "sparse_deep_prefix",
+                    "pilot_deep_prefix_layers": [0, 1],
+                    "backbone_hidden_size": 6,
+                    "writer_memory_slots": 8,
+                    "pilot_projector_prefix_tokens": 4,
+                },
+                checkpoint_path,
+            )
+
+            runtime.warm_start_from_injection_checkpoint(checkpoint_path)
+            with self.assertRaisesRegex(ValueError, "pilot_receiver_lora_enabled"):
+                runtime.load_injection_checkpoint(checkpoint_path)
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_warm_start_supports_conditioning_mode_none(self, mock_backbone_cls) -> None:
@@ -3223,6 +3420,155 @@ class SharedInjectionAnalysisTest(unittest.TestCase):
             self.assertFalse(summary["move_to_v1_penalties"])
             self.assertTrue(summary["stop_after_v1_architecture"])
             self.assertEqual(summary["recommended_arm"], "control")
+
+    def test_compare_tl_micro_lora_runs_prefers_late3_on_strong_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            control_metrics = write_payload(
+                "control_metrics.json",
+                {
+                    "pilot_receiver_lora_enabled": False,
+                    "best_adapt_task_score": 0.30,
+                    "best_adapt_macro_f1": 0.25,
+                    "dominant_label_fraction": 0.97,
+                    "memory_long_top1_top2_ratio": 70.0,
+                    "reader_readout_effective_rank": 1.2,
+                    "reader_readout_pairwise_cosine_mean": 0.999,
+                    "train_grad_norm_reader_steps_1_4_median": 0.01,
+                    "train_grad_norm_fuser_steps_1_4_median": 0.02,
+                },
+            )
+            control_run_summary = write_payload(
+                "control_run_summary.json",
+                {
+                    "dominant_label_collapse_onset_step": 0,
+                    "selection_passed": False,
+                    "screen248_test_gate_passed": False,
+                    "fixed64_gate_passed": False,
+                },
+            )
+            late3_metrics = write_payload(
+                "late3_metrics.json",
+                {
+                    "pilot_receiver_lora_enabled": True,
+                    "pilot_receiver_lora_rank": 2,
+                    "pilot_receiver_lora_alpha": 4.0,
+                    "pilot_receiver_lora_dropout": 0.0,
+                    "pilot_receiver_lora_target_layers": [14, 21, 27],
+                    "pilot_receiver_lora_target_modules": ["k_proj", "v_proj"],
+                    "pilot_receiver_lora_trainable_params": 18432,
+                    "best_adapt_task_score": 0.42,
+                    "best_adapt_macro_f1": 0.36,
+                    "dominant_label_fraction": 0.80,
+                    "memory_long_top1_top2_ratio": 70.0,
+                    "reader_readout_effective_rank": 1.2,
+                    "reader_readout_pairwise_cosine_mean": 0.999,
+                    "train_grad_norm_reader_steps_1_4_median": 0.20,
+                    "train_grad_norm_fuser_steps_1_4_median": 0.30,
+                    "train_grad_norm_receiver_lora_steps_1_4_median": 0.05,
+                },
+            )
+            late3_run_summary = write_payload(
+                "late3_run_summary.json",
+                {
+                    "dominant_label_collapse_onset_step": 4,
+                    "selection_passed": True,
+                    "screen248_test_gate_passed": True,
+                    "fixed64_gate_passed": False,
+                },
+            )
+
+            summary = compare_tl_micro_lora_runs(
+                control_metrics_json=str(control_metrics),
+                control_run_summary_json=str(control_run_summary),
+                late3_metrics_json=str(late3_metrics),
+                late3_run_summary_json=str(late3_run_summary),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "strong_success")
+            self.assertEqual(summary["recommended_arm"], "micro_lora_r2_late3")
+            self.assertTrue(summary["move_to_v3"])
+            self.assertFalse(summary["continue_to_l2"])
+
+    def test_compare_tl_micro_lora_runs_requests_l2_on_partial_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def write_payload(name: str, payload: dict[str, object]) -> Path:
+                path = root / name
+                path.write_text(json.dumps(payload))
+                return path
+
+            control_metrics = write_payload(
+                "control_metrics.json",
+                {
+                    "pilot_receiver_lora_enabled": False,
+                    "best_adapt_task_score": 0.30,
+                    "best_adapt_macro_f1": 0.25,
+                    "dominant_label_fraction": 0.97,
+                    "memory_long_top1_top2_ratio": 70.0,
+                    "reader_readout_effective_rank": 1.2,
+                    "reader_readout_pairwise_cosine_mean": 0.999,
+                    "train_grad_norm_reader_steps_1_4_median": 0.01,
+                    "train_grad_norm_fuser_steps_1_4_median": 0.02,
+                },
+            )
+            control_run_summary = write_payload(
+                "control_run_summary.json",
+                {
+                    "dominant_label_collapse_onset_step": 0,
+                    "selection_passed": False,
+                    "screen248_test_gate_passed": False,
+                    "fixed64_gate_passed": False,
+                },
+            )
+            late3_metrics = write_payload(
+                "late3_metrics.json",
+                {
+                    "pilot_receiver_lora_enabled": True,
+                    "pilot_receiver_lora_rank": 2,
+                    "pilot_receiver_lora_alpha": 4.0,
+                    "pilot_receiver_lora_dropout": 0.0,
+                    "pilot_receiver_lora_target_layers": [14, 21, 27],
+                    "pilot_receiver_lora_target_modules": ["k_proj", "v_proj"],
+                    "pilot_receiver_lora_trainable_params": 18432,
+                    "best_adapt_task_score": 0.33,
+                    "best_adapt_macro_f1": 0.28,
+                    "dominant_label_fraction": 0.95,
+                    "memory_long_top1_top2_ratio": 70.0,
+                    "reader_readout_effective_rank": 1.2,
+                    "reader_readout_pairwise_cosine_mean": 0.999,
+                    "train_grad_norm_reader_steps_1_4_median": 0.04,
+                    "train_grad_norm_fuser_steps_1_4_median": 0.09,
+                    "train_grad_norm_receiver_lora_steps_1_4_median": 0.02,
+                },
+            )
+            late3_run_summary = write_payload(
+                "late3_run_summary.json",
+                {
+                    "dominant_label_collapse_onset_step": 2,
+                    "selection_passed": False,
+                    "screen248_test_gate_passed": False,
+                    "fixed64_gate_passed": False,
+                },
+            )
+
+            summary = compare_tl_micro_lora_runs(
+                control_metrics_json=str(control_metrics),
+                control_run_summary_json=str(control_run_summary),
+                late3_metrics_json=str(late3_metrics),
+                late3_run_summary_json=str(late3_run_summary),
+            )
+
+            self.assertEqual(summary["comparison_conclusion"], "expand_to_l2")
+            self.assertTrue(summary["continue_to_l2"])
+            self.assertFalse(summary["move_to_v4"])
 
 
 if __name__ == "__main__":

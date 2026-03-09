@@ -6,7 +6,7 @@ from unittest import mock
 
 import torch
 
-from memtotal.models.backbone import BackboneWrapper
+from memtotal.models.backbone import BackboneWrapper, ReceiverMicroLoRALinear
 
 
 class _FakeTokenizer:
@@ -196,6 +196,138 @@ class BackboneRealModeTest(unittest.TestCase):
         generations = backbone.generate(["Prompt"])
         self.assertEqual(len(generations), 1)
         self.assertTrue(generations[0])
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_enable_receiver_micro_lora_wraps_only_requested_targets(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen2.5-1.5B-Instruct",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+
+        backbone.enable_receiver_micro_lora(
+            layer_indices=[1],
+            target_modules=["k_proj"],
+            rank=2,
+            alpha=4.0,
+            dropout=0.0,
+        )
+
+        layer0 = backbone.model.model.layers[0]
+        layer1 = backbone.model.model.layers[1]
+        self.assertFalse(isinstance(layer0.self_attn.k_proj, ReceiverMicroLoRALinear))
+        self.assertFalse(isinstance(layer0.self_attn.v_proj, ReceiverMicroLoRALinear))
+        self.assertTrue(isinstance(layer1.self_attn.k_proj, ReceiverMicroLoRALinear))
+        self.assertFalse(isinstance(layer1.self_attn.v_proj, ReceiverMicroLoRALinear))
+        metadata = backbone.receiver_lora_metadata()
+        self.assertEqual(metadata["target_layers"], [1])
+        self.assertEqual(metadata["target_modules"], ["k_proj"])
+        self.assertEqual(metadata["trainable_params"], 24)
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_receiver_micro_lora_zero_init_preserves_deep_prefix_scores(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen2.5-1.5B-Instruct",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        deep_prefix = {
+            0: torch.ones(1, 3, 8, dtype=torch.float32),
+            1: torch.full((1, 3, 8), 0.5, dtype=torch.float32),
+        }
+        baseline_scores = backbone.score_continuations(
+            "Prompt",
+            ["good ending", "bad"],
+            layer_prefix_hidden_by_layer=deep_prefix,
+        )
+
+        backbone.enable_receiver_micro_lora(
+            layer_indices=[0, 1],
+            target_modules=["k_proj", "v_proj"],
+            rank=2,
+            alpha=4.0,
+            dropout=0.0,
+        )
+        lora_scores = backbone.score_continuations(
+            "Prompt",
+            ["good ending", "bad"],
+            layer_prefix_hidden_by_layer=deep_prefix,
+        )
+
+        self.assertTrue(torch.allclose(baseline_scores, lora_scores))
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_receiver_micro_lora_freezes_backbone_outside_adapter(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen2.5-1.5B-Instruct",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        backbone.enable_receiver_micro_lora(
+            layer_indices=[1],
+            target_modules=["k_proj", "v_proj"],
+            rank=2,
+            alpha=4.0,
+            dropout=0.0,
+        )
+        for parameter in backbone.parameters():
+            parameter.requires_grad_(False)
+        backbone.set_receiver_lora_trainable(True)
+
+        adapter_params = backbone.receiver_lora_parameters()
+        self.assertEqual(sum(parameter.numel() for parameter in adapter_params), 48)
+        self.assertTrue(all(parameter.requires_grad for parameter in adapter_params))
+        layer1 = backbone.model.model.layers[1]
+        self.assertFalse(layer1.self_attn.k_proj.base_linear.weight.requires_grad)
+        self.assertFalse(layer1.self_attn.v_proj.base_linear.weight.requires_grad)
+        self.assertFalse(backbone.model.embedding.weight.requires_grad)
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_receiver_micro_lora_state_dict_round_trip(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen2.5-1.5B-Instruct",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        backbone.enable_receiver_micro_lora(
+            layer_indices=[1],
+            target_modules=["k_proj", "v_proj"],
+            rank=2,
+            alpha=4.0,
+            dropout=0.0,
+        )
+        state = backbone.receiver_lora_state_dict()
+        assert state is not None
+        with torch.no_grad():
+            for target_state in state.values():
+                target_state["down.weight"].fill_(0.25)
+                target_state["up.weight"].fill_(0.5)
+        backbone.load_receiver_lora_state_dict(state, checkpoint_path="fake-checkpoint.pt")
+        reloaded_state = backbone.receiver_lora_state_dict()
+        assert reloaded_state is not None
+        for target_path in state:
+            self.assertTrue(torch.allclose(state[target_path]["down.weight"], reloaded_state[target_path]["down.weight"]))
+            self.assertTrue(torch.allclose(state[target_path]["up.weight"], reloaded_state[target_path]["up.weight"]))
 
 
 if __name__ == "__main__":
