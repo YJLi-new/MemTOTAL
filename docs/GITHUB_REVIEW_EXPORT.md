@@ -4,14 +4,16 @@ This repo’s local working tree is the full research workspace. The GitHub-faci
 
 ## Rules
 
-- The GitHub review snapshot must stay under `31 MB`.
+- The default downloadable GitHub `.zip` from the review branch must stay under `31 MB`.
 - The default downloadable GitHub `.zip` for `YJLi-new/MemTOTAL` is expected to come from the lightweight `review` branch, not from the full local research branch.
 - The review snapshot contains:
-  - root review-facing docs such as `README.md`, `AGENTS.md`, and `PLANv6.md`,
+  - root review-facing docs and root text entrypoints,
   - the full `docs/` tree,
-  - selected governed result bundles under `results/generated/review/`,
-  - no raw training traces such as `train_events.json` or `task_case_dump.jsonl`.
+  - `src/`, `scripts/`, `configs/`, and `tests/` for lightweight reproduction,
+  - governed review bundles under `results/generated/review/` and `runs/review/`,
+  - no bulky raw traces such as `train_events.json` or `task_case_dump.jsonl`.
 - The review snapshot is not the full research repo. It is a curated publication layer for documentation and latest useful experimental reports.
+- The review snapshot should use as much of the `31 MB` budget as is useful for review and reproduction; do not keep it artificially tiny if more governed content can fit safely.
 
 ## Entry Points
 
@@ -25,14 +27,21 @@ These commands are run from the full local working repository, not from the ligh
 ## What Gets Included
 
 - The full `docs/` tree.
-- Root review docs:
+- Root text entrypoints such as:
   - `README.md`
   - `AGENTS.md`
   - `PLANv6.md`
-- Review bundles:
-  - completed `planv6-v6-*` review directories that already have top-level summaries,
-  - `writer-circuit-opening-qwen25`,
-  - `writer-deep-prefix-jointpeft-qwen25`.
+  - root `PLAN*.md` files
+  - `pyproject.toml`
+  - lightweight root entry scripts
+- Reproduction surface:
+  - `src/`
+  - `scripts/`
+  - `configs/`
+  - `tests/`
+- Governed review artifacts:
+  - filtered `results/generated/review/`
+  - filtered `runs/review/`
 
 ## Important Limitation
 

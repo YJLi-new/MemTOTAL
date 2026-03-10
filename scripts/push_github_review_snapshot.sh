@@ -6,13 +6,24 @@ cd "${ROOT_DIR}"
 
 BRANCH_NAME="${1:-review}"
 REMOTE_NAME="${2:-origin}"
-SNAPSHOT_ROOT="${3:-$(mktemp -d /tmp/memtotal-github-review-XXXXXX)}"
+REVIEW_TMPDIR="${MEMTOTAL_REVIEW_TMPDIR:-}"
+if [[ -z "${REVIEW_TMPDIR}" ]]; then
+  if [[ -d /root/autodl-tmp && -w /root/autodl-tmp ]]; then
+    REVIEW_TMPDIR="/root/autodl-tmp"
+  else
+    REVIEW_TMPDIR="/tmp"
+  fi
+fi
+SNAPSHOT_ROOT="${3:-$(mktemp -d "${REVIEW_TMPDIR%/}/memtotal-github-review-XXXXXX")}"
 SET_DEFAULT_BRANCH="${SET_DEFAULT_BRANCH:-1}"
 
 SOURCE_COMMIT="$(git rev-parse HEAD)"
 REMOTE_URL="$(git remote get-url "${REMOTE_NAME}")"
 AUTHOR_NAME="$(git config --get user.name || true)"
 AUTHOR_EMAIL="$(git config --get user.email || true)"
+
+export MEMTOTAL_REVIEW_TMPDIR="${REVIEW_TMPDIR}"
+export TMPDIR="${REVIEW_TMPDIR}"
 
 python scripts/build_github_review_snapshot.py \
   --output-root "${SNAPSHOT_ROOT}" \

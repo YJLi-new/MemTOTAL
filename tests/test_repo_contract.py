@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+PREFERRED_TMPDIR = Path("/root/autodl-tmp")
+if PREFERRED_TMPDIR.is_dir() and os.access(PREFERRED_TMPDIR, os.W_OK):
+    os.environ.setdefault("TMPDIR", str(PREFERRED_TMPDIR))
 
 from memtotal.analysis.run_analysis import main as analysis_main
 from memtotal.baselines.run_memgen import main as memgen_main
@@ -20,6 +24,12 @@ from memtotal.training.run_train import main as train_main
 from memtotal.eval.run_eval import main as eval_main
 from memtotal.utils.config import load_config
 from memtotal.utils.repro import SUPPORTED_BACKBONES
+
+
+def _tempdir_kwargs() -> dict[str, str]:
+    if PREFERRED_TMPDIR.is_dir() and os.access(PREFERRED_TMPDIR, os.W_OK):
+        return {"dir": str(PREFERRED_TMPDIR)}
+    return {}
 
 
 class RepoContractTest(unittest.TestCase):
@@ -39,7 +49,7 @@ class RepoContractTest(unittest.TestCase):
             self.assertIn(config["backbone"]["name"], SUPPORTED_BACKBONES)
 
     def test_smoke_entrypoints_write_required_artifacts(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(**_tempdir_kwargs()) as temp_dir:
             temp_root = Path(temp_dir)
             train_dir = temp_root / "train"
             eval_dir = temp_root / "eval"
@@ -159,7 +169,7 @@ class RepoContractTest(unittest.TestCase):
             self.assertEqual(run_info["backbone"], "Qwen2.5-1.5B-Instruct")
 
     def test_collect_artifacts_script_copies_managed_outputs(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(**_tempdir_kwargs()) as temp_dir:
             temp_root = Path(temp_dir)
             source_dir = temp_root / "source"
             dest_dir = temp_root / "dest"
@@ -197,7 +207,7 @@ class RepoContractTest(unittest.TestCase):
                 self.assertTrue((dest_dir / name).is_file(), msg=f"Missing copied artifact: {name}")
 
     def test_memgen_adapter_dry_run_writes_launch_plan(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(**_tempdir_kwargs()) as temp_dir:
             output_dir = Path(temp_dir) / "memgen-dry-run"
             config_path = ROOT / "configs/exp/memgen_gsm8k_qwen25_eval.yaml"
             self.assertEqual(
@@ -224,7 +234,7 @@ class RepoContractTest(unittest.TestCase):
             self.assertEqual(metrics["trainable_parameter_count"], 0)
 
     def test_github_review_snapshot_builder_stays_under_budget(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(**_tempdir_kwargs()) as temp_dir:
             output_dir = Path(temp_dir) / "review-snapshot"
             subprocess.run(
                 [
@@ -239,7 +249,7 @@ class RepoContractTest(unittest.TestCase):
                 cwd=ROOT,
             )
             manifest = json.loads((output_dir / "REVIEW_SNAPSHOT_MANIFEST.json").read_text())
-            self.assertLessEqual(manifest["total_size_bytes"], 31 * 1024 * 1024)
+            self.assertLessEqual(manifest["zip_size_bytes"], 31 * 1024 * 1024)
             archive_path = Path(temp_dir) / "review-snapshot.zip"
             shutil.make_archive(str(archive_path.with_suffix("")), "zip", root_dir=output_dir)
             self.assertLessEqual(archive_path.stat().st_size, 31 * 1024 * 1024)
@@ -247,10 +257,16 @@ class RepoContractTest(unittest.TestCase):
                 "README.md",
                 "AGENTS.md",
                 "PLANv6.md",
+                "pyproject.toml",
                 "docs/MAIN_IDEA.md",
                 "docs/EXPERIMENTS_INFO.md",
                 "docs/GITHUB_REVIEW_EXPORT.md",
+                "src/memtotal/models/memory.py",
+                "scripts/run_planv6_v6_5_recipe_stabilization_qwen25.sh",
+                "configs/exp/smoke_qwen25.yaml",
+                "tests/test_repo_contract.py",
                 "results/generated/review/planv6-v6-4-mixed-matrix-qwen25/v6-4-summary.json",
+                "runs/review/planv6-v6-4-mixed-matrix-qwen25/fever-control/suite_metrics.json",
             ]:
                 self.assertTrue(
                     (output_dir / relative_path).is_file(),

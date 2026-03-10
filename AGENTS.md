@@ -179,10 +179,12 @@ Therefore:
 ### 4.7 GitHub review export is a separate publication surface
 - The local working repo may stay full, but the GitHub-facing review branch is a curated publication layer for external review and reproduction.
 - The default downloadable GitHub `.zip` for `YJLi-new/MemTOTAL` must stay under `31 MB`.
-- Therefore the GitHub review branch must contain only:
+- Therefore the GitHub review branch should contain:
   - review-facing docs,
+  - the minimal code / config / script / test surface needed for external reproduction,
   - governed latest experimental result bundles,
-  - no raw traces or bulky run artifacts such as `train_events.json`, `task_case_dump.jsonl`, checkpoints, or full local run directories.
+  - no bulky raw traces or run artifacts such as `train_events.json`, `task_case_dump.jsonl`, checkpoints, or full local run directories.
+- Do not keep the review branch artificially tiny; use as much of the `31 MB` budget as is useful for review and reproduction while staying safely below the hard cap.
 - Maintain the lightweight GitHub export with:
   - `scripts/build_github_review_snapshot.py`
   - `scripts/push_github_review_snapshot.sh`
