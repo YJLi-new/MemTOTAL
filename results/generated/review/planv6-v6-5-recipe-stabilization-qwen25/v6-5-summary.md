@@ -1,9 +1,9 @@
 # PLANv6 V6-5 Recipe Stabilization Summary
 
-- comparison_conclusion: screen_complete_confirmation_pending
-- recommended_next_step: run_v6_5_confirmation_stage
+- comparison_conclusion: select_stabilized_recipe
+- recommended_next_step: open_v6_7_reader_reopening
 - screen_top_two_recipes: F3__w0__clip_groupwise__plr75e6__acc4__layers_additive, F1__w0__clip_global__plr5e5__acc1__layers_additive
-- stabilized_recipes: (none)
+- stabilized_recipes: F3__w0__clip_groupwise__plr75e6__acc4__layers_additive, F1__w0__clip_global__plr5e5__acc1__layers_additive
 
 ## Screen Ranking
 
@@ -1304,3 +1304,31 @@
 - fever: route_live_post_unfreeze=True, writer_task_supervision_live=True, source_not_collapsed=True, stable_training_v6=False, usefulness_positive_v6=False, task_score_delta_vs_control=-0.015625
 
 ## Confirmation
+
+### F3__w0__clip_groupwise__plr75e6__acc4__layers_additive
+- stable_feverscore_improved_across_all_seeds: True
+- seed_success_count: 3/3
+- mean_task_score_delta_vs_control: 0.333333
+- min_task_score_delta_vs_control: 0.312500
+- all_seeds_source_not_collapsed: True
+- all_seeds_writer_task_supervision_live: True
+- all_seeds_route_live_post_unfreeze: True
+- all_seeds_stable_training_v6: True
+- all_seeds_usefulness_positive_v6: True
+- seed 61109: delta=0.312500, route_live=True, stable=True, useful=True
+- seed 61110: delta=0.328125, route_live=True, stable=True, useful=True
+- seed 61111: delta=0.359375, route_live=True, stable=True, useful=True
+
+### F1__w0__clip_global__plr5e5__acc1__layers_additive
+- stable_feverscore_improved_across_all_seeds: True
+- seed_success_count: 3/3
+- mean_task_score_delta_vs_control: 0.333333
+- min_task_score_delta_vs_control: 0.250000
+- all_seeds_source_not_collapsed: True
+- all_seeds_writer_task_supervision_live: True
+- all_seeds_route_live_post_unfreeze: True
+- all_seeds_stable_training_v6: True
+- all_seeds_usefulness_positive_v6: True
+- seed 61109: delta=0.250000, route_live=True, stable=True, useful=True
+- seed 61110: delta=0.343750, route_live=True, stable=True, useful=True
+- seed 61111: delta=0.406250, route_live=True, stable=True, useful=True

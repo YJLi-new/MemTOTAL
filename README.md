@@ -9,15 +9,20 @@ This repository is in active research mode. The current authoritative runbook is
 As of March 10, 2026:
 
 - The active program is `PLANv6`, focused on post-gate-repair independent-Writer recovery, structured support validation, and anti-homogenization training.
-- The current live phase is `V6-5`, a FEVER-first recipe-stabilization sweep over the best `V6-4` finalists.
-- At the time this README was rewritten, `V6-5` was still running locally: `5/154` suites had completed (`1` FEVER control plus `4` injected screen arms), and no final `v6-5-summary.json` had been published yet.
-- The latest completed governed batch is `V6-2 -> V6-4`. That batch shows the repaired Writer-direct route is live on FEVER and GSM8K under `PLANv6` gates, while NarrativeQA remains the main weak point.
-- The three current `V6-4` finalists are:
-  - `s3_multi_item_cross_attn_raw__c2_support_and_context_gated__l5_orthogonality_coverage`
-  - `s3_multi_item_cross_attn_raw__c2_support_and_context_gated__l3_vicreg`
-  - `s3_multi_item_cross_attn_raw__c0_support_only__l2_contrastive`
+- `V6-5` is complete and succeeded on its own gates, so `PLANv6` now authorizes `V6-7` rather than the `V6-6` fallback.
+- The latest completed governed batch is `V6-2 -> V6-5`. That batch shows the repaired Writer-direct route can be stabilized into multi-seed FEVER gains under additive deep-prefix expansion.
+- `V6-5` selected these two stabilized recipes:
+  - `F3__w0__clip_groupwise__plr75e6__acc4__layers_additive`
+  - `F1__w0__clip_global__plr5e5__acc1__layers_additive`
+- The top stabilized recipe, `F3__w0__clip_groupwise__plr75e6__acc4__layers_additive`, delivered stable FEVER improvement across all `3/3` confirmation seeds.
 
 ## Latest Useful Reports
+
+- `V6-5 recipe stabilization`:
+  [summary](results/generated/review/planv6-v6-5-recipe-stabilization-qwen25/v6-5-summary.md),
+  [json](results/generated/review/planv6-v6-5-recipe-stabilization-qwen25/v6-5-summary.json)
+  - Outcome: `comparison_conclusion=select_stabilized_recipe`
+  - Readout: the best stabilized FEVER recipe was `F3__w0__clip_groupwise__plr75e6__acc4__layers_additive`, with `F1__w0__clip_global__plr5e5__acc1__layers_additive` as the runner-up; both passed all `3/3` confirmation seeds and send `PLANv6` to `V6-7`.
 
 - `V6-4 mixed matrix`:
   [summary](results/generated/review/planv6-v6-4-mixed-matrix-qwen25/v6-4-summary.md),
@@ -37,10 +42,10 @@ As of March 10, 2026:
   - Outcome: `comparison_conclusion=select_top_two_support_modes`
   - Readout: the best support interfaces were `s3_multi_item_cross_attn_raw` and `s5_hybrid_pooled_plus_items`.
 
-- `V6-5 active execution log`:
+- `V6-5 execution log`:
   [exec plan](docs/exec-plans/active/20260310-planv6-v6-5-recipe-stabilization.md)
   - Scope: FEVER-first recipe stabilization across warmup, clipping, projector LR, gradient accumulation, and additive layer expansion.
-  - Governed report target after completion: `results/generated/review/planv6-v6-5-recipe-stabilization-qwen25/`.
+  - Final status: completed with `recommended_next_step=open_v6_7_reader_reopening`.
 
 - `Historical route reset before PLANv6`:
   [writer-direct summary](results/generated/review/writer-deep-prefix-jointpeft-qwen25/writer-deep-prefix-jointpeft-summary.md),
@@ -79,4 +84,5 @@ The repo is past the old "is the route physically connected?" question. Under `P
 - anti-homogenization losses materially help,
 - FEVER and GSM8K can both be route-live under the repaired gates,
 - NarrativeQA is still the main failure mode,
-- the next decision point is whether `V6-5` can turn the best `V6-4` finalists into a stable multi-seed FEVER result.
+- `V6-5` converted the best `V6-4` finalists into stable multi-seed FEVER wins,
+- the next authorized step is `V6-7`: Reader reopening, portability, and usefulness scaling.

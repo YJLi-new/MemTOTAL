@@ -1,5 +1,8 @@
 {
-  "confirmation_recipe_ids": [],
+  "confirmation_recipe_ids": [
+    "F3__w0__clip_groupwise__plr75e6__acc4__layers_additive",
+    "F1__w0__clip_global__plr5e5__acc1__layers_additive"
+  ],
   "confirmation_seeds": [
     61109,
     61110,
