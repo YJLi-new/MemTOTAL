@@ -222,6 +222,37 @@ class RepoContractTest(unittest.TestCase):
             self.assertEqual(metrics["train_steps"], 0)
             self.assertEqual(metrics["trainable_parameter_count"], 0)
 
+    def test_github_review_snapshot_builder_stays_under_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "review-snapshot"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/build_github_review_snapshot.py"),
+                    "--output-root",
+                    str(output_dir),
+                    "--source-commit",
+                    "test-commit",
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            manifest = json.loads((output_dir / "REVIEW_SNAPSHOT_MANIFEST.json").read_text())
+            self.assertLessEqual(manifest["total_size_bytes"], 31 * 1024 * 1024)
+            for relative_path in [
+                "README.md",
+                "AGENTS.md",
+                "PLANv6.md",
+                "docs/MAIN_IDEA.md",
+                "docs/EXPERIMENTS_INFO.md",
+                "docs/GITHUB_REVIEW_EXPORT.md",
+                "results/generated/review/planv6-v6-4-mixed-matrix-qwen25/v6-4-summary.json",
+            ]:
+                self.assertTrue(
+                    (output_dir / relative_path).is_file(),
+                    msg=f"Missing snapshot artifact: {relative_path}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

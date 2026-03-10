@@ -54,6 +54,8 @@ class RepoLintTest(unittest.TestCase):
             ROOT / "scripts/run_memgen.sh",
             ROOT / "scripts/run_benchmark_smoke_suite.sh",
             ROOT / "scripts/run_real_benchmark_smoke_suite.sh",
+            ROOT / "scripts/build_github_review_snapshot.py",
+            ROOT / "scripts/push_github_review_snapshot.sh",
         ]
         for path in required:
             self.assertTrue(path.is_file(), msg=f"Missing script entrypoint: {path}")
