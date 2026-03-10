@@ -176,6 +176,20 @@ Therefore:
 - upgrade recurring review comments into mechanical rules
 - maintain the golden principles / quality tracker / tech-debt tracker in `docs/` when `PLANv6.md` requires it
 
+### 4.7 GitHub review export is a separate publication surface
+- The local working repo may stay full, but the GitHub-facing review branch is a curated publication layer for external review and reproduction.
+- The default downloadable GitHub `.zip` for `YJLi-new/MemTOTAL` must stay under `31 MB`.
+- Therefore the GitHub review branch must contain only:
+  - review-facing docs,
+  - governed latest experimental result bundles,
+  - no raw traces or bulky run artifacts such as `train_events.json`, `task_case_dump.jsonl`, checkpoints, or full local run directories.
+- Maintain the lightweight GitHub export with:
+  - `scripts/build_github_review_snapshot.py`
+  - `scripts/push_github_review_snapshot.sh`
+  - `docs/GITHUB_REVIEW_EXPORT.md`
+- Use `gh` to maintain the GitHub-side publication state. The default branch for external download should remain the lightweight `review` branch unless a newer documented policy replaces it.
+- When docs or latest governed review artifacts change, refresh and republish the lightweight review branch in sync with the local research repo.
+
 ---
 
 ## 5) Research-Critical Hard Guardrails (must not be violated)
@@ -284,3 +298,4 @@ Correct handling sequence:
 - **The repo is the system of record**: important knowledge must be versioned back into the repo
 - **Failure does not mean "retry once more"**: it usually means missing scripts, tests, rules, or knowledge entry points; patch the harness first
 - **If a rule matters enough to repeat, upgrade it into an executable mechanism** (script / test / lint / structural check)
+- **The GitHub default downloadable snapshot is budgeted**: keep the public review branch under `31 MB` and treat that as a hard publication constraint, not a suggestion.

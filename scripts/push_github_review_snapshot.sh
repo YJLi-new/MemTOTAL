@@ -7,6 +7,7 @@ cd "${ROOT_DIR}"
 BRANCH_NAME="${1:-review}"
 REMOTE_NAME="${2:-origin}"
 SNAPSHOT_ROOT="${3:-$(mktemp -d /tmp/memtotal-github-review-XXXXXX)}"
+SET_DEFAULT_BRANCH="${SET_DEFAULT_BRANCH:-1}"
 
 SOURCE_COMMIT="$(git rev-parse HEAD)"
 REMOTE_URL="$(git remote get-url "${REMOTE_NAME}")"
@@ -30,6 +31,11 @@ touch "${SNAPSHOT_ROOT}/.nojekyll"
 git -C "${SNAPSHOT_ROOT}" add .
 git -C "${SNAPSHOT_ROOT}" commit -m "review snapshot from ${SOURCE_COMMIT}" >/dev/null
 git -C "${SNAPSHOT_ROOT}" push --force origin "HEAD:${BRANCH_NAME}"
+
+if [[ "${SET_DEFAULT_BRANCH}" == "1" ]] && command -v gh >/dev/null 2>&1; then
+  REPO_SLUG="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+  gh api "repos/${REPO_SLUG}" -X PATCH -F "default_branch=${BRANCH_NAME}" >/dev/null
+fi
 
 echo "review snapshot pushed"
 echo "branch=${BRANCH_NAME}"

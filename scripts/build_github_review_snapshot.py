@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
+import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -112,6 +113,15 @@ def _total_snapshot_bytes(dest_root: Path) -> int:
     return sum(path.stat().st_size for path in dest_root.rglob("*") if path.is_file())
 
 
+def _zip_snapshot_bytes(dest_root: Path) -> int:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        archive_path = Path(temp_dir) / "review-snapshot.zip"
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for src in sorted(path for path in dest_root.rglob("*") if path.is_file()):
+                archive.write(src, arcname=src.relative_to(dest_root))
+        return archive_path.stat().st_size
+
+
 def build_snapshot(output_root: Path, *, source_commit: str | None = None) -> dict[str, object]:
     source_commit = source_commit or _git_commit()
     _reset_output_dir(output_root)
@@ -125,11 +135,14 @@ def build_snapshot(output_root: Path, *, source_commit: str | None = None) -> di
     copied_review_dirs = _copy_review_results(output_root, manifest=manifest_entries)
 
     total_bytes = _total_snapshot_bytes(output_root)
+    zip_size_bytes = _zip_snapshot_bytes(output_root)
+
     manifest = {
         "source_commit": source_commit,
         "max_snapshot_bytes": MAX_SNAPSHOT_BYTES,
         "max_result_file_bytes": MAX_RESULT_FILE_BYTES,
         "total_size_bytes": total_bytes,
+        "zip_size_bytes": zip_size_bytes,
         "review_dirs": copied_review_dirs,
         "included_files": manifest_entries,
         "notes": [
@@ -141,13 +154,19 @@ def build_snapshot(output_root: Path, *, source_commit: str | None = None) -> di
     manifest_path = output_root / "REVIEW_SNAPSHOT_MANIFEST.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     total_bytes = _total_snapshot_bytes(output_root)
+    zip_size_bytes = _zip_snapshot_bytes(output_root)
     if total_bytes > MAX_SNAPSHOT_BYTES:
         raise SystemExit(
             f"Snapshot exceeds budget: {total_bytes} bytes > {MAX_SNAPSHOT_BYTES} bytes"
         )
+    if zip_size_bytes > MAX_SNAPSHOT_BYTES:
+        raise SystemExit(
+            f"Snapshot zip exceeds budget: {zip_size_bytes} bytes > {MAX_SNAPSHOT_BYTES} bytes"
+        )
     return {
         **manifest,
         "total_size_bytes": total_bytes,
+        "zip_size_bytes": zip_size_bytes,
     }
 
 

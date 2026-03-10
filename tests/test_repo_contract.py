@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -239,6 +240,9 @@ class RepoContractTest(unittest.TestCase):
             )
             manifest = json.loads((output_dir / "REVIEW_SNAPSHOT_MANIFEST.json").read_text())
             self.assertLessEqual(manifest["total_size_bytes"], 31 * 1024 * 1024)
+            archive_path = Path(temp_dir) / "review-snapshot.zip"
+            shutil.make_archive(str(archive_path.with_suffix("")), "zip", root_dir=output_dir)
+            self.assertLessEqual(archive_path.stat().st_size, 31 * 1024 * 1024)
             for relative_path in [
                 "README.md",
                 "AGENTS.md",

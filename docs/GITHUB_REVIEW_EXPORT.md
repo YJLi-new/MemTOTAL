@@ -5,6 +5,7 @@ This repo’s local working tree is the full research workspace. The GitHub-faci
 ## Rules
 
 - The GitHub review snapshot must stay under `31 MB`.
+- The default downloadable GitHub `.zip` for `YJLi-new/MemTOTAL` is expected to come from the lightweight `review` branch, not from the full local research branch.
 - The review snapshot contains:
   - root review-facing docs such as `README.md`, `AGENTS.md`, and `PLANv6.md`,
   - the full `docs/` tree,
@@ -39,3 +40,5 @@ Publishing a lightweight `review` branch does not erase the full historical obje
 
 - rewriting the remote default branch/history to the review snapshot, or
 - using a separate dedicated GitHub repository for the review export.
+
+For the current repo policy, the practical enforcement target is the downloadable default-branch `.zip`. The export script therefore keeps the `review` branch lightweight and updates the GitHub default branch to `review` with `gh`.
