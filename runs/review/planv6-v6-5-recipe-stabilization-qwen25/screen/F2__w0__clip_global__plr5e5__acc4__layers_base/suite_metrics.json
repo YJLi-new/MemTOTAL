@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "F2__w0__clip_global__plr5e5__acc4__layers_base",
+      "arm": "injected",
+      "macro_f1": 0.6727272727272727,
+      "subdir": "pilot-I-screen-50",
+      "task_score": 0.6875,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "flat_raw8"
+}
