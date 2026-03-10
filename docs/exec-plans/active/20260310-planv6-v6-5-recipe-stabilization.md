@@ -89,6 +89,8 @@ Phase `V6-5` is complete only if all of the following are true:
 - `2026-03-10 15:25 UTC`: patched the `V6-5` runner to force `TMPDIR` / `TEMP` / `TMP` onto `/root/autodl-tmp/tmp` so resumed execution is isolated from root-disk pressure. The recovery path is to resume in place from the existing run/result roots so the completed FEVER screen arms are reused rather than rerun.
 - `2026-03-10 15:51 UTC`: relaunched `V6-5` in detached `tmux` as session `planv6_v65` with `TMPDIR=/root/autodl-tmp/tmp`, reusing the existing run/result roots.
 - `2026-03-10 15:55 UTC`: the resumed run passed the old tempdir failure point and entered the first previously missing FEVER screen arm, `F1__w10__clip_global__plr75e6__acc1__layers_base`, under `run_m4_selected_shared_injection_suite.py`.
+- `2026-03-10 16:00 UTC`: updated the runner policy so future `V6-5` launches prefer `/tmp/memtotal-tmp` on the system disk for read speed when root has enough free space, with `/root/autodl-tmp/tmp` kept as the fallback path when the free-space guardrail is violated.
+- `2026-03-10 16:08 UTC`: moved cold historical `runs/verify/*` trees that are not part of the live `V6-5` resume path onto `/root/autodl-tmp/system-relocated/...` and replaced them with symlinks. This restored roughly `21G` free on `/`, which is enough to keep the system-temp-first policy safe without touching the in-flight `planv6_v65` session.
 
 ## Decision Log
 
@@ -102,4 +104,5 @@ Phase `V6-5` is complete only if all of the following are true:
 - The `V6-4` winners already suggest the direction of travel: `S3 + C2 + L5` is the main stabilization anchor, `S3 + C2 + L3` is the softer regularized comparator, and `S3 + C0 + L2` is the control-style finalist that tests whether the gains depend on context gating.
 - The summary/publish contract for long phases needs explicit end-of-phase republishing, not just mid-phase publishing, otherwise the review tree can preserve an intermediate screen-only state even when confirmation has completed successfully.
 - The live run emits standard PyTorch / Transformers determinism warnings about `CUBLAS_WORKSPACE_CONFIG` under CUDA 10.2+ while deterministic algorithms are enabled; these warnings are noisy but non-fatal and do not indicate a harness regression for `V6-5`.
-- Root-disk exhaustion can kill long-running Python launches indirectly through `tempfile` resolution even when the model run itself is healthy; long phases should pin temp space to `/root/autodl-tmp` instead of relying on `/tmp`.
+- Root-disk exhaustion can kill long-running Python launches indirectly through `tempfile` resolution even when the model run itself is healthy; the better policy is system-temp-first with a free-space guardrail and cold-data offloading, not unconditional `/tmp` usage and not unconditional data-disk temp usage.
+- The better steady-state policy is system-temp-first with an explicit free-space guardrail and a data-disk fallback, not unconditional data-disk temp usage.

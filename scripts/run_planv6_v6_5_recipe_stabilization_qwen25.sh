@@ -15,11 +15,33 @@ V64_SUMMARY_JSON="${7:-results/generated/review/planv6-v6-4-mixed-matrix-qwen25/
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-export TMPDIR="${TMPDIR:-/root/autodl-tmp/tmp}"
+SYSTEM_TMPDIR="${SYSTEM_TMPDIR:-/tmp/memtotal-tmp}"
+FALLBACK_TMPDIR="${FALLBACK_TMPDIR:-/root/autodl-tmp/tmp}"
+MIN_SYSTEM_TMP_FREE_KB="${MIN_SYSTEM_TMP_FREE_KB:-4194304}"
+
+select_tmpdir() {
+  if [[ "${FORCE_DATA_TMPDIR:-0}" == "1" ]]; then
+    printf '%s\n' "${FALLBACK_TMPDIR}"
+    return
+  fi
+  mkdir -p "${SYSTEM_TMPDIR}" "${FALLBACK_TMPDIR}"
+  if [[ -w "${SYSTEM_TMPDIR}" ]]; then
+    local free_kb
+    free_kb="$(df -Pk "${SYSTEM_TMPDIR}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [[ -n "${free_kb}" && "${free_kb}" -ge "${MIN_SYSTEM_TMP_FREE_KB}" ]]; then
+      printf '%s\n' "${SYSTEM_TMPDIR}"
+      return
+    fi
+  fi
+  printf '%s\n' "${FALLBACK_TMPDIR}"
+}
+
+TMPDIR="${TMPDIR:-$(select_tmpdir)}"
+export TMPDIR
 export TEMP="${TEMP:-${TMPDIR}}"
 export TMP="${TMP:-${TMPDIR}}"
 
-mkdir -p "${RUN_ROOT}" "${RESULT_ROOT}" "${TMPDIR}"
+mkdir -p "${RUN_ROOT}" "${RESULT_ROOT}" "${TMPDIR}" "${FALLBACK_TMPDIR}"
 
 DATA_ROOT="${RUN_ROOT}/materialized-datasets"
 SOURCE_ROOT="${RUN_ROOT}/materialized-sources"

@@ -192,6 +192,12 @@ Therefore:
 - Use `gh` to maintain the GitHub-side publication state. The default branch for external download should remain the lightweight `review` branch unless a newer documented policy replaces it.
 - When docs or latest governed review artifacts change, refresh and republish the lightweight review branch in sync with the local research repo.
 
+### 4.8 System temp and storage policy
+- Prefer runner temp space on the system disk for speed, but only when the system filesystem has a documented free-space guardrail.
+- Keep a data-disk fallback path available for temp space so long phases do not die when the system disk fills unexpectedly.
+- When root-disk pressure rises, move large cold artifacts such as old run directories, caches, or archived logs to the data disk and leave symlinks or a clear restore path.
+- Do not move live run state or active resume paths while a phase is in flight.
+
 ---
 
 ## 5) Research-Critical Hard Guardrails (must not be violated)
