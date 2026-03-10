@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -44,6 +45,7 @@ from memtotal.models.memory import (
 )
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
+    PrefixInjectionArtifacts,
     SharedLowRankDeepPrefixProjector,
     SharedInjectionPilotRuntime,
     StructuredSupportSetEncoder,
@@ -57,7 +59,10 @@ from memtotal.training.m4_shared_injection import (
     _choice_task_loss,
     _classification_metrics_from_rows,
     _collect_gradient_probe,
+    _contrastive_aux_loss,
     _conditioned_query_orthogonality_loss,
+    _drop_prompt_tokens_for_aux_view,
+    _drop_support_rows_for_aux_view,
     _effective_rank,
     _latent_anchor_loss,
     _median_train_event_metric,
@@ -70,7 +75,9 @@ from memtotal.training.m4_shared_injection import (
     _slot_diversity_loss,
     _task_training_loss,
     _teacher_advantage_weight,
+    _vicreg_aux_loss,
     _writer_common_mode_penalty,
+    _writer_support_coverage_loss,
     _writer_slot_energy_balance_loss,
     _writer_slot_basis_orthogonality_loss,
     run_shared_injection_pilot,
@@ -103,6 +110,94 @@ def _classification_rows(
 
 
 class SharedInjectionHelpersTest(unittest.TestCase):
+    def test_drop_support_rows_for_aux_view_keeps_at_least_one_row(self) -> None:
+        generator = torch.Generator().manual_seed(7)
+        rows = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+        dropped = _drop_support_rows_for_aux_view(
+            rows,
+            dropout_probability=1.0,
+            generator=generator,
+        )
+        self.assertEqual(len(dropped), 1)
+        self.assertIn(dropped[0]["id"], {"1", "2", "3"})
+
+    def test_drop_prompt_tokens_for_aux_view_keeps_at_least_one_token(self) -> None:
+        generator = torch.Generator().manual_seed(11)
+        dropped = _drop_prompt_tokens_for_aux_view(
+            "alpha beta gamma",
+            dropout_probability=1.0,
+            generator=generator,
+        )
+        self.assertGreaterEqual(len(dropped.split()), 1)
+
+    def test_contrastive_aux_loss_uses_positive_and_negative_pairs(self) -> None:
+        anchor = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        positive = torch.tensor([[0.9, 0.1]], dtype=torch.float32)
+        negatives = [torch.tensor([0.0, 1.0], dtype=torch.float32)]
+        loss, diagnostics = _contrastive_aux_loss(
+            anchor=anchor,
+            positive=positive,
+            negative_queue=negatives,
+            temperature=0.1,
+        )
+        self.assertIsNotNone(loss)
+        self.assertTrue(torch.isfinite(loss))
+        self.assertGreater(diagnostics["contrastive_positive_cosine"], 0.9)
+        self.assertLess(diagnostics["contrastive_negative_cosine"], 0.5)
+
+    def test_vicreg_aux_loss_returns_finite_components(self) -> None:
+        view_a = torch.tensor(
+            [[[1.0, 0.0], [0.0, 1.0]]],
+            dtype=torch.float32,
+        )
+        view_b = torch.tensor(
+            [[[0.9, 0.1], [0.1, 0.9]]],
+            dtype=torch.float32,
+        )
+        loss, diagnostics = _vicreg_aux_loss(
+            view_a=view_a,
+            view_b=view_b,
+            invariance_weight=1.0,
+            variance_weight=1.0,
+            covariance_weight=1.0,
+            variance_target=1.0,
+        )
+        self.assertIsNotNone(loss)
+        self.assertTrue(torch.isfinite(loss))
+        self.assertGreaterEqual(diagnostics["vicreg_invariance_loss"], 0.0)
+        self.assertGreaterEqual(diagnostics["vicreg_variance_loss"], 0.0)
+        self.assertGreaterEqual(diagnostics["vicreg_covariance_loss"], 0.0)
+
+    def test_writer_support_coverage_loss_uses_entropy_stat(self) -> None:
+        support_attention = torch.tensor(
+            [[[[0.97, 0.01, 0.01, 0.01], [0.97, 0.01, 0.01, 0.01]]]],
+            dtype=torch.float32,
+        )
+        prefix_artifacts = PrefixInjectionArtifacts(
+            prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=None,
+            prefix_stats={},
+            writer_diagnostics={"support_attention_weights_by_layer": {"0": support_attention}},
+            memory_slots=torch.ones(1, 2, 3),
+        )
+        loss, diagnostics = _writer_support_coverage_loss(prefix_artifacts)
+        self.assertIsNotNone(loss)
+        expected_entropy = float(
+            (
+                -(
+                    torch.tensor([0.97, 0.01, 0.01, 0.01], dtype=torch.float32)
+                    * torch.tensor([0.97, 0.01, 0.01, 0.01], dtype=torch.float32).log()
+                ).sum()
+                / math.log(4.0)
+            ).item()
+        )
+        self.assertAlmostEqual(
+            diagnostics["writer_support_coverage_entropy_mean"],
+            expected_entropy,
+            places=6,
+        )
+        self.assertAlmostEqual(float(loss.item()), 1.0 - expected_entropy, places=6)
+
     def test_writer_weaver_head_supports_stimulus_modes(self) -> None:
         writer = WriterWeaverHead(
             embed_dim=6,

@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "V6_3_S5_L0",
+      "arm": "injected",
+      "macro_f1": 0.00949667616334283,
+      "subdir": "pilot-I-s5-l0",
+      "task_score": 0.00949667616334283,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "task_native",
+  "selected_support_serialization": "example_blocks_raw8"
+}

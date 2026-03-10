@@ -4275,23 +4275,40 @@ def _barlow_aux_loss(
 def _writer_support_coverage_loss(
     prefix_artifacts: PrefixInjectionArtifacts,
 ) -> tuple[torch.Tensor | None, dict[str, float]]:
-    coverage_entropy = float(
-        prefix_artifacts.prefix_stats.get("writer_support_attention_item_coverage_entropy_mean", 0.0)
-    )
     diagnostics = {
-        "writer_support_coverage_entropy_mean": coverage_entropy,
+        "writer_support_coverage_entropy_mean": 0.0,
         "writer_support_coverage_loss": 0.0,
     }
-    if prefix_artifacts.memory_slots is None:
+    writer_diagnostics = prefix_artifacts.writer_diagnostics
+    if not writer_diagnostics:
         return None, diagnostics
-    if coverage_entropy <= 0.0:
+    raw_by_layer = writer_diagnostics.get("support_attention_weights_by_layer", {})
+    if not isinstance(raw_by_layer, dict) or not raw_by_layer:
         return None, diagnostics
-    loss = torch.tensor(
-        max(0.0, 1.0 - coverage_entropy),
-        dtype=torch.float32,
-        device=prefix_artifacts.memory_slots.device,
+    losses: list[torch.Tensor] = []
+    entropies: list[float] = []
+    for raw_attention in raw_by_layer.values():
+        if not isinstance(raw_attention, torch.Tensor) or raw_attention.numel() == 0:
+            continue
+        attention = raw_attention.to(dtype=torch.float32)
+        if attention.ndim == 4:
+            attention = attention.mean(dim=1)
+        if attention.ndim != 3:
+            continue
+        attention = attention.clamp_min(0.0)
+        attention = attention / attention.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        coverage = attention.mean(dim=1)
+        coverage = coverage / coverage.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        coverage_entropy = _normalized_entropy(coverage).mean()
+        entropies.append(float(coverage_entropy.detach().item()))
+        losses.append(1.0 - coverage_entropy)
+    if not losses:
+        return None, diagnostics
+    loss = torch.stack(losses).mean()
+    diagnostics["writer_support_coverage_entropy_mean"] = float(
+        sum(entropies) / max(1, len(entropies))
     )
-    diagnostics["writer_support_coverage_loss"] = float(loss.item())
+    diagnostics["writer_support_coverage_loss"] = float(loss.detach().item())
     return loss, diagnostics
 
 
@@ -5016,6 +5033,23 @@ def run_shared_injection_pilot(
     writer_gain_margin = _resolve_writer_gain_margin(config)
     writer_gain_margin_weight = _resolve_writer_gain_margin_weight(config)
     writer_covariance_diversity_weight = _resolve_writer_covariance_diversity_weight(config)
+    aux_loss_mode = _resolve_aux_loss_mode(config)
+    aux_projection_dim = _resolve_aux_projection_dim(config)
+    aux_projection_hidden_dim = _resolve_aux_projection_hidden_dim(config)
+    support_row_dropout = _resolve_support_row_dropout(config)
+    context_token_dropout = _resolve_context_token_dropout(config)
+    contrastive_temperature = _resolve_contrastive_temperature(config)
+    contrastive_loss_weight = _resolve_contrastive_loss_weight(config)
+    contrastive_queue_size = _resolve_contrastive_queue_size(config)
+    vicreg_invariance_weight = _resolve_vicreg_invariance_weight(config)
+    vicreg_variance_weight = _resolve_vicreg_variance_weight(config)
+    vicreg_covariance_weight = _resolve_vicreg_covariance_weight(config)
+    vicreg_loss_weight = _resolve_vicreg_loss_weight(config)
+    vicreg_variance_target = _resolve_vicreg_variance_target(config)
+    barlow_loss_weight = _resolve_barlow_loss_weight(config)
+    barlow_lambda = _resolve_barlow_lambda(config)
+    writer_slot_orthogonality_weight = _resolve_writer_slot_orthogonality_weight(config)
+    writer_support_coverage_weight = _resolve_writer_support_coverage_weight(config)
     gradient_probe_enabled = _resolve_gradient_probe_enabled(config)
     gradient_probe_interval = _resolve_gradient_probe_interval(config)
     gradient_probe_max_steps = _resolve_gradient_probe_max_steps(config)
@@ -5046,6 +5080,26 @@ def run_shared_injection_pilot(
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
     source_stub_weight_decay = _resolve_source_stub_weight_decay(config)
     receiver_lora_weight_decay = _resolve_receiver_lora_weight_decay(config)
+    if aux_loss_mode in {
+        "task_only",
+        "contrastive",
+        "vicreg",
+        "barlow",
+        "orthogonality_coverage",
+    }:
+        writer_gain_margin_weight = 0.0
+        writer_slot_energy_balance_weight = 0.0
+        writer_common_mode_penalty_weight = 0.0
+        writer_covariance_diversity_weight = 0.0
+    if aux_loss_mode != "contrastive":
+        contrastive_loss_weight = 0.0
+    if aux_loss_mode != "vicreg":
+        vicreg_loss_weight = 0.0
+    if aux_loss_mode != "barlow":
+        barlow_loss_weight = 0.0
+    if aux_loss_mode != "orthogonality_coverage":
+        writer_slot_orthogonality_weight = 0.0
+        writer_support_coverage_weight = 0.0
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
     groupwise_grad_clip = _resolve_groupwise_grad_clip(config)
     projector_grad_clip_norm = _resolve_projector_grad_clip_norm(config)
@@ -5161,6 +5215,7 @@ def run_shared_injection_pilot(
         arm=arm,
         writer_memory_control=writer_memory_control,
     )
+    contrastive_negative_queue: list[torch.Tensor] = []
     if arm == "injected":
         if bridge_mode != "writer_direct":
             runtime.load_writer(resume)
@@ -5487,6 +5542,34 @@ def run_shared_injection_pilot(
                 support_rows=masked_support_rows_for_prefix,
                 prompt_text=train_example.prompt_text,
             )
+            aux_view_prefix_artifacts = None
+            aux_view_support_rows = masked_support_rows_for_prefix
+            aux_view_support_text_block = masked_support_text_block
+            aux_view_prompt_text = train_example.prompt_text
+            if (
+                arm == "injected"
+                and writer_memory_control != "zero"
+                and aux_loss_mode in {"contrastive", "vicreg", "barlow"}
+            ):
+                aux_view_support_rows = _drop_support_rows_for_aux_view(
+                    masked_support_rows_for_prefix,
+                    dropout_probability=support_row_dropout,
+                    generator=support_mask_generator,
+                )
+                aux_view_support_text_block = _build_aux_support_text_block(
+                    aux_view_support_rows,
+                    support_serialization_variant=support_serialization_variant,
+                )
+                aux_view_prompt_text = _drop_prompt_tokens_for_aux_view(
+                    train_example.prompt_text,
+                    dropout_probability=context_token_dropout,
+                    generator=support_mask_generator,
+                )
+                aux_view_prefix_artifacts = runtime.build_prefix_artifacts(
+                    aux_view_support_text_block,
+                    support_rows=aux_view_support_rows,
+                    prompt_text=aux_view_prompt_text,
+                )
             memory_slot_effective_rank = _effective_rank(prefix_artifacts.memory_long)
             memory_short_effective_rank = _effective_rank(prefix_artifacts.memory_short)
             support_state_effective_rank = _effective_rank(prefix_artifacts.support_item_states)
@@ -5525,6 +5608,35 @@ def run_shared_injection_pilot(
             )
             loss = task_loss
             auxiliary_loss_terms: list[torch.Tensor] = []
+            contrastive_aux_loss = None
+            vicreg_aux_loss = None
+            barlow_aux_loss = None
+            writer_slot_orthogonality_loss = None
+            writer_support_coverage_loss = None
+            aux_mean_embedding = None
+            aux_slot_embedding = None
+            aux_view_mean_embedding = None
+            aux_view_slot_embedding = None
+            aux_view_pair_cosine = 0.0
+            aux_view_support_rows_count = len(aux_view_support_rows)
+            contrastive_diagnostics = {
+                "contrastive_positive_cosine": 0.0,
+                "contrastive_negative_cosine": 0.0,
+                "contrastive_queue_size": float(len(contrastive_negative_queue)),
+            }
+            vicreg_diagnostics = {
+                "vicreg_invariance_loss": 0.0,
+                "vicreg_variance_loss": 0.0,
+                "vicreg_covariance_loss": 0.0,
+            }
+            barlow_diagnostics = {
+                "barlow_on_diag_loss": 0.0,
+                "barlow_off_diag_loss": 0.0,
+            }
+            coverage_diagnostics = {
+                "writer_support_coverage_entropy_mean": 0.0,
+                "writer_support_coverage_loss": 0.0,
+            }
             writer_gain_margin_loss = None
             delta_answer_logprob_tensor = _answer_logprob(scores, train_example.gold_index) - _answer_logprob(
                 no_memory_scores,
@@ -5676,6 +5788,71 @@ def run_shared_injection_pilot(
                 )
                 auxiliary_loss_terms.append(weighted_writer_covariance_diversity_loss)
                 loss = loss + weighted_writer_covariance_diversity_loss
+            if aux_loss_mode in {"contrastive", "vicreg", "barlow"}:
+                aux_mean_embedding = _writer_aux_projection_mean(runtime, prefix_artifacts)
+                aux_slot_embedding = _writer_aux_projection_slots(runtime, prefix_artifacts)
+                aux_view_mean_embedding = _writer_aux_projection_mean(runtime, aux_view_prefix_artifacts)
+                aux_view_slot_embedding = _writer_aux_projection_slots(runtime, aux_view_prefix_artifacts)
+                if aux_mean_embedding is not None and aux_view_mean_embedding is not None:
+                    aux_view_pair_cosine = float(
+                        torch.sum(
+                            F.normalize(aux_mean_embedding.to(dtype=torch.float32), dim=-1)
+                            * F.normalize(aux_view_mean_embedding.to(dtype=torch.float32), dim=-1),
+                            dim=-1,
+                        ).mean().item()
+                    )
+                if contrastive_loss_weight > 0.0:
+                    contrastive_aux_loss, contrastive_diagnostics = _contrastive_aux_loss(
+                        anchor=aux_mean_embedding,
+                        positive=aux_view_mean_embedding,
+                        negative_queue=contrastive_negative_queue,
+                        temperature=contrastive_temperature,
+                    )
+                    if contrastive_aux_loss is not None:
+                        weighted_contrastive_aux_loss = contrastive_loss_weight * contrastive_aux_loss
+                        auxiliary_loss_terms.append(weighted_contrastive_aux_loss)
+                        loss = loss + weighted_contrastive_aux_loss
+                if vicreg_loss_weight > 0.0:
+                    vicreg_aux_loss, vicreg_diagnostics = _vicreg_aux_loss(
+                        view_a=aux_slot_embedding,
+                        view_b=aux_view_slot_embedding,
+                        invariance_weight=vicreg_invariance_weight,
+                        variance_weight=vicreg_variance_weight,
+                        covariance_weight=vicreg_covariance_weight,
+                        variance_target=vicreg_variance_target,
+                    )
+                    if vicreg_aux_loss is not None:
+                        weighted_vicreg_aux_loss = vicreg_loss_weight * vicreg_aux_loss
+                        auxiliary_loss_terms.append(weighted_vicreg_aux_loss)
+                        loss = loss + weighted_vicreg_aux_loss
+                if barlow_loss_weight > 0.0:
+                    barlow_aux_loss, barlow_diagnostics = _barlow_aux_loss(
+                        view_a=aux_slot_embedding,
+                        view_b=aux_view_slot_embedding,
+                        lambd=barlow_lambda,
+                    )
+                    if barlow_aux_loss is not None:
+                        weighted_barlow_aux_loss = barlow_loss_weight * barlow_aux_loss
+                        auxiliary_loss_terms.append(weighted_barlow_aux_loss)
+                        loss = loss + weighted_barlow_aux_loss
+            if writer_slot_orthogonality_weight > 0.0 and prefix_artifacts.memory_long is not None:
+                writer_slot_orthogonality_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
+                if writer_slot_orthogonality_loss is not None:
+                    weighted_writer_slot_orthogonality_loss = (
+                        writer_slot_orthogonality_weight * writer_slot_orthogonality_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_slot_orthogonality_loss)
+                    loss = loss + weighted_writer_slot_orthogonality_loss
+            if writer_support_coverage_weight > 0.0:
+                writer_support_coverage_loss, coverage_diagnostics = _writer_support_coverage_loss(
+                    prefix_artifacts
+                )
+                if writer_support_coverage_loss is not None:
+                    weighted_writer_support_coverage_loss = (
+                        writer_support_coverage_weight * writer_support_coverage_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_support_coverage_loss)
+                    loss = loss + weighted_writer_support_coverage_loss
             active_alignment_aux_weight = _active_competitor_hinge_weight(
                 current_step=step + 1,
                 max_weight=alignment_aux_weight_max,
@@ -5946,6 +6123,20 @@ def run_shared_injection_pilot(
                 receiver_lora_group_lr * receiver_lora_group_summary["grad_norm_pre_clip"]
             ) / max(receiver_lora_group_summary["param_norm"], 1e-8)
             optimizer.step()
+            if (
+                contrastive_loss_weight > 0.0
+                and contrastive_queue_size > 0
+                and aux_mean_embedding is not None
+            ):
+                contrastive_negative_queue.append(
+                    aux_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
+                )
+                if aux_view_mean_embedding is not None:
+                    contrastive_negative_queue.append(
+                        aux_view_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
+                    )
+                if len(contrastive_negative_queue) > contrastive_queue_size:
+                    contrastive_negative_queue = contrastive_negative_queue[-contrastive_queue_size:]
             profiler.add_example()
             profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
             profiler.add_tokens(runtime.backbone.count_tokens(masked_support_text_block))
@@ -6060,6 +6251,65 @@ def run_shared_injection_pilot(
                     ),
                     "writer_covariance_diversity_weight": float(
                         writer_covariance_diversity_weight
+                    ),
+                    "pilot_aux_loss_mode": aux_loss_mode,
+                    "pilot_aux_projection_dim": int(aux_projection_dim),
+                    "pilot_aux_projection_hidden_dim": (
+                        None if aux_projection_hidden_dim is None else int(aux_projection_hidden_dim)
+                    ),
+                    "pilot_support_row_dropout": float(support_row_dropout),
+                    "pilot_context_token_dropout": float(context_token_dropout),
+                    "pilot_contrastive_temperature": float(contrastive_temperature),
+                    "pilot_contrastive_queue_size": int(contrastive_queue_size),
+                    "pilot_vicreg_invariance_weight": float(vicreg_invariance_weight),
+                    "pilot_vicreg_variance_weight": float(vicreg_variance_weight),
+                    "pilot_vicreg_covariance_weight": float(vicreg_covariance_weight),
+                    "pilot_vicreg_variance_target": float(vicreg_variance_target),
+                    "pilot_barlow_lambda": float(barlow_lambda),
+                    "pilot_writer_slot_orthogonality_weight": float(writer_slot_orthogonality_weight),
+                    "pilot_writer_support_coverage_weight": float(writer_support_coverage_weight),
+                    "aux_view_pair_cosine": float(aux_view_pair_cosine),
+                    "aux_view_support_rows_count": int(aux_view_support_rows_count),
+                    "contrastive_aux_loss": (
+                        0.0 if contrastive_aux_loss is None else float(contrastive_aux_loss.item())
+                    ),
+                    "contrastive_loss_weight": float(contrastive_loss_weight),
+                    "contrastive_positive_cosine": float(
+                        contrastive_diagnostics["contrastive_positive_cosine"]
+                    ),
+                    "contrastive_negative_cosine": float(
+                        contrastive_diagnostics["contrastive_negative_cosine"]
+                    ),
+                    "contrastive_queue_size": float(
+                        contrastive_diagnostics["contrastive_queue_size"]
+                    ),
+                    "vicreg_aux_loss": (
+                        0.0 if vicreg_aux_loss is None else float(vicreg_aux_loss.item())
+                    ),
+                    "vicreg_loss_weight": float(vicreg_loss_weight),
+                    "vicreg_invariance_loss": float(vicreg_diagnostics["vicreg_invariance_loss"]),
+                    "vicreg_variance_loss": float(vicreg_diagnostics["vicreg_variance_loss"]),
+                    "vicreg_covariance_loss": float(vicreg_diagnostics["vicreg_covariance_loss"]),
+                    "barlow_aux_loss": (
+                        0.0 if barlow_aux_loss is None else float(barlow_aux_loss.item())
+                    ),
+                    "barlow_loss_weight": float(barlow_loss_weight),
+                    "barlow_on_diag_loss": float(barlow_diagnostics["barlow_on_diag_loss"]),
+                    "barlow_off_diag_loss": float(barlow_diagnostics["barlow_off_diag_loss"]),
+                    "writer_slot_orthogonality_loss": (
+                        0.0
+                        if writer_slot_orthogonality_loss is None
+                        else float(writer_slot_orthogonality_loss.item())
+                    ),
+                    "writer_slot_orthogonality_weight": float(writer_slot_orthogonality_weight),
+                    "writer_support_coverage_loss": (
+                        0.0
+                        if writer_support_coverage_loss is None
+                        else float(writer_support_coverage_loss.item())
+                    ),
+                    "writer_support_coverage_weight": float(writer_support_coverage_weight),
+                    "writer_support_coverage_entropy_mean": float(
+                        coverage_diagnostics["writer_support_coverage_entropy_mean"]
                     ),
                     "writer_slot_basis_pairwise_cosine_mean": _pairwise_cosine_mean(
                         runtime.writer.slot_embeddings.unsqueeze(0)
@@ -6655,6 +6905,42 @@ def run_shared_injection_pilot(
         step_end=post_unfreeze_end_step,
         active_only_key="gradient_probe_step_active",
     )
+    train_aux_view_pair_cosine_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="aux_view_pair_cosine",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_contrastive_aux_loss_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="contrastive_aux_loss",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_vicreg_aux_loss_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="vicreg_aux_loss",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_barlow_aux_loss_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="barlow_aux_loss",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_writer_slot_orthogonality_loss_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="writer_slot_orthogonality_loss",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
+    train_writer_support_coverage_entropy_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="writer_support_coverage_entropy_mean",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
     train_writer_clip_fraction_tail_50 = _fraction_train_event_metric(
         train_events,
         key="was_grad_clipped_writer",
@@ -6741,6 +7027,25 @@ def run_shared_injection_pilot(
             getattr(runtime.writer, "shared_state_scale", 1.0)
         ),
         "pilot_writer_orthogonalize_slot_basis": orthogonalize_writer_slot_basis,
+        "pilot_aux_loss_mode": aux_loss_mode,
+        "pilot_aux_projection_dim": int(aux_projection_dim),
+        "pilot_aux_projection_hidden_dim": (
+            None if aux_projection_hidden_dim is None else int(aux_projection_hidden_dim)
+        ),
+        "pilot_support_row_dropout": float(support_row_dropout),
+        "pilot_context_token_dropout": float(context_token_dropout),
+        "pilot_contrastive_temperature": float(contrastive_temperature),
+        "pilot_contrastive_loss_weight": float(contrastive_loss_weight),
+        "pilot_contrastive_queue_size": int(contrastive_queue_size),
+        "pilot_vicreg_invariance_weight": float(vicreg_invariance_weight),
+        "pilot_vicreg_variance_weight": float(vicreg_variance_weight),
+        "pilot_vicreg_covariance_weight": float(vicreg_covariance_weight),
+        "pilot_vicreg_loss_weight": float(vicreg_loss_weight),
+        "pilot_vicreg_variance_target": float(vicreg_variance_target),
+        "pilot_barlow_loss_weight": float(barlow_loss_weight),
+        "pilot_barlow_lambda": float(barlow_lambda),
+        "pilot_writer_slot_orthogonality_weight": float(writer_slot_orthogonality_weight),
+        "pilot_writer_support_coverage_weight": float(writer_support_coverage_weight),
         "pilot_writer_gain_margin": writer_gain_margin,
         "pilot_writer_gain_margin_weight": writer_gain_margin_weight,
         "pilot_writer_covariance_diversity_weight": writer_covariance_diversity_weight,
@@ -6934,6 +7239,44 @@ def run_shared_injection_pilot(
         "train_final_writer_covariance_diversity_loss": (
             train_events[-1]["writer_covariance_diversity_loss"] if train_events else None
         ),
+        "train_final_contrastive_aux_loss": (
+            train_events[-1]["contrastive_aux_loss"] if train_events else None
+        ),
+        "train_final_contrastive_positive_cosine": (
+            train_events[-1]["contrastive_positive_cosine"] if train_events else None
+        ),
+        "train_final_contrastive_negative_cosine": (
+            train_events[-1]["contrastive_negative_cosine"] if train_events else None
+        ),
+        "train_final_vicreg_aux_loss": train_events[-1]["vicreg_aux_loss"] if train_events else None,
+        "train_final_vicreg_invariance_loss": (
+            train_events[-1]["vicreg_invariance_loss"] if train_events else None
+        ),
+        "train_final_vicreg_variance_loss": (
+            train_events[-1]["vicreg_variance_loss"] if train_events else None
+        ),
+        "train_final_vicreg_covariance_loss": (
+            train_events[-1]["vicreg_covariance_loss"] if train_events else None
+        ),
+        "train_final_barlow_aux_loss": train_events[-1]["barlow_aux_loss"] if train_events else None,
+        "train_final_barlow_on_diag_loss": (
+            train_events[-1]["barlow_on_diag_loss"] if train_events else None
+        ),
+        "train_final_barlow_off_diag_loss": (
+            train_events[-1]["barlow_off_diag_loss"] if train_events else None
+        ),
+        "train_final_writer_slot_orthogonality_loss": (
+            train_events[-1]["writer_slot_orthogonality_loss"] if train_events else None
+        ),
+        "train_final_writer_support_coverage_loss": (
+            train_events[-1]["writer_support_coverage_loss"] if train_events else None
+        ),
+        "train_final_writer_support_coverage_entropy_mean": (
+            train_events[-1]["writer_support_coverage_entropy_mean"] if train_events else None
+        ),
+        "train_final_aux_view_pair_cosine": (
+            train_events[-1]["aux_view_pair_cosine"] if train_events else None
+        ),
         "train_final_writer_slot_basis_pairwise_cosine_mean": (
             train_events[-1]["writer_slot_basis_pairwise_cosine_mean"] if train_events else None
         ),
@@ -7079,6 +7422,24 @@ def run_shared_injection_pilot(
         ),
         "train_grad_probe_writer_aux_total_cosine_post_unfreeze_median": (
             train_grad_probe_writer_aux_total_cosine_post_unfreeze_median
+        ),
+        "train_aux_view_pair_cosine_post_unfreeze_median": (
+            train_aux_view_pair_cosine_post_unfreeze_median
+        ),
+        "train_contrastive_aux_loss_post_unfreeze_median": (
+            train_contrastive_aux_loss_post_unfreeze_median
+        ),
+        "train_vicreg_aux_loss_post_unfreeze_median": (
+            train_vicreg_aux_loss_post_unfreeze_median
+        ),
+        "train_barlow_aux_loss_post_unfreeze_median": (
+            train_barlow_aux_loss_post_unfreeze_median
+        ),
+        "train_writer_slot_orthogonality_loss_post_unfreeze_median": (
+            train_writer_slot_orthogonality_loss_post_unfreeze_median
+        ),
+        "train_writer_support_coverage_entropy_post_unfreeze_median": (
+            train_writer_support_coverage_entropy_post_unfreeze_median
         ),
         "train_writer_clip_fraction_tail_50": train_writer_clip_fraction_tail_50,
         "train_projector_clip_fraction_tail_50": train_projector_clip_fraction_tail_50,

@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "V6_3_S3_L0",
+      "arm": "injected",
+      "macro_f1": 0.44712404712404713,
+      "subdir": "pilot-I-s3-l0",
+      "task_score": 0.515625,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "flat_raw8"
+}
