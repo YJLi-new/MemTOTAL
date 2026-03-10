@@ -12,6 +12,8 @@ import torch
 from memtotal.training.m4_shared_injection import (
     _apply_learning_rate_schedule,
     _learning_rate_scale,
+    _mean_numeric_payloads,
+    _resolve_gradient_accumulation_steps,
     _resolve_lr_schedule,
     _resolve_lr_warmup_steps,
 )
@@ -41,6 +43,36 @@ class WriterDeepPrefixJointPEFTSummaryTest(unittest.TestCase):
     def test_lr_schedule_rejects_unknown_value(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported runtime.pilot_lr_schedule"):
             _resolve_lr_schedule({"runtime": {"pilot_lr_schedule": "cosine"}})
+
+    def test_gradient_accumulation_helper_clamps_to_positive_integer(self) -> None:
+        self.assertEqual(
+            _resolve_gradient_accumulation_steps({"runtime": {"pilot_gradient_accumulation_steps": 4}}),
+            4,
+        )
+        self.assertEqual(
+            _resolve_gradient_accumulation_steps({"runtime": {"pilot_gradient_accumulation_steps": 0}}),
+            1,
+        )
+
+    def test_mean_numeric_payloads_averages_nested_metrics(self) -> None:
+        payload = _mean_numeric_payloads(
+            [
+                {
+                    "loss": 8.0,
+                    "delta_answer_logprob": 1.0,
+                    "prefix_attention_mass_mean_by_layer": {"0": 0.1, "1": 0.3},
+                },
+                {
+                    "loss": 4.0,
+                    "delta_answer_logprob": 3.0,
+                    "prefix_attention_mass_mean_by_layer": {"0": 0.3, "1": 0.5},
+                },
+            ]
+        )
+        self.assertAlmostEqual(payload["loss"], 6.0, places=6)
+        self.assertAlmostEqual(payload["delta_answer_logprob"], 2.0, places=6)
+        self.assertAlmostEqual(payload["prefix_attention_mass_mean_by_layer"]["0"], 0.2, places=6)
+        self.assertAlmostEqual(payload["prefix_attention_mass_mean_by_layer"]["1"], 0.4, places=6)
 
     def test_apply_learning_rate_schedule_warms_optimizer_groups_monotonically(self) -> None:
         param_a = torch.nn.Parameter(torch.tensor([1.0], dtype=torch.float32))

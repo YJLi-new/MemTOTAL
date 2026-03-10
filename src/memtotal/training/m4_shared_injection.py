@@ -463,6 +463,10 @@ def _resolve_lr_warmup_steps(config: dict[str, Any]) -> int:
     return int(config["runtime"].get("pilot_lr_warmup_steps", 0))
 
 
+def _resolve_gradient_accumulation_steps(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("pilot_gradient_accumulation_steps", 1)))
+
+
 def _resolve_support_encoder_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_support_encoder_mode", "pooled_block"))
     if mode not in (POOLED_SUPPORT_MODES | ITEMWISE_SUPPORT_MODES):
@@ -4542,6 +4546,38 @@ def _apply_learning_rate_schedule(
     return lr_by_group
 
 
+def _mean_numeric_payloads(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    if not payloads:
+        return {}
+
+    def _mean_values(values: list[Any]) -> Any:
+        if not values:
+            return None
+        first = values[0]
+        if isinstance(first, dict):
+            merged: dict[str, Any] = {}
+            keys = sorted({str(key) for value in values if isinstance(value, dict) for key in value})
+            for key in keys:
+                nested_values = [
+                    value[key]
+                    for value in values
+                    if isinstance(value, dict) and key in value
+                ]
+                merged[key] = _mean_values(nested_values)
+            return merged
+        if isinstance(first, bool):
+            return bool(values[-1])
+        if isinstance(first, (int, float)):
+            return float(sum(float(value) for value in values) / max(1, len(values)))
+        return values[-1]
+
+    aggregated: dict[str, Any] = {}
+    for key in sorted({str(key) for payload in payloads for key in payload}):
+        key_values = [payload[key] for payload in payloads if key in payload]
+        aggregated[key] = _mean_values(key_values)
+    return aggregated
+
+
 def _tail_window_start(train_steps: int, *, window_size: int) -> int:
     if train_steps <= 0:
         return 1
@@ -5061,6 +5097,7 @@ def run_shared_injection_pilot(
     train_support_episode_bank_path = str(config["task"].get("train_support_episode_bank_path", "")).strip()
     support_limit = max(0, int(config["runtime"].get("pilot_support_examples", 8)))
     train_steps = int(config["runtime"].get("pilot_train_steps", 96))
+    gradient_accumulation_steps = _resolve_gradient_accumulation_steps(config)
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
     lr_schedule = _resolve_lr_schedule(config)
     lr_warmup_steps = _resolve_lr_warmup_steps(config)
@@ -5494,477 +5531,651 @@ def run_shared_injection_pilot(
                 warmup_steps=lr_warmup_steps,
                 step=step + 1,
             )
-            train_example = train_caches[step % len(train_caches)]
-            selected_episode_id = ""
-            selected_episode_source_split = ""
-            selected_episode_label_counts: dict[str, int] = {}
-            train_support_source_rows = [cache.example for cache in support_caches]
-            if train_support_mode == "episode_bank":
-                if not train_support_episodes:
-                    raise ValueError("Episode-bank training requested but no episodes were loaded.")
-                episode_index = int(
-                    torch.randint(
-                        len(train_support_episodes),
-                        (1,),
-                        generator=support_mask_generator,
-                    ).item()
-                )
-                selected_episode = train_support_episodes[episode_index]
-                selected_episode_id = selected_episode.episode_id
-                selected_episode_source_split = selected_episode.source_split
-                selected_episode_label_counts = dict(selected_episode.label_counts)
-                train_support_source_rows = selected_episode.support_rows
-            elif train_support_examples:
-                train_support_source_rows = train_support_examples
-            masked_support_rows = _sample_support_examples_for_training(
-                support_examples=train_support_source_rows,
-                support_serialization_variant=support_serialization_variant,
-                generator=support_mask_generator,
-                target_count=train_support_mask_count,
-            )
-            masked_support_text_block = _build_support_text_block(
-                masked_support_rows,
-                memory_control=writer_memory_control,
-                example_lookup=example_lookup,
-                support_serialization_variant=support_serialization_variant,
-                preselected_rows=True,
-            )
-            masked_support_rows_for_prefix = _resolve_support_rows_for_memory_control(
-                masked_support_rows,
-                memory_control=writer_memory_control,
-                example_lookup=example_lookup,
-                support_serialization_variant=support_serialization_variant,
-                preselected_rows=True,
-            )
             optimizer.zero_grad(set_to_none=True)
-            prefix_artifacts = runtime.build_prefix_artifacts(
-                masked_support_text_block,
-                support_rows=masked_support_rows_for_prefix,
-                prompt_text=train_example.prompt_text,
-            )
-            aux_view_prefix_artifacts = None
-            aux_view_support_rows = masked_support_rows_for_prefix
-            aux_view_support_text_block = masked_support_text_block
-            aux_view_prompt_text = train_example.prompt_text
-            if (
-                arm == "injected"
-                and writer_memory_control != "zero"
-                and aux_loss_mode in {"contrastive", "vicreg", "barlow"}
-            ):
-                aux_view_support_rows = _drop_support_rows_for_aux_view(
-                    masked_support_rows_for_prefix,
-                    dropout_probability=support_row_dropout,
-                    generator=support_mask_generator,
-                )
-                aux_view_support_text_block = _build_aux_support_text_block(
-                    aux_view_support_rows,
+            train_example_ids: list[str] = []
+            train_event_payloads: list[dict[str, Any]] = []
+            gradient_probe_payloads: list[dict[str, float]] = []
+            contrastive_queue_batch: list[torch.Tensor] = []
+            microstep_count = 0
+            for micro_step in range(gradient_accumulation_steps):
+                train_example_index = ((step * gradient_accumulation_steps) + micro_step) % len(train_caches)
+                train_example = train_caches[train_example_index]
+                train_example_ids.append(str(train_example.example["id"]))
+                selected_episode_id = ""
+                selected_episode_source_split = ""
+                selected_episode_label_counts: dict[str, int] = {}
+                train_support_source_rows = [cache.example for cache in support_caches]
+                if train_support_mode == "episode_bank":
+                    if not train_support_episodes:
+                        raise ValueError("Episode-bank training requested but no episodes were loaded.")
+                    episode_index = int(
+                        torch.randint(
+                            len(train_support_episodes),
+                            (1,),
+                            generator=support_mask_generator,
+                        ).item()
+                    )
+                    selected_episode = train_support_episodes[episode_index]
+                    selected_episode_id = selected_episode.episode_id
+                    selected_episode_source_split = selected_episode.source_split
+                    selected_episode_label_counts = dict(selected_episode.label_counts)
+                    train_support_source_rows = selected_episode.support_rows
+                elif train_support_examples:
+                    train_support_source_rows = train_support_examples
+                masked_support_rows = _sample_support_examples_for_training(
+                    support_examples=train_support_source_rows,
                     support_serialization_variant=support_serialization_variant,
-                )
-                aux_view_prompt_text = _drop_prompt_tokens_for_aux_view(
-                    train_example.prompt_text,
-                    dropout_probability=context_token_dropout,
                     generator=support_mask_generator,
+                    target_count=train_support_mask_count,
                 )
-                aux_view_prefix_artifacts = runtime.build_prefix_artifacts(
-                    aux_view_support_text_block,
-                    support_rows=aux_view_support_rows,
-                    prompt_text=aux_view_prompt_text,
+                masked_support_text_block = _build_support_text_block(
+                    masked_support_rows,
+                    memory_control=writer_memory_control,
+                    example_lookup=example_lookup,
+                    support_serialization_variant=support_serialization_variant,
+                    preselected_rows=True,
                 )
-            memory_slot_effective_rank = _effective_rank(prefix_artifacts.memory_long)
-            memory_short_effective_rank = _effective_rank(prefix_artifacts.memory_short)
-            support_state_effective_rank = _effective_rank(prefix_artifacts.support_item_states)
-            score_output = runtime.score_example(
-                train_example,
-                support_text_block=teacher_support_text_block,
-                prefix_embeddings=prefix_artifacts.prefix_embeddings,
-                layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
-                return_diagnostics=bool(
-                    runtime.injection_mode == "sparse_deep_prefix"
-                    and prefix_artifacts.layer_prefix_hidden_by_layer is not None
-                ),
-            )
-            train_diagnostics = None
-            if isinstance(score_output, tuple):
-                scores, train_diagnostics = score_output
-            else:
-                scores = score_output
-            with torch.no_grad():
-                no_memory_scores = runtime.backbone.score_continuations(
-                    train_example.prompt_text,
-                    train_example.candidate_texts,
+                masked_support_rows_for_prefix = _resolve_support_rows_for_memory_control(
+                    masked_support_rows,
+                    memory_control=writer_memory_control,
+                    example_lookup=example_lookup,
+                    support_serialization_variant=support_serialization_variant,
+                    preselected_rows=True,
                 )
-            active_competitor_hinge_weight = _active_competitor_hinge_weight(
-                current_step=step + 1,
-                max_weight=competitor_hinge_weight_max,
-                start_step=competitor_hinge_start_step,
-                ramp_steps=competitor_hinge_ramp_steps,
-            )
-            task_loss, choice_ce_loss, competitor_hinge_loss = _task_training_loss(
-                scores,
-                train_example,
-                margin_value=choice_margin,
-                ce_weight=choice_ce_weight,
-                competitor_hinge_weight=active_competitor_hinge_weight,
-            )
-            loss = task_loss
-            auxiliary_loss_terms: list[torch.Tensor] = []
-            contrastive_aux_loss = None
-            vicreg_aux_loss = None
-            barlow_aux_loss = None
-            writer_slot_orthogonality_loss = None
-            writer_support_coverage_loss = None
-            aux_mean_embedding = None
-            aux_slot_embedding = None
-            aux_view_mean_embedding = None
-            aux_view_slot_embedding = None
-            aux_view_pair_cosine = 0.0
-            aux_view_support_rows_count = len(aux_view_support_rows)
-            contrastive_diagnostics = {
-                "contrastive_positive_cosine": 0.0,
-                "contrastive_negative_cosine": 0.0,
-                "contrastive_queue_size": float(len(contrastive_negative_queue)),
-            }
-            vicreg_diagnostics = {
-                "vicreg_invariance_loss": 0.0,
-                "vicreg_variance_loss": 0.0,
-                "vicreg_covariance_loss": 0.0,
-            }
-            barlow_diagnostics = {
-                "barlow_on_diag_loss": 0.0,
-                "barlow_off_diag_loss": 0.0,
-            }
-            coverage_diagnostics = {
-                "writer_support_coverage_entropy_mean": 0.0,
-                "writer_support_coverage_loss": 0.0,
-            }
-            writer_gain_margin_loss = None
-            delta_answer_logprob_tensor = _answer_logprob(scores, train_example.gold_index) - _answer_logprob(
-                no_memory_scores,
-                train_example.gold_index,
-            )
-            if writer_gain_margin_weight > 0.0:
-                writer_gain_margin_loss, delta_answer_logprob_tensor = _writer_gain_margin_loss(
-                    with_memory_scores=scores,
-                    without_memory_scores=no_memory_scores,
-                    gold_index=train_example.gold_index,
-                    margin_value=writer_gain_margin,
+                prefix_artifacts = runtime.build_prefix_artifacts(
+                    masked_support_text_block,
+                    support_rows=masked_support_rows_for_prefix,
+                    prompt_text=train_example.prompt_text,
                 )
-                weighted_writer_gain_margin_loss = (
-                    writer_gain_margin_weight * writer_gain_margin_loss
+                aux_view_prefix_artifacts = None
+                aux_view_support_rows = masked_support_rows_for_prefix
+                aux_view_support_text_block = masked_support_text_block
+                aux_view_prompt_text = train_example.prompt_text
+                if (
+                    arm == "injected"
+                    and writer_memory_control != "zero"
+                    and aux_loss_mode in {"contrastive", "vicreg", "barlow"}
+                ):
+                    aux_view_support_rows = _drop_support_rows_for_aux_view(
+                        masked_support_rows_for_prefix,
+                        dropout_probability=support_row_dropout,
+                        generator=support_mask_generator,
+                    )
+                    aux_view_support_text_block = _build_aux_support_text_block(
+                        aux_view_support_rows,
+                        support_serialization_variant=support_serialization_variant,
+                    )
+                    aux_view_prompt_text = _drop_prompt_tokens_for_aux_view(
+                        train_example.prompt_text,
+                        dropout_probability=context_token_dropout,
+                        generator=support_mask_generator,
+                    )
+                    aux_view_prefix_artifacts = runtime.build_prefix_artifacts(
+                        aux_view_support_text_block,
+                        support_rows=aux_view_support_rows,
+                        prompt_text=aux_view_prompt_text,
+                    )
+                memory_slot_effective_rank = _effective_rank(prefix_artifacts.memory_long)
+                memory_short_effective_rank = _effective_rank(prefix_artifacts.memory_short)
+                support_state_effective_rank = _effective_rank(prefix_artifacts.support_item_states)
+                score_output = runtime.score_example(
+                    train_example,
+                    support_text_block=teacher_support_text_block,
+                    prefix_embeddings=prefix_artifacts.prefix_embeddings,
+                    layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+                    return_diagnostics=bool(
+                        runtime.injection_mode == "sparse_deep_prefix"
+                        and prefix_artifacts.layer_prefix_hidden_by_layer is not None
+                    ),
                 )
-                auxiliary_loss_terms.append(weighted_writer_gain_margin_loss)
-                loss = loss + weighted_writer_gain_margin_loss
-            active_latent_anchor_weight = _scheduled_linear_decay_weight(
-                current_step=step + 1,
-                start_weight=latent_anchor_weight_start,
-                end_weight=latent_anchor_weight_end,
-                decay_steps=latent_anchor_decay_steps,
-            )
-            latent_anchor_loss = None
-            support_anchor_loss = None
-            writer_anchor_loss = None
-            anchor_support_cosine = None
-            anchor_writer_slot_cosine = None
-            if (
-                active_latent_anchor_weight > 0.0
-                and reference_writer is not None
-            ):
+                train_diagnostics = None
+                if isinstance(score_output, tuple):
+                    scores, train_diagnostics = score_output
+                else:
+                    scores = score_output
                 with torch.no_grad():
-                    reference_support_states, reference_memory_slots = _reference_latent_targets(
-                        runtime=runtime,
-                        reference_support_encoder=reference_support_encoder,
-                        reference_writer=reference_writer,
-                        support_text_block=masked_support_text_block,
-                        support_rows=masked_support_rows_for_prefix,
-                    )
-                (
-                    latent_anchor_loss,
-                    support_anchor_loss,
-                    writer_anchor_loss,
-                    anchor_support_cosine,
-                    anchor_writer_slot_cosine,
-                ) = _latent_anchor_loss(
-                    current_support_states=prefix_artifacts.support_item_states,
-                    reference_support_states=reference_support_states,
-                    current_memory_slots=prefix_artifacts.memory_slots,
-                    reference_memory_slots=reference_memory_slots,
-                )
-                weighted_latent_anchor_loss = active_latent_anchor_weight * latent_anchor_loss
-                auxiliary_loss_terms.append(weighted_latent_anchor_loss)
-                loss = loss + weighted_latent_anchor_loss
-            memory_long_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
-            memory_short_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_short)
-            reader_attention_diversity_loss = _reader_attention_diversity_loss(
-                prefix_artifacts.reader_attention
-            )
-            reader_conditioned_query_orthogonality_loss = None
-            if runtime.reader is not None and runtime.reader.conditioning_mode != "none":
-                reader_conditioned_query_orthogonality_loss = _conditioned_query_orthogonality_loss(
-                    prefix_artifacts.reader_conditioned_queries
-                )
-            reader_short_reconstruction_loss = _reader_short_reconstruction_loss(
-                prefix_artifacts.memory_short,
-                prefix_artifacts.reader_readouts,
-            )
-            writer_slot_basis_orthogonality_loss = _writer_slot_basis_orthogonality_loss(runtime.writer)
-            writer_slot_energy_balance_loss = _writer_slot_energy_balance_loss(prefix_artifacts.memory_long)
-            writer_common_mode_penalty_loss = _writer_common_mode_penalty(prefix_artifacts.memory_long)
-            writer_covariance_diversity_loss = _writer_covariance_diversity_loss(
-                prefix_artifacts.memory_long
-            )
-            if memory_long_diversity_weight > 0.0 and memory_long_diversity_loss is not None:
-                weighted_memory_long_diversity_loss = (
-                    memory_long_diversity_weight * memory_long_diversity_loss
-                )
-                auxiliary_loss_terms.append(weighted_memory_long_diversity_loss)
-                loss = loss + weighted_memory_long_diversity_loss
-            if memory_short_diversity_weight > 0.0 and memory_short_diversity_loss is not None:
-                weighted_memory_short_diversity_loss = (
-                    memory_short_diversity_weight * memory_short_diversity_loss
-                )
-                auxiliary_loss_terms.append(weighted_memory_short_diversity_loss)
-                loss = loss + weighted_memory_short_diversity_loss
-            if (
-                reader_attention_diversity_weight > 0.0
-                and reader_attention_diversity_loss is not None
-            ):
-                weighted_reader_attention_diversity_loss = (
-                    reader_attention_diversity_weight * reader_attention_diversity_loss
-                )
-                auxiliary_loss_terms.append(weighted_reader_attention_diversity_loss)
-                loss = loss + weighted_reader_attention_diversity_loss
-            if (
-                reader_conditioned_query_orthogonality_weight > 0.0
-                and reader_conditioned_query_orthogonality_loss is not None
-            ):
-                weighted_reader_conditioned_query_orthogonality_loss = (
-                    reader_conditioned_query_orthogonality_weight
-                    * reader_conditioned_query_orthogonality_loss
-                )
-                auxiliary_loss_terms.append(weighted_reader_conditioned_query_orthogonality_loss)
-                loss = loss + weighted_reader_conditioned_query_orthogonality_loss
-            if (
-                reader_short_reconstruction_weight > 0.0
-                and reader_short_reconstruction_loss is not None
-            ):
-                weighted_reader_short_reconstruction_loss = (
-                    reader_short_reconstruction_weight * reader_short_reconstruction_loss
-                )
-                auxiliary_loss_terms.append(weighted_reader_short_reconstruction_loss)
-                loss = loss + weighted_reader_short_reconstruction_loss
-            if (
-                writer_slot_basis_orthogonality_weight > 0.0
-                and writer_slot_basis_orthogonality_loss is not None
-            ):
-                weighted_writer_slot_basis_orthogonality_loss = (
-                    writer_slot_basis_orthogonality_weight * writer_slot_basis_orthogonality_loss
-                )
-                auxiliary_loss_terms.append(weighted_writer_slot_basis_orthogonality_loss)
-                loss = loss + weighted_writer_slot_basis_orthogonality_loss
-            if (
-                writer_slot_energy_balance_weight > 0.0
-                and writer_slot_energy_balance_loss is not None
-            ):
-                weighted_writer_slot_energy_balance_loss = (
-                    writer_slot_energy_balance_weight * writer_slot_energy_balance_loss
-                )
-                auxiliary_loss_terms.append(weighted_writer_slot_energy_balance_loss)
-                loss = loss + weighted_writer_slot_energy_balance_loss
-            if (
-                writer_common_mode_penalty_weight > 0.0
-                and writer_common_mode_penalty_loss is not None
-            ):
-                weighted_writer_common_mode_penalty_loss = (
-                    writer_common_mode_penalty_weight * writer_common_mode_penalty_loss
-                )
-                auxiliary_loss_terms.append(weighted_writer_common_mode_penalty_loss)
-                loss = loss + weighted_writer_common_mode_penalty_loss
-            if (
-                writer_covariance_diversity_weight > 0.0
-                and writer_covariance_diversity_loss is not None
-            ):
-                weighted_writer_covariance_diversity_loss = (
-                    writer_covariance_diversity_weight * writer_covariance_diversity_loss
-                )
-                auxiliary_loss_terms.append(weighted_writer_covariance_diversity_loss)
-                loss = loss + weighted_writer_covariance_diversity_loss
-            if aux_loss_mode in {"contrastive", "vicreg", "barlow"}:
-                aux_mean_embedding = _writer_aux_projection_mean(runtime, prefix_artifacts)
-                aux_slot_embedding = _writer_aux_projection_slots(runtime, prefix_artifacts)
-                aux_view_mean_embedding = _writer_aux_projection_mean(runtime, aux_view_prefix_artifacts)
-                aux_view_slot_embedding = _writer_aux_projection_slots(runtime, aux_view_prefix_artifacts)
-                if aux_mean_embedding is not None and aux_view_mean_embedding is not None:
-                    aux_view_pair_cosine = float(
-                        torch.sum(
-                            F.normalize(aux_mean_embedding.to(dtype=torch.float32), dim=-1)
-                            * F.normalize(aux_view_mean_embedding.to(dtype=torch.float32), dim=-1),
-                            dim=-1,
-                        ).mean().item()
-                    )
-                if contrastive_loss_weight > 0.0:
-                    contrastive_aux_loss, contrastive_diagnostics = _contrastive_aux_loss(
-                        anchor=aux_mean_embedding,
-                        positive=aux_view_mean_embedding,
-                        negative_queue=contrastive_negative_queue,
-                        temperature=contrastive_temperature,
-                    )
-                    if contrastive_aux_loss is not None:
-                        weighted_contrastive_aux_loss = contrastive_loss_weight * contrastive_aux_loss
-                        auxiliary_loss_terms.append(weighted_contrastive_aux_loss)
-                        loss = loss + weighted_contrastive_aux_loss
-                if vicreg_loss_weight > 0.0:
-                    vicreg_aux_loss, vicreg_diagnostics = _vicreg_aux_loss(
-                        view_a=aux_slot_embedding,
-                        view_b=aux_view_slot_embedding,
-                        invariance_weight=vicreg_invariance_weight,
-                        variance_weight=vicreg_variance_weight,
-                        covariance_weight=vicreg_covariance_weight,
-                        variance_target=vicreg_variance_target,
-                    )
-                    if vicreg_aux_loss is not None:
-                        weighted_vicreg_aux_loss = vicreg_loss_weight * vicreg_aux_loss
-                        auxiliary_loss_terms.append(weighted_vicreg_aux_loss)
-                        loss = loss + weighted_vicreg_aux_loss
-                if barlow_loss_weight > 0.0:
-                    barlow_aux_loss, barlow_diagnostics = _barlow_aux_loss(
-                        view_a=aux_slot_embedding,
-                        view_b=aux_view_slot_embedding,
-                        lambd=barlow_lambda,
-                    )
-                    if barlow_aux_loss is not None:
-                        weighted_barlow_aux_loss = barlow_loss_weight * barlow_aux_loss
-                        auxiliary_loss_terms.append(weighted_barlow_aux_loss)
-                        loss = loss + weighted_barlow_aux_loss
-            if writer_slot_orthogonality_weight > 0.0 and prefix_artifacts.memory_long is not None:
-                writer_slot_orthogonality_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
-                if writer_slot_orthogonality_loss is not None:
-                    weighted_writer_slot_orthogonality_loss = (
-                        writer_slot_orthogonality_weight * writer_slot_orthogonality_loss
-                    )
-                    auxiliary_loss_terms.append(weighted_writer_slot_orthogonality_loss)
-                    loss = loss + weighted_writer_slot_orthogonality_loss
-            if writer_support_coverage_weight > 0.0:
-                writer_support_coverage_loss, coverage_diagnostics = _writer_support_coverage_loss(
-                    prefix_artifacts
-                )
-                if writer_support_coverage_loss is not None:
-                    weighted_writer_support_coverage_loss = (
-                        writer_support_coverage_weight * writer_support_coverage_loss
-                    )
-                    auxiliary_loss_terms.append(weighted_writer_support_coverage_loss)
-                    loss = loss + weighted_writer_support_coverage_loss
-            active_alignment_aux_weight = _active_competitor_hinge_weight(
-                current_step=step + 1,
-                max_weight=alignment_aux_weight_max,
-                start_step=alignment_aux_start_step,
-                ramp_steps=alignment_aux_ramp_steps,
-            )
-            alignment_aux_loss = None
-            alignment_aux_active = False
-            alignment_aux_diagnostics = {
-                "teacher_choice_kl": 0.0,
-                "teacher_choice_js": 0.0,
-                "teacher_advantage_weight_mean": 0.0,
-                "teacher_advantage_weight_max": 0.0,
-                "teacher_margin_minus_base_margin": 0.0,
-                "teacher_margin_minus_active_margin": 0.0,
-                "active_class_entropy": 0.0,
-                "teacher_class_entropy": 0.0,
-                "base_class_entropy": 0.0,
-            }
-            if train_example.task_mode == "candidate_selection":
-                with torch.no_grad():
-                    base_scores = runtime.backbone.score_continuations(
+                    no_memory_scores = runtime.backbone.score_continuations(
                         train_example.prompt_text,
                         train_example.candidate_texts,
                     )
-                    teacher_scores = runtime.backbone.score_continuations(
-                        _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
-                        train_example.candidate_texts,
+                active_competitor_hinge_weight = _active_competitor_hinge_weight(
+                    current_step=step + 1,
+                    max_weight=competitor_hinge_weight_max,
+                    start_step=competitor_hinge_start_step,
+                    ramp_steps=competitor_hinge_ramp_steps,
+                )
+                task_loss, choice_ce_loss, competitor_hinge_loss = _task_training_loss(
+                    scores,
+                    train_example,
+                    margin_value=choice_margin,
+                    ce_weight=choice_ce_weight,
+                    competitor_hinge_weight=active_competitor_hinge_weight,
+                )
+                loss = task_loss
+                auxiliary_loss_terms: list[torch.Tensor] = []
+                contrastive_aux_loss = None
+                vicreg_aux_loss = None
+                barlow_aux_loss = None
+                writer_slot_orthogonality_loss = None
+                writer_support_coverage_loss = None
+                aux_mean_embedding = None
+                aux_slot_embedding = None
+                aux_view_mean_embedding = None
+                aux_view_slot_embedding = None
+                aux_view_pair_cosine = 0.0
+                aux_view_support_rows_count = len(aux_view_support_rows)
+                contrastive_diagnostics = {
+                    "contrastive_positive_cosine": 0.0,
+                    "contrastive_negative_cosine": 0.0,
+                    "contrastive_queue_size": float(len(contrastive_negative_queue) + len(contrastive_queue_batch)),
+                }
+                vicreg_diagnostics = {
+                    "vicreg_invariance_loss": 0.0,
+                    "vicreg_variance_loss": 0.0,
+                    "vicreg_covariance_loss": 0.0,
+                }
+                barlow_diagnostics = {
+                    "barlow_on_diag_loss": 0.0,
+                    "barlow_off_diag_loss": 0.0,
+                }
+                coverage_diagnostics = {
+                    "writer_support_coverage_entropy_mean": 0.0,
+                    "writer_support_coverage_loss": 0.0,
+                }
+                writer_gain_margin_loss = None
+                delta_answer_logprob_tensor = _answer_logprob(scores, train_example.gold_index) - _answer_logprob(
+                    no_memory_scores,
+                    train_example.gold_index,
+                )
+                if writer_gain_margin_weight > 0.0:
+                    writer_gain_margin_loss, delta_answer_logprob_tensor = _writer_gain_margin_loss(
+                        with_memory_scores=scores,
+                        without_memory_scores=no_memory_scores,
+                        gold_index=train_example.gold_index,
+                        margin_value=writer_gain_margin,
                     )
-                alignment_aux_allowed = not (
-                    alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
+                    weighted_writer_gain_margin_loss = (
+                        writer_gain_margin_weight * writer_gain_margin_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_gain_margin_loss)
+                    loss = loss + weighted_writer_gain_margin_loss
+                active_latent_anchor_weight = _scheduled_linear_decay_weight(
+                    current_step=step + 1,
+                    start_weight=latent_anchor_weight_start,
+                    end_weight=latent_anchor_weight_end,
+                    decay_steps=latent_anchor_decay_steps,
                 )
-                requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
-                alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
-                    mode=requested_alignment_mode,
-                    active_scores=scores,
-                    base_scores=base_scores,
-                    teacher_scores=teacher_scores,
-                    gold_index=train_example.gold_index,
-                    temperature=alignment_aux_temperature,
-                    advantage_center=alignment_aux_advantage_center,
-                    advantage_scale=alignment_aux_advantage_scale,
-                )
+                latent_anchor_loss = None
+                support_anchor_loss = None
+                writer_anchor_loss = None
+                anchor_support_cosine = None
+                anchor_writer_slot_cosine = None
                 if (
-                    alignment_aux_mode != "off"
-                    and alignment_aux_allowed
-                    and active_alignment_aux_weight > 0.0
-                    and alignment_aux_loss is not None
+                    active_latent_anchor_weight > 0.0
+                    and reference_writer is not None
                 ):
-                    weighted_alignment_aux_loss = active_alignment_aux_weight * alignment_aux_loss
-                    auxiliary_loss_terms.append(weighted_alignment_aux_loss)
-                    loss = loss + weighted_alignment_aux_loss
-            aux_loss_total = (
-                torch.stack(auxiliary_loss_terms).sum()
-                if auxiliary_loss_terms
-                else None
+                    with torch.no_grad():
+                        reference_support_states, reference_memory_slots = _reference_latent_targets(
+                            runtime=runtime,
+                            reference_support_encoder=reference_support_encoder,
+                            reference_writer=reference_writer,
+                            support_text_block=masked_support_text_block,
+                            support_rows=masked_support_rows_for_prefix,
+                        )
+                    (
+                        latent_anchor_loss,
+                        support_anchor_loss,
+                        writer_anchor_loss,
+                        anchor_support_cosine,
+                        anchor_writer_slot_cosine,
+                    ) = _latent_anchor_loss(
+                        current_support_states=prefix_artifacts.support_item_states,
+                        reference_support_states=reference_support_states,
+                        current_memory_slots=prefix_artifacts.memory_slots,
+                        reference_memory_slots=reference_memory_slots,
+                    )
+                    weighted_latent_anchor_loss = active_latent_anchor_weight * latent_anchor_loss
+                    auxiliary_loss_terms.append(weighted_latent_anchor_loss)
+                    loss = loss + weighted_latent_anchor_loss
+                memory_long_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
+                memory_short_diversity_loss = _slot_diversity_loss(prefix_artifacts.memory_short)
+                reader_attention_diversity_loss = _reader_attention_diversity_loss(
+                    prefix_artifacts.reader_attention
+                )
+                reader_conditioned_query_orthogonality_loss = None
+                if runtime.reader is not None and runtime.reader.conditioning_mode != "none":
+                    reader_conditioned_query_orthogonality_loss = _conditioned_query_orthogonality_loss(
+                        prefix_artifacts.reader_conditioned_queries
+                    )
+                reader_short_reconstruction_loss = _reader_short_reconstruction_loss(
+                    prefix_artifacts.memory_short,
+                    prefix_artifacts.reader_readouts,
+                )
+                writer_slot_basis_orthogonality_loss = _writer_slot_basis_orthogonality_loss(runtime.writer)
+                writer_slot_energy_balance_loss = _writer_slot_energy_balance_loss(prefix_artifacts.memory_long)
+                writer_common_mode_penalty_loss = _writer_common_mode_penalty(prefix_artifacts.memory_long)
+                writer_covariance_diversity_loss = _writer_covariance_diversity_loss(
+                    prefix_artifacts.memory_long
+                )
+                if memory_long_diversity_weight > 0.0 and memory_long_diversity_loss is not None:
+                    weighted_memory_long_diversity_loss = (
+                        memory_long_diversity_weight * memory_long_diversity_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_memory_long_diversity_loss)
+                    loss = loss + weighted_memory_long_diversity_loss
+                if memory_short_diversity_weight > 0.0 and memory_short_diversity_loss is not None:
+                    weighted_memory_short_diversity_loss = (
+                        memory_short_diversity_weight * memory_short_diversity_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_memory_short_diversity_loss)
+                    loss = loss + weighted_memory_short_diversity_loss
+                if (
+                    reader_attention_diversity_weight > 0.0
+                    and reader_attention_diversity_loss is not None
+                ):
+                    weighted_reader_attention_diversity_loss = (
+                        reader_attention_diversity_weight * reader_attention_diversity_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_reader_attention_diversity_loss)
+                    loss = loss + weighted_reader_attention_diversity_loss
+                if (
+                    reader_conditioned_query_orthogonality_weight > 0.0
+                    and reader_conditioned_query_orthogonality_loss is not None
+                ):
+                    weighted_reader_conditioned_query_orthogonality_loss = (
+                        reader_conditioned_query_orthogonality_weight
+                        * reader_conditioned_query_orthogonality_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_reader_conditioned_query_orthogonality_loss)
+                    loss = loss + weighted_reader_conditioned_query_orthogonality_loss
+                if (
+                    reader_short_reconstruction_weight > 0.0
+                    and reader_short_reconstruction_loss is not None
+                ):
+                    weighted_reader_short_reconstruction_loss = (
+                        reader_short_reconstruction_weight * reader_short_reconstruction_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_reader_short_reconstruction_loss)
+                    loss = loss + weighted_reader_short_reconstruction_loss
+                if (
+                    writer_slot_basis_orthogonality_weight > 0.0
+                    and writer_slot_basis_orthogonality_loss is not None
+                ):
+                    weighted_writer_slot_basis_orthogonality_loss = (
+                        writer_slot_basis_orthogonality_weight * writer_slot_basis_orthogonality_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_slot_basis_orthogonality_loss)
+                    loss = loss + weighted_writer_slot_basis_orthogonality_loss
+                if (
+                    writer_slot_energy_balance_weight > 0.0
+                    and writer_slot_energy_balance_loss is not None
+                ):
+                    weighted_writer_slot_energy_balance_loss = (
+                        writer_slot_energy_balance_weight * writer_slot_energy_balance_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_slot_energy_balance_loss)
+                    loss = loss + weighted_writer_slot_energy_balance_loss
+                if (
+                    writer_common_mode_penalty_weight > 0.0
+                    and writer_common_mode_penalty_loss is not None
+                ):
+                    weighted_writer_common_mode_penalty_loss = (
+                        writer_common_mode_penalty_weight * writer_common_mode_penalty_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_common_mode_penalty_loss)
+                    loss = loss + weighted_writer_common_mode_penalty_loss
+                if (
+                    writer_covariance_diversity_weight > 0.0
+                    and writer_covariance_diversity_loss is not None
+                ):
+                    weighted_writer_covariance_diversity_loss = (
+                        writer_covariance_diversity_weight * writer_covariance_diversity_loss
+                    )
+                    auxiliary_loss_terms.append(weighted_writer_covariance_diversity_loss)
+                    loss = loss + weighted_writer_covariance_diversity_loss
+                if aux_loss_mode in {"contrastive", "vicreg", "barlow"}:
+                    aux_mean_embedding = _writer_aux_projection_mean(runtime, prefix_artifacts)
+                    aux_slot_embedding = _writer_aux_projection_slots(runtime, prefix_artifacts)
+                    aux_view_mean_embedding = _writer_aux_projection_mean(runtime, aux_view_prefix_artifacts)
+                    aux_view_slot_embedding = _writer_aux_projection_slots(runtime, aux_view_prefix_artifacts)
+                    if aux_mean_embedding is not None and aux_view_mean_embedding is not None:
+                        aux_view_pair_cosine = float(
+                            torch.sum(
+                                F.normalize(aux_mean_embedding.to(dtype=torch.float32), dim=-1)
+                                * F.normalize(aux_view_mean_embedding.to(dtype=torch.float32), dim=-1),
+                                dim=-1,
+                            ).mean().item()
+                        )
+                    if contrastive_loss_weight > 0.0:
+                        contrastive_aux_loss, contrastive_diagnostics = _contrastive_aux_loss(
+                            anchor=aux_mean_embedding,
+                            positive=aux_view_mean_embedding,
+                            negative_queue=contrastive_negative_queue,
+                            temperature=contrastive_temperature,
+                        )
+                        if contrastive_aux_loss is not None:
+                            weighted_contrastive_aux_loss = contrastive_loss_weight * contrastive_aux_loss
+                            auxiliary_loss_terms.append(weighted_contrastive_aux_loss)
+                            loss = loss + weighted_contrastive_aux_loss
+                    if vicreg_loss_weight > 0.0:
+                        vicreg_aux_loss, vicreg_diagnostics = _vicreg_aux_loss(
+                            view_a=aux_slot_embedding,
+                            view_b=aux_view_slot_embedding,
+                            invariance_weight=vicreg_invariance_weight,
+                            variance_weight=vicreg_variance_weight,
+                            covariance_weight=vicreg_covariance_weight,
+                            variance_target=vicreg_variance_target,
+                        )
+                        if vicreg_aux_loss is not None:
+                            weighted_vicreg_aux_loss = vicreg_loss_weight * vicreg_aux_loss
+                            auxiliary_loss_terms.append(weighted_vicreg_aux_loss)
+                            loss = loss + weighted_vicreg_aux_loss
+                    if barlow_loss_weight > 0.0:
+                        barlow_aux_loss, barlow_diagnostics = _barlow_aux_loss(
+                            view_a=aux_slot_embedding,
+                            view_b=aux_view_slot_embedding,
+                            lambd=barlow_lambda,
+                        )
+                        if barlow_aux_loss is not None:
+                            weighted_barlow_aux_loss = barlow_loss_weight * barlow_aux_loss
+                            auxiliary_loss_terms.append(weighted_barlow_aux_loss)
+                            loss = loss + weighted_barlow_aux_loss
+                if writer_slot_orthogonality_weight > 0.0 and prefix_artifacts.memory_long is not None:
+                    writer_slot_orthogonality_loss = _slot_diversity_loss(prefix_artifacts.memory_long)
+                    if writer_slot_orthogonality_loss is not None:
+                        weighted_writer_slot_orthogonality_loss = (
+                            writer_slot_orthogonality_weight * writer_slot_orthogonality_loss
+                        )
+                        auxiliary_loss_terms.append(weighted_writer_slot_orthogonality_loss)
+                        loss = loss + weighted_writer_slot_orthogonality_loss
+                if writer_support_coverage_weight > 0.0:
+                    writer_support_coverage_loss, coverage_diagnostics = _writer_support_coverage_loss(
+                        prefix_artifacts
+                    )
+                    if writer_support_coverage_loss is not None:
+                        weighted_writer_support_coverage_loss = (
+                            writer_support_coverage_weight * writer_support_coverage_loss
+                        )
+                        auxiliary_loss_terms.append(weighted_writer_support_coverage_loss)
+                        loss = loss + weighted_writer_support_coverage_loss
+                active_alignment_aux_weight = _active_competitor_hinge_weight(
+                    current_step=step + 1,
+                    max_weight=alignment_aux_weight_max,
+                    start_step=alignment_aux_start_step,
+                    ramp_steps=alignment_aux_ramp_steps,
+                )
+                alignment_aux_loss = None
+                alignment_aux_active = False
+                alignment_aux_diagnostics = {
+                    "teacher_choice_kl": 0.0,
+                    "teacher_choice_js": 0.0,
+                    "teacher_advantage_weight_mean": 0.0,
+                    "teacher_advantage_weight_max": 0.0,
+                    "teacher_margin_minus_base_margin": 0.0,
+                    "teacher_margin_minus_active_margin": 0.0,
+                    "active_class_entropy": 0.0,
+                    "teacher_class_entropy": 0.0,
+                    "base_class_entropy": 0.0,
+                }
+                if train_example.task_mode == "candidate_selection":
+                    with torch.no_grad():
+                        base_scores = runtime.backbone.score_continuations(
+                            train_example.prompt_text,
+                            train_example.candidate_texts,
+                        )
+                        teacher_scores = runtime.backbone.score_continuations(
+                            _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
+                            train_example.candidate_texts,
+                        )
+                    alignment_aux_allowed = not (
+                        alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
+                    )
+                    requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
+                    alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
+                        mode=requested_alignment_mode,
+                        active_scores=scores,
+                        base_scores=base_scores,
+                        teacher_scores=teacher_scores,
+                        gold_index=train_example.gold_index,
+                        temperature=alignment_aux_temperature,
+                        advantage_center=alignment_aux_advantage_center,
+                        advantage_scale=alignment_aux_advantage_scale,
+                    )
+                    if (
+                        alignment_aux_mode != "off"
+                        and alignment_aux_allowed
+                        and active_alignment_aux_weight > 0.0
+                        and alignment_aux_loss is not None
+                    ):
+                        weighted_alignment_aux_loss = active_alignment_aux_weight * alignment_aux_loss
+                        auxiliary_loss_terms.append(weighted_alignment_aux_loss)
+                        loss = loss + weighted_alignment_aux_loss
+                aux_loss_total = (
+                    torch.stack(auxiliary_loss_terms).sum()
+                    if auxiliary_loss_terms
+                    else None
+                )
+                probe_step_active = _gradient_probe_active(
+                    enabled=gradient_probe_enabled,
+                    interval=gradient_probe_interval,
+                    max_steps=gradient_probe_max_steps,
+                    step=step + 1,
+                )
+                gradient_probe_payload = _collect_gradient_probe(
+                    enabled=probe_step_active,
+                    module_parameters={
+                        module_name: parameters
+                        for module_name, parameters in {
+                            "writer": [
+                                parameter
+                                for parameter in (
+                                    runtime.writer_base_parameters()
+                                    + runtime.writer_adapter_parameters()
+                                )
+                                if parameter.requires_grad
+                            ],
+                            "support_encoder": [
+                                parameter
+                                for parameter in (
+                                    []
+                                    if runtime.support_encoder is None
+                                    else list(runtime.support_encoder.parameters())
+                                )
+                                if parameter.requires_grad
+                            ],
+                            "projector": [
+                                parameter
+                                for parameter in runtime.prefix_projector.parameters()
+                                if parameter.requires_grad
+                            ],
+                            "receiver_lora": [
+                                parameter
+                                for parameter in getattr(
+                                    runtime.backbone,
+                                    "receiver_lora_parameters",
+                                    lambda: [],
+                                )()
+                                if parameter.requires_grad
+                            ],
+                            "source_stub": [
+                                parameter
+                                for parameter in runtime.source_stub_parameters()
+                                if parameter.requires_grad
+                            ],
+                        }.items()
+                        if module_name in gradient_probe_modules
+                    },
+                    task_loss=task_loss,
+                    aux_loss=aux_loss_total,
+                    total_loss=loss,
+                )
+                train_prefix_attention_metrics = _prefix_attention_diagnostic_fields(
+                    example_cache=train_example,
+                    scores=scores.detach().to(dtype=torch.float32).cpu(),
+                    diagnostics=train_diagnostics,
+                )
+                train_event_payloads.append(
+                    {
+                        "loss": float(loss.item()),
+                        "task_loss": float(task_loss.item()),
+                        "aux_loss_total": (
+                            0.0 if aux_loss_total is None else float(aux_loss_total.detach().item())
+                        ),
+                        "choice_ce_loss": float(choice_ce_loss.item()),
+                        "competitor_hinge_loss": float(competitor_hinge_loss.item()),
+                        "answer_logprob_with_memory": float(
+                            _answer_logprob(scores, train_example.gold_index).item()
+                        ),
+                        "answer_logprob_without_memory": float(
+                            _answer_logprob(no_memory_scores, train_example.gold_index).item()
+                        ),
+                        "delta_answer_logprob": float(delta_answer_logprob_tensor.item()),
+                        "writer_gain_margin_loss": (
+                            0.0
+                            if writer_gain_margin_loss is None
+                            else float(writer_gain_margin_loss.item())
+                        ),
+                        "latent_anchor_loss": (
+                            0.0 if latent_anchor_loss is None else float(latent_anchor_loss.item())
+                        ),
+                        "support_anchor_loss": (
+                            0.0 if support_anchor_loss is None else float(support_anchor_loss.item())
+                        ),
+                        "writer_anchor_loss": (
+                            0.0 if writer_anchor_loss is None else float(writer_anchor_loss.item())
+                        ),
+                        "anchor_support_cosine": (
+                            0.0 if anchor_support_cosine is None else float(anchor_support_cosine.item())
+                        ),
+                        "anchor_writer_slot_cosine": (
+                            0.0 if anchor_writer_slot_cosine is None else float(anchor_writer_slot_cosine.item())
+                        ),
+                        "memory_long_diversity_loss": (
+                            0.0
+                            if memory_long_diversity_loss is None
+                            else float(memory_long_diversity_loss.item())
+                        ),
+                        "memory_short_diversity_loss": (
+                            0.0
+                            if memory_short_diversity_loss is None
+                            else float(memory_short_diversity_loss.item())
+                        ),
+                        "reader_attention_diversity_loss": (
+                            0.0
+                            if reader_attention_diversity_loss is None
+                            else float(reader_attention_diversity_loss.item())
+                        ),
+                        "reader_conditioned_query_orthogonality_loss": (
+                            0.0
+                            if reader_conditioned_query_orthogonality_loss is None
+                            else float(reader_conditioned_query_orthogonality_loss.item())
+                        ),
+                        "reader_short_reconstruction_loss": (
+                            0.0
+                            if reader_short_reconstruction_loss is None
+                            else float(reader_short_reconstruction_loss.item())
+                        ),
+                        "writer_slot_basis_orthogonality_loss": (
+                            0.0
+                            if writer_slot_basis_orthogonality_loss is None
+                            else float(writer_slot_basis_orthogonality_loss.item())
+                        ),
+                        "writer_slot_energy_balance_loss": (
+                            0.0
+                            if writer_slot_energy_balance_loss is None
+                            else float(writer_slot_energy_balance_loss.item())
+                        ),
+                        "writer_common_mode_penalty_loss": (
+                            0.0
+                            if writer_common_mode_penalty_loss is None
+                            else float(writer_common_mode_penalty_loss.item())
+                        ),
+                        "writer_covariance_diversity_loss": (
+                            0.0
+                            if writer_covariance_diversity_loss is None
+                            else float(writer_covariance_diversity_loss.item())
+                        ),
+                        "contrastive_aux_loss": (
+                            0.0 if contrastive_aux_loss is None else float(contrastive_aux_loss.item())
+                        ),
+                        "contrastive_positive_cosine": float(
+                            contrastive_diagnostics["contrastive_positive_cosine"]
+                        ),
+                        "contrastive_negative_cosine": float(
+                            contrastive_diagnostics["contrastive_negative_cosine"]
+                        ),
+                        "contrastive_queue_size": float(
+                            contrastive_diagnostics["contrastive_queue_size"]
+                        ),
+                        "vicreg_aux_loss": (
+                            0.0 if vicreg_aux_loss is None else float(vicreg_aux_loss.item())
+                        ),
+                        "vicreg_invariance_loss": float(vicreg_diagnostics["vicreg_invariance_loss"]),
+                        "vicreg_variance_loss": float(vicreg_diagnostics["vicreg_variance_loss"]),
+                        "vicreg_covariance_loss": float(vicreg_diagnostics["vicreg_covariance_loss"]),
+                        "barlow_aux_loss": (
+                            0.0 if barlow_aux_loss is None else float(barlow_aux_loss.item())
+                        ),
+                        "barlow_on_diag_loss": float(barlow_diagnostics["barlow_on_diag_loss"]),
+                        "barlow_off_diag_loss": float(barlow_diagnostics["barlow_off_diag_loss"]),
+                        "writer_slot_orthogonality_loss": (
+                            0.0
+                            if writer_slot_orthogonality_loss is None
+                            else float(writer_slot_orthogonality_loss.item())
+                        ),
+                        "writer_support_coverage_loss": (
+                            0.0
+                            if writer_support_coverage_loss is None
+                            else float(writer_support_coverage_loss.item())
+                        ),
+                        "writer_support_coverage_entropy_mean": float(
+                            coverage_diagnostics["writer_support_coverage_entropy_mean"]
+                        ),
+                        "aux_view_pair_cosine": float(aux_view_pair_cosine),
+                        "memory_slot_effective_rank": float(memory_slot_effective_rank),
+                        "memory_short_effective_rank": float(memory_short_effective_rank),
+                        "support_state_effective_rank": float(support_state_effective_rank),
+                        **train_prefix_attention_metrics,
+                    }
+                )
+                gradient_probe_payloads.append(dict(gradient_probe_payload))
+                (loss / float(gradient_accumulation_steps)).backward()
+                if (
+                    contrastive_loss_weight > 0.0
+                    and contrastive_queue_size > 0
+                    and aux_mean_embedding is not None
+                ):
+                    contrastive_queue_batch.append(
+                        aux_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
+                    )
+                    if aux_view_mean_embedding is not None:
+                        contrastive_queue_batch.append(
+                            aux_view_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
+                        )
+                profiler.add_example()
+                profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
+                profiler.add_tokens(runtime.backbone.count_tokens(masked_support_text_block))
+                for candidate_text in train_example.candidate_texts:
+                    profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
+                microstep_count += 1
+            averaged_train_payload = _mean_numeric_payloads(train_event_payloads)
+            gradient_probe_payload = (
+                _mean_numeric_payloads(gradient_probe_payloads)
+                if gradient_probe_payloads
+                else _gradient_probe_defaults(tuple(gradient_probe_modules))
             )
-            probe_step_active = _gradient_probe_active(
-                enabled=gradient_probe_enabled,
-                interval=gradient_probe_interval,
-                max_steps=gradient_probe_max_steps,
-                step=step + 1,
-            )
-            gradient_probe_payload = _collect_gradient_probe(
-                enabled=probe_step_active,
-                module_parameters={
-                    module_name: parameters
-                    for module_name, parameters in {
-                        "writer": [
-                            parameter
-                            for parameter in (
-                                runtime.writer_base_parameters()
-                                + runtime.writer_adapter_parameters()
-                            )
-                            if parameter.requires_grad
-                        ],
-                        "support_encoder": [
-                            parameter
-                            for parameter in (
-                                []
-                                if runtime.support_encoder is None
-                                else list(runtime.support_encoder.parameters())
-                            )
-                            if parameter.requires_grad
-                        ],
-                        "projector": [
-                            parameter
-                            for parameter in runtime.prefix_projector.parameters()
-                            if parameter.requires_grad
-                        ],
-                        "receiver_lora": [
-                            parameter
-                            for parameter in getattr(
-                                runtime.backbone,
-                                "receiver_lora_parameters",
-                                lambda: [],
-                            )()
-                            if parameter.requires_grad
-                        ],
-                        "source_stub": [
-                            parameter
-                            for parameter in runtime.source_stub_parameters()
-                            if parameter.requires_grad
-                        ],
-                    }.items()
-                    if module_name in gradient_probe_modules
-                },
-                task_loss=task_loss,
-                aux_loss=aux_loss_total,
-                total_loss=loss,
-            )
-            loss.backward()
+            for key in (
+                "prefix_attention_mass_mean",
+                "prefix_to_content_attention_ratio_mean",
+                "gold_prefix_attention_mass",
+                "competitor_prefix_attention_mass",
+                "prefix_attention_mass_mean_by_layer",
+                "prefix_to_content_attention_ratio_mean_by_layer",
+                "gold_prefix_attention_mass_by_layer",
+                "competitor_prefix_attention_mass_by_layer",
+            ):
+                if key in averaged_train_payload:
+                    train_prefix_attention_metrics[key] = averaged_train_payload[key]
             source_stub_grad_norm = _grad_norm(runtime.source_stub)
             support_encoder_grad_norm = _grad_norm(runtime.support_encoder)
             prefix_projector_grad_norm = _grad_norm(runtime.prefix_projector)
@@ -6123,32 +6334,11 @@ def run_shared_injection_pilot(
                 receiver_lora_group_lr * receiver_lora_group_summary["grad_norm_pre_clip"]
             ) / max(receiver_lora_group_summary["param_norm"], 1e-8)
             optimizer.step()
-            if (
-                contrastive_loss_weight > 0.0
-                and contrastive_queue_size > 0
-                and aux_mean_embedding is not None
-            ):
-                contrastive_negative_queue.append(
-                    aux_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
-                )
-                if aux_view_mean_embedding is not None:
-                    contrastive_negative_queue.append(
-                        aux_view_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
-                    )
+            if contrastive_loss_weight > 0.0 and contrastive_queue_size > 0 and contrastive_queue_batch:
+                contrastive_negative_queue.extend(contrastive_queue_batch)
                 if len(contrastive_negative_queue) > contrastive_queue_size:
                     contrastive_negative_queue = contrastive_negative_queue[-contrastive_queue_size:]
-            profiler.add_example()
-            profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
-            profiler.add_tokens(runtime.backbone.count_tokens(masked_support_text_block))
-            for candidate_text in train_example.candidate_texts:
-                profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
-            train_prefix_attention_metrics = _prefix_attention_diagnostic_fields(
-                example_cache=train_example,
-                scores=scores.detach().to(dtype=torch.float32).cpu(),
-                diagnostics=train_diagnostics,
-            )
-            train_events.append(
-                {
+            train_event = {
                     "step": step + 1,
                     "loss": float(loss.item()),
                     "task_loss": float(task_loss.item()),
@@ -6534,7 +6724,63 @@ def run_shared_injection_pilot(
                     **gradient_probe_payload,
                     **_prefix_scalar_summary(prefix_artifacts.prefix_stats),
                 }
-            )
+            for key in (
+                "loss",
+                "task_loss",
+                "aux_loss_total",
+                "choice_ce_loss",
+                "competitor_hinge_loss",
+                "answer_logprob_with_memory",
+                "answer_logprob_without_memory",
+                "delta_answer_logprob",
+                "writer_gain_margin_loss",
+                "latent_anchor_loss",
+                "support_anchor_loss",
+                "writer_anchor_loss",
+                "anchor_support_cosine",
+                "anchor_writer_slot_cosine",
+                "memory_long_diversity_loss",
+                "memory_short_diversity_loss",
+                "reader_attention_diversity_loss",
+                "reader_conditioned_query_orthogonality_loss",
+                "reader_short_reconstruction_loss",
+                "writer_slot_basis_orthogonality_loss",
+                "writer_slot_energy_balance_loss",
+                "writer_common_mode_penalty_loss",
+                "writer_covariance_diversity_loss",
+                "contrastive_aux_loss",
+                "contrastive_positive_cosine",
+                "contrastive_negative_cosine",
+                "contrastive_queue_size",
+                "vicreg_aux_loss",
+                "vicreg_invariance_loss",
+                "vicreg_variance_loss",
+                "vicreg_covariance_loss",
+                "barlow_aux_loss",
+                "barlow_on_diag_loss",
+                "barlow_off_diag_loss",
+                "writer_slot_orthogonality_loss",
+                "writer_support_coverage_loss",
+                "writer_support_coverage_entropy_mean",
+                "aux_view_pair_cosine",
+                "memory_slot_effective_rank",
+                "memory_short_effective_rank",
+                "support_state_effective_rank",
+                "prefix_attention_mass_mean",
+                "prefix_to_content_attention_ratio_mean",
+                "gold_prefix_attention_mass",
+                "competitor_prefix_attention_mass",
+                "prefix_attention_mass_mean_by_layer",
+                "prefix_to_content_attention_ratio_mean_by_layer",
+                "gold_prefix_attention_mass_by_layer",
+                "competitor_prefix_attention_mass_by_layer",
+            ):
+                if key in averaged_train_payload:
+                    train_event[key] = averaged_train_payload[key]
+            train_event["train_example_ids"] = list(train_example_ids)
+            train_event["pilot_gradient_accumulation_steps"] = int(gradient_accumulation_steps)
+            train_event["accumulated_microsteps"] = int(microstep_count)
+            train_events.append(train_event)
             _append_jsonl_row(
                 live_train_trace_path,
                 _live_train_trace_row(train_events[-1]),
@@ -7131,6 +7377,8 @@ def run_shared_injection_pilot(
         "task_case_dump_rows": len(case_rows),
         "task_case_dump_path": str(task_case_dump_path.resolve()),
         "pilot_train_steps": train_steps,
+        "pilot_gradient_accumulation_steps": int(gradient_accumulation_steps),
+        "pilot_effective_train_examples": int(train_steps * gradient_accumulation_steps),
         "pilot_writer_learning_rate": writer_learning_rate,
         "pilot_support_encoder_learning_rate": support_encoder_learning_rate,
         "pilot_source_stub_learning_rate": source_stub_learning_rate,
