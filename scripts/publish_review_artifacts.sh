@@ -56,6 +56,16 @@ rebuild_docs_bundle() {
   mv "${temp_bundle}" "${bundle_path}"
 }
 
+clean_review_ephemera() {
+  if [[ -d "runs/review" ]]; then
+    find "runs/review" -type f \
+      \( -name '*.pt' -o -name '*.ckpt' -o -name 'tmux-session.log' \) \
+      -delete
+  fi
+}
+
+clean_review_ephemera
+
 sync_dir "runs/verify/m3-core4-qwen25/stage-b" "runs/review/m3-core4-qwen25-stage-b"
 sync_dir "runs/verify/m3-core4-qwen3/stage-b" "runs/review/m3-core4-qwen3-stage-b"
 sync_dir "runs/verify/m3-story-cloze-real-pilot-qwen25" "runs/review/m3-story-cloze-real-pilot-qwen25"
@@ -134,6 +144,10 @@ sync_first_available "runs/review/planv6-v6-3-loss-screening-qwen25" \
   "runs/verify/planv6-v6-3-loss-screening-qwen25" \
   "/root/autodl-tmp/runs/verify/planv6-v6-3-loss-screening-qwen25" \
   "/tmp/memtotal-runs/planv6-v6-3-loss-screening-qwen25"
+sync_first_available "runs/review/planv6-v6-4-mixed-matrix-qwen25" \
+  "runs/verify/planv6-v6-4-mixed-matrix-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv6-v6-4-mixed-matrix-qwen25" \
+  "/tmp/memtotal-runs/planv6-v6-4-mixed-matrix-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -215,6 +229,10 @@ sync_first_available "results/generated/review/planv6-v6-3-loss-screening-qwen25
   "results/generated/planv6-v6-3-loss-screening-qwen25" \
   "/root/autodl-tmp/results/generated/planv6-v6-3-loss-screening-qwen25" \
   "/tmp/memtotal-results/planv6-v6-3-loss-screening-qwen25"
+sync_first_available "results/generated/review/planv6-v6-4-mixed-matrix-qwen25" \
+  "results/generated/planv6-v6-4-mixed-matrix-qwen25" \
+  "/root/autodl-tmp/results/generated/planv6-v6-4-mixed-matrix-qwen25" \
+  "/tmp/memtotal-results/planv6-v6-4-mixed-matrix-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
