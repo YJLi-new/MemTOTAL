@@ -87,6 +87,8 @@ Phase `V6-5` is complete only if all of the following are true:
 - `2026-03-10 15:20 UTC`: the detached run did not finish normally. The shell exited because a child Python process raised `FileNotFoundError: [Errno 2] No usable temporary directory found`, which was triggered after the root filesystem filled and `tempfile.gettempdir()` could no longer resolve a writable temp path.
 - `2026-03-10 15:22 UTC`: audited the partial phase state. FEVER control completed and `20/144` FEVER screen recipes completed before the crash; no `F2` or `F3` screen arms ran, and the confirmation stage never started.
 - `2026-03-10 15:25 UTC`: patched the `V6-5` runner to force `TMPDIR` / `TEMP` / `TMP` onto `/root/autodl-tmp/tmp` so resumed execution is isolated from root-disk pressure. The recovery path is to resume in place from the existing run/result roots so the completed FEVER screen arms are reused rather than rerun.
+- `2026-03-10 15:51 UTC`: relaunched `V6-5` in detached `tmux` as session `planv6_v65` with `TMPDIR=/root/autodl-tmp/tmp`, reusing the existing run/result roots.
+- `2026-03-10 15:55 UTC`: the resumed run passed the old tempdir failure point and entered the first previously missing FEVER screen arm, `F1__w10__clip_global__plr75e6__acc1__layers_base`, under `run_m4_selected_shared_injection_suite.py`.
 
 ## Decision Log
 
