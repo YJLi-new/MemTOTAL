@@ -16,6 +16,7 @@ from memtotal.models import (
     MemoryFuser,
     MemoryReader,
     MemoryWriter,
+    PerLayerLowRankDeepPrefixProjector,
     SourceStubMemory,
     WriterDeepPrefixProjector,
     WriterWeaverHead,
@@ -378,6 +379,33 @@ def _resolve_deep_prefix_layers(config: dict[str, Any]) -> list[int]:
 
 def _resolve_deep_prefix_rank(config: dict[str, Any]) -> int:
     return int(config["runtime"].get("pilot_deep_prefix_rank", 32))
+
+
+def _resolve_deep_prefix_projector_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_deep_prefix_projector_mode", "shared_low_rank"))
+    if mode not in {"shared_low_rank", "per_layer_low_rank"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_deep_prefix_projector_mode={mode}. "
+            "Expected one of shared_low_rank, per_layer_low_rank."
+        )
+    return mode
+
+
+def _infer_deep_prefix_projector_mode(prefix_projector_state: dict[str, Any]) -> str | None:
+    keys = {str(key) for key in prefix_projector_state}
+    if any(key.startswith("down_projs.") or key.startswith("up_projs.") for key in keys):
+        return "per_layer_low_rank"
+    if any(key.startswith("down_proj.") or key.startswith("up_proj.") for key in keys):
+        return "shared_low_rank"
+    return None
+
+
+def _infer_injection_mode_from_projector_state(prefix_projector_state: dict[str, Any]) -> str:
+    if "prefix_proj.weight" in prefix_projector_state or "prefix_proj.bias" in prefix_projector_state:
+        return "shallow_prefix"
+    if _infer_deep_prefix_projector_mode(prefix_projector_state) is not None:
+        return "sparse_deep_prefix"
+    return "shallow_prefix"
 
 
 def _resolve_reader_context_mode(config: dict[str, Any]) -> str:
@@ -1681,6 +1709,7 @@ def _prefix_stats(
     projector_token_source: str = "writer_slots",
     prefix_source_mode: str = "writer",
     deep_prefix_init_mode: str = "random",
+    deep_prefix_projector_mode: str = "shared_low_rank",
     support_interface_mode: str = "pooled_block",
     context_support_balance_mode: str = "off",
 ) -> dict[str, Any]:
@@ -1829,6 +1858,7 @@ def _prefix_stats(
                 "pilot_injection_mode": "sparse_deep_prefix",
                 "pilot_prefix_source_mode": prefix_source_mode,
                 "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
+                "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
                 "pilot_support_encoder_mode": support_interface_mode,
                 "pilot_context_support_balance_mode": context_support_balance_mode,
                 "active_prefix_layers": [],
@@ -1880,6 +1910,7 @@ def _prefix_stats(
             "pilot_injection_mode": "sparse_deep_prefix",
             "pilot_prefix_source_mode": prefix_source_mode,
             "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
+            "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
             "pilot_support_encoder_mode": support_interface_mode,
             "pilot_context_support_balance_mode": context_support_balance_mode,
             "active_prefix_layers": ordered_layers,
@@ -1914,6 +1945,7 @@ def _prefix_stats(
             "pilot_injection_mode": "shallow_prefix",
             "pilot_prefix_source_mode": prefix_source_mode,
             "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
+            "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
             "pilot_support_encoder_mode": support_interface_mode,
             "pilot_context_support_balance_mode": context_support_balance_mode,
             "active_prefix_layers": [],
@@ -1948,6 +1980,7 @@ def _prefix_stats(
         "pilot_injection_mode": "shallow_prefix",
         "pilot_prefix_source_mode": prefix_source_mode,
         "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
+        "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
         "pilot_support_encoder_mode": support_interface_mode,
         "pilot_context_support_balance_mode": context_support_balance_mode,
         "active_prefix_layers": [],
@@ -2078,6 +2111,7 @@ def _save_shared_injection_checkpoint(
             "pilot_fuser_short_slots": int(runtime.fuser_short_slots),
             "pilot_projector_prefix_tokens": int(runtime.prefix_projector.prefix_tokens),
             "pilot_deep_prefix_rank": int(getattr(runtime.prefix_projector, "bottleneck_rank", runtime.backbone.hidden_size)),
+            "pilot_deep_prefix_projector_mode": str(runtime.deep_prefix_projector_mode),
             "pilot_deep_prefix_init_mode": str(runtime.deep_prefix_init_mode),
             "pilot_writer_output_slot_basis_scale": float(
                 getattr(runtime.writer, "output_slot_basis_scale", 0.0)
@@ -2629,6 +2663,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.alignment_aux_advantage_center = _resolve_alignment_aux_advantage_center(config)
         self.alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
         self.deep_prefix_layers = tuple(_resolve_deep_prefix_layers(config))
+        self.deep_prefix_projector_mode = _resolve_deep_prefix_projector_mode(config)
         self.prefix_source_mode = _resolve_prefix_source_mode(config)
         self.deep_prefix_init_mode = _resolve_deep_prefix_init_mode(config)
         self.support_serialization_variant = _resolve_support_serialization_variant(config)
@@ -2743,14 +2778,18 @@ class SharedInjectionPilotRuntime(nn.Module):
                 total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
             )
         else:
-            self.prefix_projector = SharedLowRankDeepPrefixProjector(
-                hidden_size=self.backbone.hidden_size,
-                prefix_tokens=projector_prefix_tokens,
-                layer_indices=list(self.deep_prefix_layers),
-                bottleneck_rank=_resolve_deep_prefix_rank(config),
-                slot_max_norm=config["runtime"].get("pilot_prefix_slot_max_norm"),
-                total_max_norm=config["runtime"].get("pilot_prefix_total_max_norm"),
-            )
+            projector_kwargs = {
+                "hidden_size": self.backbone.hidden_size,
+                "prefix_tokens": projector_prefix_tokens,
+                "layer_indices": list(self.deep_prefix_layers),
+                "bottleneck_rank": _resolve_deep_prefix_rank(config),
+                "slot_max_norm": config["runtime"].get("pilot_prefix_slot_max_norm"),
+                "total_max_norm": config["runtime"].get("pilot_prefix_total_max_norm"),
+            }
+            if self.deep_prefix_projector_mode == "shared_low_rank":
+                self.prefix_projector = SharedLowRankDeepPrefixProjector(**projector_kwargs)
+            else:
+                self.prefix_projector = PerLayerLowRankDeepPrefixProjector(**projector_kwargs)
         self.arm = arm
         self.writer_memory_control = writer_memory_control
         self._prompt_summary_cache: dict[str, torch.Tensor] = {}
@@ -2879,13 +2918,29 @@ class SharedInjectionPilotRuntime(nn.Module):
         checkpoint_injection_mode = str(
             checkpoint.get(
                 "pilot_injection_mode",
-                "sparse_deep_prefix" if "down_proj.weight" in checkpoint.get("prefix_projector_state", {}) else "shallow_prefix",
+                _infer_injection_mode_from_projector_state(checkpoint.get("prefix_projector_state", {})),
             )
         )
         if checkpoint_injection_mode != self.injection_mode:
             raise ValueError(
                 f"Warm-start checkpoint {checkpoint_path} uses pilot_injection_mode="
                 f"{checkpoint_injection_mode}, expected {self.injection_mode}."
+            )
+        checkpoint_projector_mode = str(
+            checkpoint.get(
+                "pilot_deep_prefix_projector_mode",
+                _infer_deep_prefix_projector_mode(checkpoint.get("prefix_projector_state", {}))
+                if checkpoint_injection_mode == "sparse_deep_prefix"
+                else self.deep_prefix_projector_mode,
+            )
+        )
+        if (
+            checkpoint_injection_mode == "sparse_deep_prefix"
+            and checkpoint_projector_mode != self.deep_prefix_projector_mode
+        ):
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_deep_prefix_projector_mode="
+                f"{checkpoint_projector_mode}, expected {self.deep_prefix_projector_mode}."
             )
         checkpoint_layers = tuple(int(layer) for layer in checkpoint.get("pilot_deep_prefix_layers", []))
         if self.injection_mode == "sparse_deep_prefix" and checkpoint_layers != self.deep_prefix_layers:
@@ -3397,7 +3452,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             )
         if not self._deep_prefix_projector_initialized:
             assert calibration is not None
-            if isinstance(self.prefix_projector, SharedLowRankDeepPrefixProjector):
+            initialize_from_calibration = getattr(self.prefix_projector, "initialize_from_calibration", None)
+            if callable(initialize_from_calibration):
                 self.prefix_projector.initialize_from_calibration(
                     mode=self.deep_prefix_init_mode,
                     semantic_anchor=calibration.get("semantic_anchor"),
@@ -3600,6 +3656,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 projector_token_source=self.projector_token_source,
                 prefix_source_mode=self.prefix_source_mode,
                 deep_prefix_init_mode=self.deep_prefix_init_mode,
+                deep_prefix_projector_mode=self.deep_prefix_projector_mode,
                 support_interface_mode=self.support_encoder_mode,
                 context_support_balance_mode=self.context_support_balance_mode,
             )
@@ -3733,6 +3790,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 projector_token_source=self.projector_token_source,
                 prefix_source_mode=self.prefix_source_mode,
                 deep_prefix_init_mode=self.deep_prefix_init_mode,
+                deep_prefix_projector_mode=self.deep_prefix_projector_mode,
                 support_interface_mode=self.support_encoder_mode,
                 context_support_balance_mode=self.context_support_balance_mode,
             )
@@ -3781,6 +3839,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             projector_token_source=self.projector_token_source,
             prefix_source_mode=self.prefix_source_mode,
             deep_prefix_init_mode=self.deep_prefix_init_mode,
+            deep_prefix_projector_mode=self.deep_prefix_projector_mode,
             support_interface_mode=self.support_encoder_mode,
             context_support_balance_mode=self.context_support_balance_mode,
         )
@@ -7451,6 +7510,7 @@ def run_shared_injection_pilot(
         "pilot_init_checkpoint_path": "" if not init_checkpoint_path else str(Path(init_checkpoint_path).resolve()),
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
+        "pilot_deep_prefix_projector_mode": runtime.deep_prefix_projector_mode,
         "pilot_train_support_mode": train_support_mode,
         "prompt_variant": prompt_variant,
         "support_serialization_variant": support_serialization_variant,

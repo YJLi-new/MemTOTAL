@@ -45,6 +45,7 @@ from memtotal.models.memory import (
 )
 from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
+    PerLayerLowRankDeepPrefixProjector,
     PrefixInjectionArtifacts,
     SharedLowRankDeepPrefixProjector,
     SharedInjectionPilotRuntime,
@@ -823,6 +824,23 @@ class SharedInjectionHelpersTest(unittest.TestCase):
 
     def test_shared_low_rank_deep_prefix_projector_outputs_selected_layers(self) -> None:
         projector = SharedLowRankDeepPrefixProjector(
+            hidden_size=6,
+            prefix_tokens=3,
+            layer_indices=[0, 7, 14],
+            bottleneck_rank=4,
+            slot_max_norm=2.0,
+            total_max_norm=6.0,
+        )
+        memory_slots = torch.full((1, 3, 6), 50.0)
+        projected = projector(memory_slots)
+        self.assertEqual(sorted(projected), [0, 7, 14])
+        self.assertEqual(list(projected[0].shape), [1, 3, 6])
+        for tensor in projected.values():
+            slot_norms = tensor.norm(dim=-1)
+            self.assertTrue(bool(torch.all(slot_norms <= 2.0001)))
+
+    def test_per_layer_low_rank_deep_prefix_projector_outputs_selected_layers(self) -> None:
+        projector = PerLayerLowRankDeepPrefixProjector(
             hidden_size=6,
             prefix_tokens=3,
             layer_indices=[0, 7, 14],
@@ -1730,6 +1748,96 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             torch.save(checkpoint, checkpoint_path)
             loaded = runtime.load_injection_checkpoint(checkpoint_path)
             self.assertIn("source_stub_state", loaded)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_builds_per_layer_deep_prefix_projector(self, mock_backbone_cls) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def enable_receiver_micro_lora(self, **_kwargs):
+                return None
+
+            def receiver_lora_parameter_count(self):
+                return 0
+
+            def set_receiver_lora_trainable(self, _enabled: bool) -> None:
+                return None
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {}
+
+            def collect_deep_prefix_calibration(self, texts, *, layer_indices, max_tokens=8):
+                return {
+                    "semantic_anchor": torch.ones(1, self.hidden_size, dtype=torch.float32),
+                    "hidden_state_anchor": torch.ones(1, max_tokens, self.hidden_size, dtype=torch.float32),
+                    "layer_hidden_anchor_by_layer": {
+                        int(layer_index): torch.ones(
+                            1,
+                            max_tokens,
+                            self.hidden_size,
+                            dtype=torch.float32,
+                        )
+                        for layer_index in layer_indices
+                    },
+                }
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                hidden = torch.ones(len(list(texts)), max_tokens, self.hidden_size, dtype=torch.float32)
+                mask = torch.ones(len(list(texts)), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        mock_backbone_cls.return_value = FakeBackbone()
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+                "pilot_deep_prefix_projector_mode": "per_layer_low_rank",
+                "pilot_deep_prefix_init_mode": "kv_stat_match",
+                "pilot_writer_context_tokens": 4,
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=37,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        self.assertEqual(runtime.deep_prefix_projector_mode, "per_layer_low_rank")
+        self.assertIsInstance(runtime.prefix_projector, PerLayerLowRankDeepPrefixProjector)
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            "Support bank",
+            prompt_text="Need context now",
+        )
+        self.assertEqual(
+            prefix_artifacts.prefix_stats["pilot_deep_prefix_projector_mode"],
+            "per_layer_low_rank",
+        )
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_writer_direct_oracle_support_echo_builds_layerwise_prefix_without_projector(

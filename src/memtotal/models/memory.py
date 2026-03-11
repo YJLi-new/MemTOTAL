@@ -432,6 +432,197 @@ class WriterDeepPrefixProjector(ManagedMemoryModule):
         }
 
 
+class PerLayerLowRankDeepPrefixProjector(ManagedMemoryModule):
+    def __init__(
+        self,
+        *,
+        hidden_size: int,
+        prefix_tokens: int,
+        layer_indices: list[int],
+        bottleneck_rank: int = 32,
+        slot_max_norm: float | None = None,
+        total_max_norm: float | None = None,
+    ) -> None:
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.prefix_tokens = int(prefix_tokens)
+        self.layer_indices = tuple(int(layer_index) for layer_index in layer_indices)
+        self.bottleneck_rank = int(bottleneck_rank)
+        self.slot_max_norm = None if slot_max_norm is None else float(slot_max_norm)
+        self.total_max_norm = None if total_max_norm is None else float(total_max_norm)
+        self.prefix_norm = nn.LayerNorm(self.hidden_size)
+        self.down_projs = nn.ModuleList(
+            [
+                nn.Linear(self.hidden_size, self.bottleneck_rank, bias=False)
+                for _ in self.layer_indices
+            ]
+        )
+        self.up_projs = nn.ModuleList(
+            [
+                nn.Linear(self.bottleneck_rank, self.hidden_size)
+                for _ in self.layer_indices
+            ]
+        )
+        self.layer_slot_bias = nn.Parameter(
+            torch.zeros(len(self.layer_indices), self.prefix_tokens, self.hidden_size)
+        )
+        self.layer_output_scale = nn.Parameter(torch.ones(len(self.layer_indices), 1, 1))
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        for down_proj in self.down_projs:
+            nn.init.normal_(down_proj.weight, mean=0.0, std=0.02)
+        for up_proj in self.up_projs:
+            nn.init.normal_(up_proj.weight, mean=0.0, std=0.02)
+            nn.init.zeros_(up_proj.bias)
+        with torch.no_grad():
+            self.layer_slot_bias.zero_()
+            self.layer_output_scale.fill_(1.0)
+
+    def _fit_anchor_tokens(self, anchor_tokens: torch.Tensor) -> torch.Tensor:
+        if anchor_tokens.ndim == 3:
+            anchor_tokens = anchor_tokens.mean(dim=0)
+        if anchor_tokens.ndim == 1:
+            anchor_tokens = anchor_tokens.unsqueeze(0)
+        if anchor_tokens.ndim != 2:
+            raise ValueError(
+                "PerLayerLowRankDeepPrefixProjector anchor tokens must have shape [tokens, hidden_size] "
+                "or [batch, tokens, hidden_size]."
+            )
+        if anchor_tokens.shape[-1] != self.hidden_size:
+            raise ValueError(
+                "PerLayerLowRankDeepPrefixProjector expected hidden size "
+                f"{self.hidden_size}, got {anchor_tokens.shape[-1]}."
+            )
+        token_count = int(anchor_tokens.shape[0])
+        if token_count == self.prefix_tokens:
+            return anchor_tokens
+        if token_count > self.prefix_tokens:
+            return anchor_tokens[: self.prefix_tokens, :]
+        repeats = math.ceil(self.prefix_tokens / max(1, token_count))
+        return anchor_tokens.repeat(repeats, 1)[: self.prefix_tokens, :]
+
+    def _apply_anchor_stack(self, anchor_stack: torch.Tensor) -> None:
+        if anchor_stack.shape != self.layer_slot_bias.shape:
+            raise ValueError(
+                "PerLayerLowRankDeepPrefixProjector expected anchor stack shape "
+                f"{tuple(self.layer_slot_bias.shape)}, got {tuple(anchor_stack.shape)}."
+            )
+        anchor_stack = anchor_stack.to(
+            device=self.layer_slot_bias.device,
+            dtype=self.layer_slot_bias.dtype,
+        )
+        with torch.no_grad():
+            self.layer_slot_bias.copy_(anchor_stack)
+            self.layer_output_scale.fill_(1.0)
+
+    def initialize_from_semantic_anchor(self, semantic_anchor: torch.Tensor) -> None:
+        fitted = self._fit_anchor_tokens(semantic_anchor)
+        anchor_stack = fitted.unsqueeze(0).expand(len(self.layer_indices), -1, -1)
+        self._apply_anchor_stack(anchor_stack)
+
+    def initialize_from_hidden_state_anchor(self, hidden_state_anchor: torch.Tensor) -> None:
+        fitted = self._fit_anchor_tokens(hidden_state_anchor)
+        anchor_stack = fitted.unsqueeze(0).expand(len(self.layer_indices), -1, -1)
+        self._apply_anchor_stack(anchor_stack)
+
+    def initialize_from_layer_hidden_anchors(
+        self,
+        layer_hidden_anchor_by_layer: dict[int, torch.Tensor],
+    ) -> None:
+        if not layer_hidden_anchor_by_layer:
+            raise ValueError(
+                "PerLayerLowRankDeepPrefixProjector requires non-empty layer hidden anchors."
+            )
+        fallback = None
+        anchor_tensors: list[torch.Tensor] = []
+        for layer_index in self.layer_indices:
+            layer_anchor = layer_hidden_anchor_by_layer.get(int(layer_index))
+            if layer_anchor is None:
+                if fallback is None:
+                    continue
+                layer_anchor = fallback
+            fitted = self._fit_anchor_tokens(layer_anchor)
+            if fallback is None:
+                fallback = fitted
+            anchor_tensors.append(fitted)
+        if len(anchor_tensors) != len(self.layer_indices):
+            if fallback is None:
+                raise ValueError(
+                    "PerLayerLowRankDeepPrefixProjector could not resolve any usable layer anchors."
+                )
+            while len(anchor_tensors) < len(self.layer_indices):
+                anchor_tensors.append(fallback.clone())
+        self._apply_anchor_stack(torch.stack(anchor_tensors, dim=0))
+
+    def initialize_from_calibration(
+        self,
+        *,
+        mode: str,
+        semantic_anchor: torch.Tensor | None = None,
+        hidden_state_anchor: torch.Tensor | None = None,
+        layer_hidden_anchor_by_layer: dict[int, torch.Tensor] | None = None,
+    ) -> None:
+        normalized_mode = str(mode)
+        if normalized_mode == "random":
+            self.reset_parameters()
+            return
+        if normalized_mode == "semantic_anchor":
+            if semantic_anchor is None:
+                raise ValueError("semantic_anchor init requires a semantic anchor tensor.")
+            self.initialize_from_semantic_anchor(semantic_anchor)
+            return
+        if normalized_mode == "hidden_state_anchor":
+            if hidden_state_anchor is None:
+                raise ValueError("hidden_state_anchor init requires a hidden-state anchor tensor.")
+            self.initialize_from_hidden_state_anchor(hidden_state_anchor)
+            return
+        if normalized_mode == "kv_stat_match":
+            if not layer_hidden_anchor_by_layer:
+                raise ValueError("kv_stat_match init requires per-layer hidden anchors.")
+            self.initialize_from_layer_hidden_anchors(layer_hidden_anchor_by_layer)
+            return
+        raise ValueError(
+            f"Unsupported PerLayerLowRankDeepPrefixProjector init mode={normalized_mode}. "
+            "Expected one of random, kv_stat_match, semantic_anchor, hidden_state_anchor."
+        )
+
+    def _apply_norm_caps(self, stacked_hidden: torch.Tensor) -> torch.Tensor:
+        clipped = stacked_hidden
+        if self.slot_max_norm is not None and self.slot_max_norm > 0.0:
+            slot_norms = clipped.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+            slot_scales = torch.clamp(self.slot_max_norm / slot_norms, max=1.0)
+            clipped = clipped * slot_scales
+        if self.total_max_norm is not None and self.total_max_norm > 0.0:
+            total_norms = clipped.flatten(start_dim=1).norm(dim=1, keepdim=True).clamp_min(1e-6)
+            total_scales = torch.clamp(self.total_max_norm / total_norms, max=1.0).view(-1, 1, 1, 1)
+            clipped = clipped * total_scales
+        return clipped
+
+    def forward(self, memory_slots: torch.Tensor) -> dict[int, torch.Tensor]:
+        if memory_slots.ndim != 3:
+            raise ValueError("memory_slots must have shape [batch, slots, hidden_size].")
+        if memory_slots.shape[1] != self.prefix_tokens:
+            raise ValueError(
+                "PerLayerLowRankDeepPrefixProjector expected "
+                f"{self.prefix_tokens} slots, got {memory_slots.shape[1]}."
+            )
+        normalized_slots = self.prefix_norm(memory_slots)
+        expanded_by_layer = []
+        for layer_offset, (down_proj, up_proj) in enumerate(zip(self.down_projs, self.up_projs)):
+            bottleneck = F.gelu(down_proj(normalized_slots))
+            layer_hidden = up_proj(bottleneck)
+            layer_hidden = layer_hidden + self.layer_slot_bias[layer_offset].unsqueeze(0)
+            layer_hidden = layer_hidden * self.layer_output_scale[layer_offset].unsqueeze(0)
+            expanded_by_layer.append(layer_hidden)
+        expanded = torch.stack(expanded_by_layer, dim=1)
+        expanded = self._apply_norm_caps(expanded)
+        return {
+            int(layer_index): expanded[:, layer_offset, :, :]
+            for layer_offset, layer_index in enumerate(self.layer_indices)
+        }
+
+
 class MemoryWriter(ManagedMemoryModule):
     def __init__(
         self,
