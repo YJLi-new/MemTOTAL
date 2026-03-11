@@ -168,6 +168,10 @@ sync_first_available "runs/review/planv7-v7-3-bridge-qwen25" \
   "runs/verify/planv7-v7-3-bridge-qwen25" \
   "/root/autodl-tmp/runs/verify/planv7-v7-3-bridge-qwen25" \
   "/tmp/memtotal-runs/planv7-v7-3-bridge-qwen25"
+sync_first_available "runs/review/planv7-v7-4-forced-consumption-qwen25" \
+  "runs/verify/planv7-v7-4-forced-consumption-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-v7-4-forced-consumption-qwen25" \
+  "/tmp/memtotal-runs/planv7-v7-4-forced-consumption-qwen25"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -273,6 +277,10 @@ sync_first_available "results/generated/review/planv7-v7-3-bridge-qwen25" \
   "results/generated/planv7-v7-3-bridge-qwen25" \
   "/root/autodl-tmp/results/generated/planv7-v7-3-bridge-qwen25" \
   "/tmp/memtotal-results/planv7-v7-3-bridge-qwen25"
+sync_first_available "results/generated/review/planv7-v7-4-forced-consumption-qwen25" \
+  "results/generated/planv7-v7-4-forced-consumption-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-v7-4-forced-consumption-qwen25" \
+  "/tmp/memtotal-results/planv7-v7-4-forced-consumption-qwen25"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

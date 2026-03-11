@@ -75,6 +75,10 @@ PROMPT_MASK_MODES = {
     "gsm8k_numbers",
     "triviaqa_entities",
 }
+TRAIN_BACKBONE_PROMPT_MASK_SCHEDULES = {
+    "none",
+    "gsm8k_number_starvation_anneal",
+}
 WRITER_CONTEXT_PROMPT_MODES = {
     "same_as_backbone",
     "full_unmasked_prompt",
@@ -87,6 +91,7 @@ class SharedInjectionExampleCache:
     candidate_labels: list[str]
     candidate_texts: list[str]
     gold_index: int
+    raw_prompt_text: str
     prompt_text: str
     writer_prompt_text: str
     prompt_variant: str
@@ -731,6 +736,16 @@ def _resolve_writer_context_prompt_mode(config: dict[str, Any]) -> str:
             f"Expected one of {sorted(WRITER_CONTEXT_PROMPT_MODES)}."
         )
     return mode
+
+
+def _resolve_train_backbone_prompt_mask_schedule(config: dict[str, Any]) -> str:
+    schedule = str(config["runtime"].get("pilot_train_backbone_prompt_mask_schedule", "none"))
+    if schedule not in TRAIN_BACKBONE_PROMPT_MASK_SCHEDULES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_train_backbone_prompt_mask_schedule={schedule}. "
+            f"Expected one of {sorted(TRAIN_BACKBONE_PROMPT_MASK_SCHEDULES)}."
+        )
+    return schedule
 
 
 def _resolve_writer_gain_margin(config: dict[str, Any]) -> float:
@@ -2369,6 +2384,35 @@ def _mask_gsm8k_numbers(prompt_text: str) -> str:
     return _NUMERIC_SPAN_PATTERN.sub(_replace, prompt_text)
 
 
+def _mask_gsm8k_numbers_partial(prompt_text: str, *, mask_fraction: float) -> str:
+    if mask_fraction <= 0.0:
+        return prompt_text
+    if mask_fraction >= 1.0:
+        return _mask_gsm8k_numbers(prompt_text)
+    replacements: dict[str, str] = {}
+    counter = 0
+    span_index = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal counter, span_index
+        token = match.group(0)
+        should_mask = False
+        if mask_fraction >= 0.5:
+            should_mask = (span_index % 2) == 0
+        elif mask_fraction > 0.0:
+            period = max(1, int(round(1.0 / mask_fraction)))
+            should_mask = (span_index % period) == 0
+        span_index += 1
+        if not should_mask:
+            return token
+        if token not in replacements:
+            counter += 1
+            replacements[token] = f"<NUM{counter}>"
+        return replacements[token]
+
+    return _NUMERIC_SPAN_PATTERN.sub(_replace, prompt_text)
+
+
 def _mask_triviaqa_entities(prompt_text: str) -> str:
     replacements: dict[str, str] = {}
     counter = 0
@@ -2395,6 +2439,52 @@ def _apply_backbone_prompt_mask(prompt_text: str, *, mask_mode: str) -> str:
     if mask_mode == "triviaqa_entities":
         return _mask_triviaqa_entities(prompt_text)
     raise ValueError(f"Unsupported prompt mask mode {mask_mode!r}.")
+
+
+def _training_prompt_mask_schedule_state(
+    *,
+    current_step: int,
+    schedule: str,
+) -> tuple[str, float]:
+    if schedule == "none":
+        return "none", 0.0
+    if schedule == "gsm8k_number_starvation_anneal":
+        if current_step <= 50:
+            return "full_mask", 1.0
+        if current_step <= 100:
+            return "half_mask", 0.5
+        return "unmasked", 0.0
+    raise ValueError(f"Unsupported train prompt mask schedule {schedule!r}.")
+
+
+def _active_training_prompt_views(
+    *,
+    example_cache: SharedInjectionExampleCache,
+    current_step: int,
+    writer_context_prompt_mode: str,
+    train_backbone_prompt_mask_schedule: str,
+) -> tuple[str, str, str, float]:
+    if train_backbone_prompt_mask_schedule == "none":
+        return (
+            example_cache.prompt_text,
+            example_cache.writer_prompt_text,
+            "none",
+            0.0,
+        )
+    mask_stage, mask_fraction = _training_prompt_mask_schedule_state(
+        current_step=current_step,
+        schedule=train_backbone_prompt_mask_schedule,
+    )
+    active_backbone_prompt = _mask_gsm8k_numbers_partial(
+        example_cache.raw_prompt_text,
+        mask_fraction=mask_fraction,
+    )
+    active_writer_prompt = (
+        example_cache.raw_prompt_text
+        if writer_context_prompt_mode == "full_unmasked_prompt"
+        else active_backbone_prompt
+    )
+    return active_backbone_prompt, active_writer_prompt, mask_stage, mask_fraction
 
 
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9_]+")
@@ -2565,6 +2655,7 @@ def _build_example_caches(
                 candidate_labels=candidate_labels,
                 candidate_texts=candidate_texts,
                 gold_index=gold_index,
+                raw_prompt_text=prompt_text,
                 prompt_text=masked_prompt_text,
                 writer_prompt_text=writer_prompt_text,
                 prompt_variant=prompt_variant,
@@ -4216,17 +4307,23 @@ class SharedInjectionPilotRuntime(nn.Module):
         support_text_block: str,
         prefix_embeddings: torch.Tensor | None,
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+        prompt_text_override: str | None = None,
         return_diagnostics: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, object]]:
+        prompt_text = (
+            str(prompt_text_override)
+            if prompt_text_override is not None
+            else example_cache.prompt_text
+        )
         if self.arm == "teacher_text":
-            prompt = _serialize_teacher_prompt(example_cache.prompt_text, support_text_block)
+            prompt = _serialize_teacher_prompt(prompt_text, support_text_block)
             return self.backbone.score_continuations(
                 prompt,
                 example_cache.candidate_texts,
                 return_diagnostics=return_diagnostics,
             )
         return self.backbone.score_continuations(
-            example_cache.prompt_text,
+            prompt_text,
             example_cache.candidate_texts,
             prefix_embeddings=prefix_embeddings,
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
@@ -5566,6 +5663,7 @@ def run_shared_injection_pilot(
     reader_context_mode = _resolve_reader_context_mode(config)
     backbone_prompt_mask_mode = _resolve_backbone_prompt_mask_mode(config)
     writer_context_prompt_mode = _resolve_writer_context_prompt_mode(config)
+    train_backbone_prompt_mask_schedule = _resolve_train_backbone_prompt_mask_schedule(config)
     reader_num_queries = _resolve_reader_num_queries(config)
     fuser_short_slots = _resolve_fuser_short_slots(config)
     projector_token_source = _resolve_projector_token_source(config)
@@ -6151,6 +6249,17 @@ def run_shared_injection_pilot(
             for micro_step in range(gradient_accumulation_steps):
                 train_example_index = ((step * gradient_accumulation_steps) + micro_step) % len(train_caches)
                 train_example = train_caches[train_example_index]
+                (
+                    active_backbone_prompt_text,
+                    active_writer_prompt_text,
+                    active_backbone_prompt_mask_stage,
+                    active_backbone_prompt_mask_fraction,
+                ) = _active_training_prompt_views(
+                    example_cache=train_example,
+                    current_step=current_step,
+                    writer_context_prompt_mode=writer_context_prompt_mode,
+                    train_backbone_prompt_mask_schedule=train_backbone_prompt_mask_schedule,
+                )
                 train_example_ids.append(str(train_example.example["id"]))
                 selected_episode_id = ""
                 selected_episode_source_split = ""
@@ -6196,12 +6305,12 @@ def run_shared_injection_pilot(
                 prefix_artifacts = runtime.build_prefix_artifacts(
                     masked_support_text_block,
                     support_rows=masked_support_rows_for_prefix,
-                    prompt_text=train_example.writer_prompt_text,
+                    prompt_text=active_writer_prompt_text,
                 )
                 aux_view_prefix_artifacts = None
                 aux_view_support_rows = masked_support_rows_for_prefix
                 aux_view_support_text_block = masked_support_text_block
-                aux_view_prompt_text = train_example.writer_prompt_text
+                aux_view_prompt_text = active_writer_prompt_text
                 if (
                     arm == "injected"
                     and writer_memory_control != "zero"
@@ -6217,7 +6326,7 @@ def run_shared_injection_pilot(
                         support_serialization_variant=support_serialization_variant,
                     )
                     aux_view_prompt_text = _drop_prompt_tokens_for_aux_view(
-                        train_example.writer_prompt_text,
+                        active_writer_prompt_text,
                         dropout_probability=context_token_dropout,
                         generator=support_mask_generator,
                     )
@@ -6234,6 +6343,7 @@ def run_shared_injection_pilot(
                     support_text_block=teacher_support_text_block,
                     prefix_embeddings=prefix_artifacts.prefix_embeddings,
                     layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+                    prompt_text_override=active_backbone_prompt_text,
                     return_diagnostics=bool(
                         runtime.injection_mode == "sparse_deep_prefix"
                         and prefix_artifacts.layer_prefix_hidden_by_layer is not None
@@ -6246,7 +6356,7 @@ def run_shared_injection_pilot(
                     scores = score_output
                 with torch.no_grad():
                     no_memory_scores = runtime.backbone.score_continuations(
-                        train_example.prompt_text,
+                        active_backbone_prompt_text,
                         train_example.candidate_texts,
                     )
                 active_competitor_hinge_weight = _active_competitor_hinge_weight(
@@ -6559,11 +6669,14 @@ def run_shared_injection_pilot(
                 if train_example.task_mode == "candidate_selection":
                     with torch.no_grad():
                         base_scores = runtime.backbone.score_continuations(
-                            train_example.prompt_text,
+                            active_backbone_prompt_text,
                             train_example.candidate_texts,
                         )
                         teacher_scores = runtime.backbone.score_continuations(
-                            _serialize_teacher_prompt(train_example.prompt_text, teacher_support_text_block),
+                            _serialize_teacher_prompt(
+                                active_backbone_prompt_text,
+                                teacher_support_text_block,
+                            ),
                             train_example.candidate_texts,
                         )
                     alignment_aux_allowed = not (
@@ -6798,7 +6911,7 @@ def run_shared_injection_pilot(
                             aux_view_mean_embedding.detach().to(device="cpu", dtype=torch.float32).squeeze(0)
                         )
                 profiler.add_example()
-                profiler.add_tokens(runtime.backbone.count_tokens(train_example.prompt_text))
+                profiler.add_tokens(runtime.backbone.count_tokens(active_backbone_prompt_text))
                 profiler.add_tokens(runtime.backbone.count_tokens(masked_support_text_block))
                 for candidate_text in train_example.candidate_texts:
                     profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
@@ -7184,6 +7297,9 @@ def run_shared_injection_pilot(
                     "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
                     "pilot_backbone_prompt_mask_mode": runtime.backbone_prompt_mask_mode,
                     "pilot_writer_context_prompt_mode": runtime.writer_context_prompt_mode,
+                    "pilot_train_backbone_prompt_mask_schedule": train_backbone_prompt_mask_schedule,
+                    "active_backbone_prompt_mask_stage": active_backbone_prompt_mask_stage,
+                    "active_backbone_prompt_mask_fraction": float(active_backbone_prompt_mask_fraction),
                     "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
                     "pilot_writer_adapter_target_modules": list(runtime.writer_adapter_target_modules),
                     "pilot_writer_adapter_rank": int(runtime.writer_adapter_rank),
@@ -7930,6 +8046,7 @@ def run_shared_injection_pilot(
         "pilot_trainable_variant": trainable_variant,
         "pilot_backbone_prompt_mask_mode": backbone_prompt_mask_mode,
         "pilot_writer_context_prompt_mode": writer_context_prompt_mode,
+        "pilot_train_backbone_prompt_mask_schedule": train_backbone_prompt_mask_schedule,
         "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
         "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
         "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),

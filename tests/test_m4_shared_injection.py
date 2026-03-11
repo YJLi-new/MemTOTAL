@@ -51,6 +51,7 @@ from memtotal.training.m4_shared_injection import (
     SharedInjectionPilotRuntime,
     StructuredSupportSetEncoder,
     _active_competitor_hinge_weight,
+    _active_training_prompt_views,
     _alignment_aux_loss,
     _alignment_aux_choice_loss,
     _build_example_caches,
@@ -134,8 +135,61 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             writer_context_prompt_mode="full_unmasked_prompt",
         )
         self.assertEqual(len(caches), 1)
+        self.assertEqual(caches[0].raw_prompt_text, "Alice has 12 apples and buys 3 more.")
         self.assertEqual(caches[0].prompt_text, "Alice has <NUM1> apples and buys <NUM2> more.")
         self.assertEqual(caches[0].writer_prompt_text, "Alice has 12 apples and buys 3 more.")
+
+    def test_active_training_prompt_views_gsm8k_starvation_anneal_stages(self) -> None:
+        examples = [
+            {
+                "id": "ex-anneal",
+                "benchmark_id": "gsm8k",
+                "segment": "Alice has 12 apples and buys 3 more before giving away 5.",
+                "choices": [
+                    {"label": "A", "text": "10"},
+                    {"label": "B", "text": "15"},
+                ],
+                "label": "A",
+                "evaluator_type": "multiple_choice",
+            }
+        ]
+        cache = _build_example_caches(
+            examples,
+            prompt_variant="task_native",
+            backbone_prompt_mask_mode="none",
+            writer_context_prompt_mode="full_unmasked_prompt",
+        )[0]
+        full_prompt, writer_prompt, full_stage, full_fraction = _active_training_prompt_views(
+            example_cache=cache,
+            current_step=25,
+            writer_context_prompt_mode="full_unmasked_prompt",
+            train_backbone_prompt_mask_schedule="gsm8k_number_starvation_anneal",
+        )
+        half_prompt, _, half_stage, half_fraction = _active_training_prompt_views(
+            example_cache=cache,
+            current_step=75,
+            writer_context_prompt_mode="full_unmasked_prompt",
+            train_backbone_prompt_mask_schedule="gsm8k_number_starvation_anneal",
+        )
+        clear_prompt, _, clear_stage, clear_fraction = _active_training_prompt_views(
+            example_cache=cache,
+            current_step=150,
+            writer_context_prompt_mode="full_unmasked_prompt",
+            train_backbone_prompt_mask_schedule="gsm8k_number_starvation_anneal",
+        )
+        self.assertEqual(full_stage, "full_mask")
+        self.assertEqual(full_fraction, 1.0)
+        self.assertIn("<NUM1>", full_prompt)
+        self.assertIn("<NUM2>", full_prompt)
+        self.assertIn("<NUM3>", full_prompt)
+        self.assertEqual(writer_prompt, cache.raw_prompt_text)
+        self.assertEqual(half_stage, "half_mask")
+        self.assertEqual(half_fraction, 0.5)
+        self.assertNotEqual(half_prompt, cache.raw_prompt_text)
+        self.assertNotEqual(half_prompt, full_prompt)
+        self.assertEqual(clear_stage, "unmasked")
+        self.assertEqual(clear_fraction, 0.0)
+        self.assertEqual(clear_prompt, cache.raw_prompt_text)
 
     def test_reconstruction_target_vector_is_deterministic_and_nonempty(self) -> None:
         examples = [
@@ -2964,6 +3018,7 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                 "stage_b_steps": 1,
                 "pilot_backbone_prompt_mask_mode": "gsm8k_numbers",
                 "pilot_writer_context_prompt_mode": "full_unmasked_prompt",
+                "pilot_train_backbone_prompt_mask_schedule": "gsm8k_number_starvation_anneal",
                 "pilot_reconstruction_aux_mode": "hashed_bow",
                 "pilot_reconstruction_aux_weight": 0.02,
                 "pilot_reconstruction_vocab_size": 32,
@@ -2993,10 +3048,16 @@ class SharedInjectionHelpersTest(unittest.TestCase):
 
         self.assertEqual(metrics["pilot_backbone_prompt_mask_mode"], "gsm8k_numbers")
         self.assertEqual(metrics["pilot_writer_context_prompt_mode"], "full_unmasked_prompt")
+        self.assertEqual(
+            metrics["pilot_train_backbone_prompt_mask_schedule"],
+            "gsm8k_number_starvation_anneal",
+        )
         self.assertEqual(metrics["pilot_reconstruction_aux_mode"], "hashed_bow")
         self.assertEqual(metrics["stage_a_steps"], 1)
         self.assertEqual(metrics["stage_b_steps"], 1)
         self.assertEqual(train_events[0]["train_phase"], "stage_a_receiver_only")
+        self.assertEqual(train_events[0]["active_backbone_prompt_mask_stage"], "full_mask")
+        self.assertEqual(train_events[0]["active_backbone_prompt_mask_fraction"], 1.0)
         self.assertFalse(train_events[0]["writer_trainable"])
         self.assertFalse(train_events[0]["prefix_projector_trainable"])
         self.assertTrue(train_events[0]["receiver_lora_trainable"])
