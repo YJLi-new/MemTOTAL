@@ -53,6 +53,7 @@ from memtotal.training.m4_shared_injection import (
     _active_competitor_hinge_weight,
     _alignment_aux_loss,
     _alignment_aux_choice_loss,
+    _build_example_caches,
     _build_support_text_block,
     _candidate_payload,
     _class_entropy,
@@ -68,6 +69,7 @@ from memtotal.training.m4_shared_injection import (
     _latent_anchor_loss,
     _median_train_event_metric,
     _prefix_stats,
+    _reconstruction_target_vector,
     _reader_attention_diversity_loss,
     _reader_fuser_bootstrap_active,
     _reader_short_reconstruction_loss,
@@ -111,6 +113,69 @@ def _classification_rows(
 
 
 class SharedInjectionHelpersTest(unittest.TestCase):
+    def test_build_example_caches_splits_backbone_and_writer_prompts(self) -> None:
+        examples = [
+            {
+                "id": "ex-1",
+                "benchmark_id": "gsm8k",
+                "segment": "Alice has 12 apples and buys 3 more.",
+                "choices": [
+                    {"label": "A", "text": "15"},
+                    {"label": "B", "text": "16"},
+                ],
+                "label": "A",
+                "evaluator_type": "multiple_choice",
+            }
+        ]
+        caches = _build_example_caches(
+            examples,
+            prompt_variant="task_native",
+            backbone_prompt_mask_mode="gsm8k_numbers",
+            writer_context_prompt_mode="full_unmasked_prompt",
+        )
+        self.assertEqual(len(caches), 1)
+        self.assertEqual(caches[0].prompt_text, "Alice has <NUM1> apples and buys <NUM2> more.")
+        self.assertEqual(caches[0].writer_prompt_text, "Alice has 12 apples and buys 3 more.")
+
+    def test_reconstruction_target_vector_is_deterministic_and_nonempty(self) -> None:
+        examples = [
+            {
+                "id": "ex-2",
+                "benchmark_id": "gsm8k",
+                "segment": "Maria has 14 oranges and eats 2 of them.",
+                "choices": [
+                    {"label": "A", "text": "12"},
+                    {"label": "B", "text": "13"},
+                ],
+                "label": "A",
+                "gold_answer": "12",
+                "evaluator_type": "multiple_choice",
+            }
+        ]
+        cache = _build_example_caches(
+            examples,
+            prompt_variant="task_native",
+            backbone_prompt_mask_mode="none",
+            writer_context_prompt_mode="same_as_backbone",
+        )[0]
+        target_a = _reconstruction_target_vector(
+            example_cache=cache,
+            support_text_block="Example 1 Prompt: Count oranges Answer: 12",
+            mode="hashed_bow",
+            vocab_size=64,
+            device="cpu",
+        )
+        target_b = _reconstruction_target_vector(
+            example_cache=cache,
+            support_text_block="Example 1 Prompt: Count oranges Answer: 12",
+            mode="hashed_bow",
+            vocab_size=64,
+            device="cpu",
+        )
+        self.assertIsNotNone(target_a)
+        self.assertTrue(torch.equal(target_a, target_b))
+        self.assertGreater(float(target_a.sum().item()), 0.0)
+
     def test_drop_support_rows_for_aux_view_keeps_at_least_one_row(self) -> None:
         generator = torch.Generator().manual_seed(7)
         rows = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
@@ -1260,6 +1325,112 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertGreater(prefix_artifacts.prefix_stats["writer_context_token_count"], 0.0)
         self.assertGreater(prefix_artifacts.prefix_stats["writer_support_state_count"], 0.0)
         self.assertEqual(fake_backbone.prompt_slice_calls, [("Need context now", 3)])
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_runtime_allows_two_level_bridge_with_short_slot_projection(
+        self,
+        mock_backbone_cls,
+    ) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.prompt_slice_calls: list[tuple[str, int]] = []
+                self.summary_calls: list[tuple[str, ...]] = []
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                prompt_list = tuple(str(text) for text in texts)
+                self.summary_calls.append(prompt_list)
+                return torch.ones(len(prompt_list), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {"0": 1.0, "1": 1.0},
+                    "layer_value_l2_by_layer": {"0": 1.0, "1": 1.0},
+                }
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                prompt_list = list(texts)
+                self.prompt_slice_calls.append((prompt_list[0], int(max_tokens)))
+                hidden = torch.full((len(prompt_list), max_tokens, self.hidden_size), 0.5, dtype=torch.float32)
+                mask = torch.ones(len(prompt_list), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 8,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+                "reader": {
+                    "num_queries": 4,
+                    "num_heads": 2,
+                    "condition_on_context": True,
+                    "conditioning_mode": "add",
+                    "attention_mode": "standard",
+                    "dropout": 0.0,
+                    "query_residual_scale": 0.0,
+                },
+                "fuser": {
+                    "short_slots": 4,
+                    "arch": "resampler",
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 3,
+                "pilot_memory_path_variant": "two_level",
+                "pilot_reader_context_mode": "prompt_summary",
+                "pilot_projector_token_source": "short_slots",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0, 1],
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=21,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            "Support bank",
+            prompt_text="Need context now",
+        )
+
+        self.assertEqual(runtime.bridge_mode, "writer_direct")
+        self.assertEqual(runtime.memory_path_variant, "two_level")
+        self.assertEqual(runtime.projector_token_source, "short_slots")
+        self.assertIsNotNone(runtime.reader)
+        self.assertIsNotNone(runtime.fuser)
+        self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 8, 6])
+        self.assertEqual(list(prefix_artifacts.memory_short.shape), [1, 4, 6])
+        self.assertEqual(prefix_artifacts.prefix_stats["pilot_memory_path_variant"], "two_level")
+        self.assertEqual(prefix_artifacts.prefix_stats["pilot_projector_token_source"], "short_slots")
+        self.assertIn("reader_context_overwrite_ratio", prefix_artifacts.prefix_stats)
+        self.assertEqual(fake_backbone.prompt_slice_calls, [("Need context now", 3)])
+        prompt_summary_calls = [
+            call for call in fake_backbone.summary_calls if call == ("Need context now",)
+        ]
+        self.assertEqual(len(prompt_summary_calls), 1)
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_writer_direct_runtime_enables_writer_micro_lora(self, mock_backbone_cls) -> None:
@@ -2632,6 +2803,208 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             ],
         )
         self.assertTrue(fake_backbone.receiver_lora_trainable_enabled)
+
+    @mock.patch("memtotal.training.m4_shared_injection.load_task_dataset")
+    @mock.patch("memtotal.training.m4_shared_injection._load_task_dataset_with_path")
+    @mock.patch("memtotal.training.m4_shared_injection.build_task_evaluator")
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_run_shared_injection_pilot_receiver_then_joint_logs_stage_transitions(
+        self,
+        mock_backbone_cls,
+        mock_build_task_evaluator,
+        mock_load_dataset_with_path,
+        mock_load_task_dataset,
+    ) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.receiver_param = torch.nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {}
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                batch_size = len(list(texts))
+                hidden = torch.ones(batch_size, max_tokens, self.hidden_size, dtype=torch.float32)
+                mask = torch.ones(batch_size, max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def collect_deep_prefix_calibration(self, _texts, *, layer_indices, max_tokens):
+                hidden = torch.ones(1, max_tokens, self.hidden_size, dtype=torch.float32)
+                return {
+                    "semantic_anchor": torch.ones(1, self.hidden_size, dtype=torch.float32),
+                    "hidden_state_anchor": hidden.clone(),
+                    "layer_hidden_anchor_by_layer": {
+                        int(layer_index): hidden.clone()
+                        for layer_index in layer_indices
+                    },
+                }
+
+            def enable_receiver_micro_lora(self, **_kwargs):
+                return None
+
+            def receiver_lora_parameter_count(self) -> int:
+                return int(self.receiver_param.numel())
+
+            def set_receiver_lora_trainable(self, enabled: bool) -> None:
+                self.receiver_param.requires_grad_(enabled)
+
+            def receiver_lora_parameters(self):
+                return [self.receiver_param]
+
+            def receiver_lora_state_dict(self):
+                return {"receiver_param": self.receiver_param.detach().clone()}
+
+            def load_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def validate_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def score_continuations(
+                self,
+                _prompt_text,
+                candidate_texts,
+                *,
+                prefix_embeddings=None,
+                layer_prefix_hidden_by_layer=None,
+                return_diagnostics=False,
+            ):
+                base = self.receiver_param
+                if layer_prefix_hidden_by_layer:
+                    base = base + sum(
+                        tensor.to(dtype=torch.float32).mean()
+                        for tensor in layer_prefix_hidden_by_layer.values()
+                    )
+                elif prefix_embeddings is not None:
+                    base = base + prefix_embeddings.to(dtype=torch.float32).mean()
+                scores = torch.stack([base, -base])[: len(candidate_texts)]
+                if return_diagnostics:
+                    return scores, {}
+                return scores
+
+            def count_tokens(self, text):
+                return len(str(text).split())
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        class DummyEvaluator:
+            evaluator_type = "multiple_choice"
+
+        examples = [
+            {
+                "id": "gsm8k-train-1",
+                "benchmark_id": "gsm8k",
+                "segment": "Alice has 12 apples and buys 3 more.",
+                "choices": [
+                    {"label": "A", "text": "15"},
+                    {"label": "B", "text": "16"},
+                ],
+                "label": "A",
+                "gold_answer": "15",
+                "evaluator_type": "multiple_choice",
+            }
+        ]
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        mock_build_task_evaluator.return_value = DummyEvaluator()
+        mock_load_dataset_with_path.side_effect = lambda _config, _path: [dict(row) for row in examples]
+        mock_load_task_dataset.return_value = [dict(row) for row in examples]
+        output_dir = Path(tempfile.mkdtemp())
+        config = {
+            "backbone": {
+                "name": "fake",
+                "load_mode": "stub",
+                "dtype": "float32",
+                "model_id": "fake/model",
+            },
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 1,
+                    "dropout": 0.0,
+                },
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [0],
+                    "target_modules": ["k_proj"],
+                    "rank": 1,
+                    "alpha": 1.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "shared_injection_arm": "injected",
+                "writer_memory_control": "real",
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0],
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 2,
+                "pilot_train_steps": 2,
+                "pilot_gradient_accumulation_steps": 1,
+                "pilot_writer_learning_rate": 1.0e-4,
+                "pilot_projector_learning_rate": 1.0e-4,
+                "pilot_receiver_lora_learning_rate": 1.0e-4,
+                "pilot_trainable_variant": "receiver_then_joint",
+                "stage_a_steps": 1,
+                "stage_b_steps": 1,
+                "pilot_backbone_prompt_mask_mode": "gsm8k_numbers",
+                "pilot_writer_context_prompt_mode": "full_unmasked_prompt",
+                "pilot_reconstruction_aux_mode": "hashed_bow",
+                "pilot_reconstruction_aux_weight": 0.02,
+                "pilot_reconstruction_vocab_size": 32,
+                "pilot_reconstruction_hidden_dim": 16,
+                "pilot_reconstruction_weight_schedule": "constant",
+                "pilot_lr_schedule": "constant",
+                "pilot_deep_prefix_init_mode": "semantic_anchor",
+            },
+            "task": {
+                "name": "gsm8k-stage-test",
+                "benchmark_id": "gsm8k",
+                "support_dataset_path": "support.jsonl",
+                "train_dataset_path": "train.jsonl",
+                "dataset_path": "eval.jsonl",
+                "metric_name": "accuracy",
+            },
+        }
+
+        metrics = run_shared_injection_pilot(
+            config=config,
+            seed=7,
+            output_dir=output_dir,
+            resume=None,
+            dry_run=False,
+        )
+        train_events = json.loads((output_dir / "train_events.json").read_text())["events"]
+
+        self.assertEqual(metrics["pilot_backbone_prompt_mask_mode"], "gsm8k_numbers")
+        self.assertEqual(metrics["pilot_writer_context_prompt_mode"], "full_unmasked_prompt")
+        self.assertEqual(metrics["pilot_reconstruction_aux_mode"], "hashed_bow")
+        self.assertEqual(metrics["stage_a_steps"], 1)
+        self.assertEqual(metrics["stage_b_steps"], 1)
+        self.assertEqual(train_events[0]["train_phase"], "stage_a_receiver_only")
+        self.assertFalse(train_events[0]["writer_trainable"])
+        self.assertFalse(train_events[0]["prefix_projector_trainable"])
+        self.assertTrue(train_events[0]["receiver_lora_trainable"])
+        self.assertGreaterEqual(train_events[0]["reconstruction_aux_loss"], 0.0)
+        self.assertEqual(train_events[1]["train_phase"], "stage_b_joint")
+        self.assertTrue(train_events[1]["writer_trainable"])
+        self.assertTrue(train_events[1]["prefix_projector_trainable"])
+        self.assertGreater(metrics["train_final_reconstruction_aux_loss"], 0.0)
 
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_warm_start_allows_missing_receiver_lora_state(self, mock_backbone_cls) -> None:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,6 +70,15 @@ ORACLE_PREFIX_SOURCE_MODES = {
     "oracle_context_echo",
     "oracle_support_echo",
 }
+PROMPT_MASK_MODES = {
+    "none",
+    "gsm8k_numbers",
+    "triviaqa_entities",
+}
+WRITER_CONTEXT_PROMPT_MODES = {
+    "same_as_backbone",
+    "full_unmasked_prompt",
+}
 
 
 @dataclass(frozen=True)
@@ -77,6 +88,7 @@ class SharedInjectionExampleCache:
     candidate_texts: list[str]
     gold_index: int
     prompt_text: str
+    writer_prompt_text: str
     prompt_variant: str
     evaluator_type: str
     task_mode: str
@@ -552,12 +564,20 @@ def _resolve_support_encoder_weight_decay(config: dict[str, Any]) -> float | Non
 
 def _resolve_trainable_variant(config: dict[str, Any]) -> str:
     variant = str(config["runtime"].get("pilot_trainable_variant", "full"))
-    if variant not in {"full", "projector_only", "writer_adapter_only"}:
+    if variant not in {"full", "projector_only", "writer_adapter_only", "receiver_then_joint"}:
         raise ValueError(
             f"Unsupported runtime.pilot_trainable_variant={variant}. "
-            "Expected one of full, projector_only, writer_adapter_only."
+            "Expected one of full, projector_only, writer_adapter_only, receiver_then_joint."
         )
     return variant
+
+
+def _resolve_stage_a_steps(config: dict[str, Any]) -> int:
+    return max(0, int(config["runtime"].get("stage_a_steps", 0)))
+
+
+def _resolve_stage_b_steps(config: dict[str, Any]) -> int:
+    return max(0, int(config["runtime"].get("stage_b_steps", 0)))
 
 
 def _resolve_alignment_aux_mode(config: dict[str, Any]) -> str:
@@ -693,6 +713,26 @@ def _resolve_writer_context_tokens(config: dict[str, Any]) -> int:
     return max(1, int(config["runtime"].get("pilot_writer_context_tokens", 8)))
 
 
+def _resolve_backbone_prompt_mask_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_backbone_prompt_mask_mode", "none"))
+    if mode not in PROMPT_MASK_MODES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_backbone_prompt_mask_mode={mode}. "
+            f"Expected one of {sorted(PROMPT_MASK_MODES)}."
+        )
+    return mode
+
+
+def _resolve_writer_context_prompt_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_writer_context_prompt_mode", "same_as_backbone"))
+    if mode not in WRITER_CONTEXT_PROMPT_MODES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_writer_context_prompt_mode={mode}. "
+            f"Expected one of {sorted(WRITER_CONTEXT_PROMPT_MODES)}."
+        )
+    return mode
+
+
 def _resolve_writer_gain_margin(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_writer_gain_margin", 0.0))
 
@@ -703,6 +743,38 @@ def _resolve_writer_gain_margin_weight(config: dict[str, Any]) -> float:
 
 def _resolve_writer_covariance_diversity_weight(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_writer_covariance_diversity_weight", 0.0))
+
+
+def _resolve_reconstruction_aux_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_reconstruction_aux_mode", "off"))
+    if mode not in {"off", "hashed_bow", "task_keyphrases"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_reconstruction_aux_mode={mode}. "
+            "Expected one of off, hashed_bow, task_keyphrases."
+        )
+    return mode
+
+
+def _resolve_reconstruction_aux_weight(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_reconstruction_aux_weight", 0.0))
+
+
+def _resolve_reconstruction_vocab_size(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("pilot_reconstruction_vocab_size", 1024)))
+
+
+def _resolve_reconstruction_hidden_dim(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("pilot_reconstruction_hidden_dim", 1024)))
+
+
+def _resolve_reconstruction_weight_schedule(config: dict[str, Any]) -> str:
+    schedule = str(config["runtime"].get("pilot_reconstruction_weight_schedule", "constant"))
+    if schedule not in {"constant", "three_stage_decay"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_reconstruction_weight_schedule={schedule}. "
+            "Expected one of constant, three_stage_decay."
+        )
+    return schedule
 
 
 def _resolve_gradient_probe_enabled(config: dict[str, Any]) -> bool:
@@ -2074,6 +2146,9 @@ def _save_shared_injection_checkpoint(
             "support_encoder_state": (
                 None if runtime.support_encoder is None else runtime.support_encoder.state_dict()
             ),
+            "reconstruction_head_state": (
+                None if runtime.reconstruction_head is None else runtime.reconstruction_head.state_dict()
+            ),
             "reader_state": None if runtime.reader is None else runtime.reader.state_dict(),
             "fuser_state": None if runtime.fuser is None else runtime.fuser.state_dict(),
             "prefix_projector_state": runtime.prefix_projector.state_dict(),
@@ -2119,6 +2194,11 @@ def _save_shared_injection_checkpoint(
             "pilot_writer_support_query_residual_scale": float(
                 getattr(runtime.writer, "support_query_residual_scale", 0.0)
             ),
+            "pilot_reconstruction_aux_mode": str(runtime.reconstruction_aux_mode),
+            "pilot_reconstruction_aux_weight": float(runtime.reconstruction_aux_weight),
+            "pilot_reconstruction_vocab_size": int(runtime.reconstruction_vocab_size),
+            "pilot_reconstruction_hidden_dim": int(runtime.reconstruction_hidden_dim),
+            "pilot_reconstruction_weight_schedule": str(runtime.reconstruction_weight_schedule),
             "pilot_writer_context_query_residual_scale": float(
                 getattr(runtime.writer, "context_query_residual_scale", 0.0)
             ),
@@ -2251,6 +2331,174 @@ def _resolve_prompt_text(example: dict[str, Any], *, prompt_variant: str) -> str
     raise ValueError(f"Unsupported prompt_variant={prompt_variant}.")
 
 
+_NUMERIC_SPAN_PATTERN = re.compile(r"(?<![A-Za-z0-9_])[-+]?\d[\d,]*(?:\.\d+)?")
+_ENTITY_SPAN_PATTERN = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b")
+_ENTITY_SKIP_WORDS = {
+    "A",
+    "An",
+    "And",
+    "Answer",
+    "Because",
+    "For",
+    "How",
+    "In",
+    "On",
+    "Question",
+    "The",
+    "What",
+    "When",
+    "Where",
+    "Which",
+    "Who",
+    "Why",
+}
+
+
+def _mask_gsm8k_numbers(prompt_text: str) -> str:
+    replacements: dict[str, str] = {}
+    counter = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal counter
+        token = match.group(0)
+        if token not in replacements:
+            counter += 1
+            replacements[token] = f"<NUM{counter}>"
+        return replacements[token]
+
+    return _NUMERIC_SPAN_PATTERN.sub(_replace, prompt_text)
+
+
+def _mask_triviaqa_entities(prompt_text: str) -> str:
+    replacements: dict[str, str] = {}
+    counter = 0
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal counter
+        entity = match.group(1)
+        normalized = entity.strip()
+        if normalized in _ENTITY_SKIP_WORDS:
+            return entity
+        if normalized not in replacements:
+            counter += 1
+            replacements[normalized] = f"<ENT{counter}>"
+        return replacements[normalized]
+
+    return _ENTITY_SPAN_PATTERN.sub(_replace, prompt_text)
+
+
+def _apply_backbone_prompt_mask(prompt_text: str, *, mask_mode: str) -> str:
+    if mask_mode == "none":
+        return prompt_text
+    if mask_mode == "gsm8k_numbers":
+        return _mask_gsm8k_numbers(prompt_text)
+    if mask_mode == "triviaqa_entities":
+        return _mask_triviaqa_entities(prompt_text)
+    raise ValueError(f"Unsupported prompt mask mode {mask_mode!r}.")
+
+
+_WORD_PATTERN = re.compile(r"[A-Za-z0-9_]+")
+_RECONSTRUCTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "answer",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "question",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+}
+
+
+def _tokenize_reconstruction_text(text: str) -> list[str]:
+    return [token.lower() for token in _WORD_PATTERN.findall(str(text))]
+
+
+def _task_keyphrase_tokens(example_cache: SharedInjectionExampleCache) -> list[str]:
+    tokens = [
+        token
+        for token in _tokenize_reconstruction_text(example_cache.writer_prompt_text)
+        if len(token) >= 4 and token not in _RECONSTRUCTION_STOPWORDS
+    ]
+    gold_answer = str(
+        example_cache.example.get(
+            "gold_answer",
+            example_cache.example.get("continuation", example_cache.candidate_texts[example_cache.gold_index]),
+        )
+    )
+    tokens.extend(_tokenize_reconstruction_text(gold_answer))
+    if example_cache.task_mode != "generation":
+        tokens.extend(
+            _tokenize_reconstruction_text(example_cache.candidate_texts[example_cache.gold_index])
+        )
+    return tokens
+
+
+def _reconstruction_target_vector(
+    *,
+    example_cache: SharedInjectionExampleCache,
+    support_text_block: str,
+    mode: str,
+    vocab_size: int,
+    device: torch.device | str,
+) -> torch.Tensor | None:
+    if mode == "off":
+        return None
+    source_tokens = _tokenize_reconstruction_text(support_text_block)
+    if mode == "hashed_bow":
+        source_tokens.extend(_tokenize_reconstruction_text(example_cache.writer_prompt_text))
+    elif mode == "task_keyphrases":
+        source_tokens.extend(_task_keyphrase_tokens(example_cache))
+    else:
+        raise ValueError(f"Unsupported reconstruction aux mode {mode!r}.")
+    filtered_tokens = [token for token in source_tokens if token and token not in _RECONSTRUCTION_STOPWORDS]
+    target = torch.zeros(vocab_size, dtype=torch.float32, device=device)
+    if not filtered_tokens:
+        return target.unsqueeze(0)
+    for token in filtered_tokens:
+        bucket = int(hashlib.sha256(token.encode("utf-8")).hexdigest(), 16) % vocab_size
+        target[bucket] = 1.0
+    return target.unsqueeze(0)
+
+
+def _active_reconstruction_weight(
+    *,
+    current_step: int,
+    train_steps: int,
+    base_weight: float,
+    schedule: str,
+) -> float:
+    if base_weight <= 0.0 or schedule == "constant":
+        return float(base_weight)
+    if train_steps <= 1:
+        return float(base_weight)
+    stage = min(2, int((max(0, current_step - 1) * 3) / max(1, train_steps)))
+    stage_scale = (1.0, 0.5, 0.25)[stage]
+    return float(base_weight * stage_scale)
+
+
 def _task_mode_for_evaluator_type(evaluator_type: str) -> str:
     if evaluator_type in TASK_CANDIDATE_SELECTION_EVALUATOR_TYPES:
         return "candidate_selection"
@@ -2292,6 +2540,8 @@ def _build_example_caches(
     examples: list[dict[str, Any]],
     *,
     prompt_variant: str,
+    backbone_prompt_mask_mode: str = "none",
+    writer_context_prompt_mode: str = "same_as_backbone",
 ) -> list[SharedInjectionExampleCache]:
     caches: list[SharedInjectionExampleCache] = []
     for example in examples:
@@ -2299,13 +2549,24 @@ def _build_example_caches(
             example,
             prompt_variant=prompt_variant,
         )
+        prompt_text = _resolve_prompt_text(example, prompt_variant=prompt_variant)
+        masked_prompt_text = _apply_backbone_prompt_mask(
+            prompt_text,
+            mask_mode=backbone_prompt_mask_mode,
+        )
+        writer_prompt_text = (
+            prompt_text
+            if writer_context_prompt_mode == "full_unmasked_prompt"
+            else masked_prompt_text
+        )
         caches.append(
             SharedInjectionExampleCache(
                 example=example,
                 candidate_labels=candidate_labels,
                 candidate_texts=candidate_texts,
                 gold_index=gold_index,
-                prompt_text=_resolve_prompt_text(example, prompt_variant=prompt_variant),
+                prompt_text=masked_prompt_text,
+                writer_prompt_text=writer_prompt_text,
                 prompt_variant=prompt_variant,
                 evaluator_type=str(example.get("evaluator_type", "dataset_label_classification")),
                 task_mode=task_mode,
@@ -2602,6 +2863,8 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.bridge_mode = _resolve_bridge_mode(config)
         self.writer_stimulus_mode = _resolve_writer_stimulus_mode(config)
         self.writer_context_tokens = _resolve_writer_context_tokens(config)
+        self.backbone_prompt_mask_mode = _resolve_backbone_prompt_mask_mode(config)
+        self.writer_context_prompt_mode = _resolve_writer_context_prompt_mode(config)
         support_encoder_mode = _resolve_support_encoder_mode(config)
         context_support_balance_mode = _resolve_context_support_balance_mode(config)
         context_balance_scale_init = _resolve_context_balance_scale_init(config)
@@ -2656,6 +2919,11 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.aux_loss_mode = _resolve_aux_loss_mode(config)
         self.aux_projection_dim = int(aux_projection_dim)
         self.aux_projection_hidden_dim = aux_projection_hidden_dim
+        self.reconstruction_aux_mode = _resolve_reconstruction_aux_mode(config)
+        self.reconstruction_aux_weight = _resolve_reconstruction_aux_weight(config)
+        self.reconstruction_vocab_size = _resolve_reconstruction_vocab_size(config)
+        self.reconstruction_hidden_dim = _resolve_reconstruction_hidden_dim(config)
+        self.reconstruction_weight_schedule = _resolve_reconstruction_weight_schedule(config)
         self.trainable_variant = _resolve_trainable_variant(config)
         self.alignment_aux_mode = _resolve_alignment_aux_mode(config)
         self.alignment_aux_weight_max = _resolve_alignment_aux_weight_max(config)
@@ -2678,7 +2946,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.receiver_lora_rank = _resolve_receiver_lora_rank(config)
         self.receiver_lora_alpha = _resolve_receiver_lora_alpha(config)
         self.receiver_lora_dropout = _resolve_receiver_lora_dropout(config)
-        self._validate_planv5_runtime_contract()
+        self._validate_runtime_contract()
         if self.writer_adapter_enabled:
             if self.bridge_mode != "writer_direct":
                 raise ValueError(
@@ -2792,6 +3060,14 @@ class SharedInjectionPilotRuntime(nn.Module):
                 self.prefix_projector = PerLayerLowRankDeepPrefixProjector(**projector_kwargs)
         self.arm = arm
         self.writer_memory_control = writer_memory_control
+        self.reconstruction_head: nn.Module | None = None
+        if self.reconstruction_aux_mode != "off" and self.reconstruction_aux_weight > 0.0:
+            self.reconstruction_head = nn.Sequential(
+                nn.LayerNorm(int(self.backbone.hidden_size)),
+                nn.Linear(int(self.backbone.hidden_size), int(self.reconstruction_hidden_dim)),
+                nn.GELU(),
+                nn.Linear(int(self.reconstruction_hidden_dim), int(self.reconstruction_vocab_size)),
+            )
         self._prompt_summary_cache: dict[str, torch.Tensor] = {}
         self._prompt_context_cache: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         self._deep_prefix_projector_initialized = bool(
@@ -2807,9 +3083,15 @@ class SharedInjectionPilotRuntime(nn.Module):
             set_receiver_lora_trainable(self.receiver_lora_enabled)
         self.to(self.backbone.device)
 
-    def _validate_planv5_runtime_contract(self) -> None:
-        if self.bridge_mode == "writer_direct" and self.memory_path_variant != "single_level":
-            raise ValueError("runtime.pilot_bridge_mode=writer_direct requires pilot_memory_path_variant=single_level.")
+    def _validate_runtime_contract(self) -> None:
+        if self.bridge_mode == "writer_direct" and self.memory_path_variant not in {
+            "single_level",
+            "two_level",
+        }:
+            raise ValueError(
+                "runtime.pilot_bridge_mode=writer_direct requires "
+                "pilot_memory_path_variant in {single_level, two_level}."
+            )
         if self.prefix_source_mode == "source_stub":
             if self.bridge_mode != "writer_direct":
                 raise ValueError(
@@ -3104,6 +3386,24 @@ class SharedInjectionPilotRuntime(nn.Module):
                 checkpoint_state=support_encoder_state,
                 checkpoint_path=checkpoint_path,
             )
+        reconstruction_head_state = checkpoint.get("reconstruction_head_state")
+        if self.reconstruction_head is None and reconstruction_head_state is not None:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} includes reconstruction_head_state, but the current "
+                f"runtime uses pilot_reconstruction_aux_mode={self.reconstruction_aux_mode}."
+            )
+        if self.reconstruction_head is not None:
+            if not isinstance(reconstruction_head_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} is missing reconstruction_head_state for "
+                    f"pilot_reconstruction_aux_mode={self.reconstruction_aux_mode}."
+                )
+            _validate_module_state_shapes(
+                module_name="reconstruction_head",
+                expected_state=self.reconstruction_head.state_dict(),
+                checkpoint_state=reconstruction_head_state,
+                checkpoint_path=checkpoint_path,
+            )
         prefix_projector_state = checkpoint.get("prefix_projector_state")
         if not isinstance(prefix_projector_state, dict):
             raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing prefix_projector_state.")
@@ -3263,6 +3563,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             self.source_stub.load_state_dict(checkpoint["source_stub_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
+        if self.reconstruction_head is not None and checkpoint.get("reconstruction_head_state") is not None:
+            self.reconstruction_head.load_state_dict(checkpoint["reconstruction_head_state"])
         if not (
             self.memory_path_variant == "two_level"
             and str(checkpoint.get("pilot_memory_path_variant", "single_level")) == "single_level"
@@ -3297,6 +3599,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             self.source_stub.load_state_dict(checkpoint["source_stub_state"])
         if self.support_encoder is not None and checkpoint.get("support_encoder_state") is not None:
             self.support_encoder.load_state_dict(checkpoint["support_encoder_state"])
+        if self.reconstruction_head is not None and checkpoint.get("reconstruction_head_state") is not None:
+            self.reconstruction_head.load_state_dict(checkpoint["reconstruction_head_state"])
         self.prefix_projector.load_state_dict(checkpoint["prefix_projector_state"])
         if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
             self.backbone.load_receiver_lora_state_dict(
@@ -3345,9 +3649,46 @@ class SharedInjectionPilotRuntime(nn.Module):
         for parameter in self.support_encoder.parameters():
             parameter.requires_grad_(enabled)
 
+    def set_reader_trainable(self, enabled: bool) -> None:
+        if self.reader is None:
+            return
+        for parameter in self.reader.parameters():
+            parameter.requires_grad_(enabled)
+
+    def set_fuser_trainable(self, enabled: bool) -> None:
+        if self.fuser is None:
+            return
+        for parameter in self.fuser.parameters():
+            parameter.requires_grad_(enabled)
+
     def set_prefix_projector_trainable(self, enabled: bool) -> None:
         for parameter in self.prefix_projector.parameters():
             parameter.requires_grad_(enabled)
+
+    def set_receiver_lora_trainable(self, enabled: bool) -> None:
+        setter = getattr(self.backbone, "set_receiver_lora_trainable", None)
+        if callable(setter):
+            setter(enabled and self.receiver_lora_enabled)
+
+    def reconstruction_parameters(self) -> list[nn.Parameter]:
+        if self.reconstruction_head is None:
+            return []
+        return list(self.reconstruction_head.parameters())
+
+    def set_reconstruction_trainable(self, enabled: bool) -> None:
+        if self.reconstruction_head is None:
+            return
+        for parameter in self.reconstruction_head.parameters():
+            parameter.requires_grad_(enabled)
+
+    def reconstruction_logits(self, prefix_artifacts: PrefixInjectionArtifacts) -> torch.Tensor | None:
+        if self.reconstruction_head is None or prefix_artifacts.memory_long is None:
+            return None
+        memory_summary = prefix_artifacts.memory_long.mean(dim=1).to(
+            device=self.backbone.device,
+            dtype=torch.float32,
+        )
+        return self.reconstruction_head(memory_summary)
 
     def _prompt_summary(self, prompt_text: str | None) -> torch.Tensor | None:
         if self.reader_context_mode == "none" or not prompt_text:
@@ -5147,7 +5488,7 @@ def _evaluate_examples(
             prefix_artifacts = runtime.build_prefix_artifacts(
                 support_text_block,
                 support_rows=support_rows,
-                prompt_text=example_cache.prompt_text,
+                prompt_text=example_cache.writer_prompt_text,
             )
             active_prefix_embeddings = prefix_artifacts.prefix_embeddings
             active_layer_prefix_hidden_by_layer = prefix_artifacts.layer_prefix_hidden_by_layer
@@ -5223,6 +5564,8 @@ def run_shared_injection_pilot(
     memory_path_variant = _resolve_memory_path_variant(config)
     injection_mode = _resolve_injection_mode(config)
     reader_context_mode = _resolve_reader_context_mode(config)
+    backbone_prompt_mask_mode = _resolve_backbone_prompt_mask_mode(config)
+    writer_context_prompt_mode = _resolve_writer_context_prompt_mode(config)
     reader_num_queries = _resolve_reader_num_queries(config)
     fuser_short_slots = _resolve_fuser_short_slots(config)
     projector_token_source = _resolve_projector_token_source(config)
@@ -5265,6 +5608,11 @@ def run_shared_injection_pilot(
     aux_loss_mode = _resolve_aux_loss_mode(config)
     aux_projection_dim = _resolve_aux_projection_dim(config)
     aux_projection_hidden_dim = _resolve_aux_projection_hidden_dim(config)
+    reconstruction_aux_mode = _resolve_reconstruction_aux_mode(config)
+    reconstruction_aux_weight = _resolve_reconstruction_aux_weight(config)
+    reconstruction_vocab_size = _resolve_reconstruction_vocab_size(config)
+    reconstruction_hidden_dim = _resolve_reconstruction_hidden_dim(config)
+    reconstruction_weight_schedule = _resolve_reconstruction_weight_schedule(config)
     support_row_dropout = _resolve_support_row_dropout(config)
     context_token_dropout = _resolve_context_token_dropout(config)
     contrastive_temperature = _resolve_contrastive_temperature(config)
@@ -5290,6 +5638,8 @@ def run_shared_injection_pilot(
     train_support_episode_bank_path = str(config["task"].get("train_support_episode_bank_path", "")).strip()
     support_limit = max(0, int(config["runtime"].get("pilot_support_examples", 8)))
     train_steps = int(config["runtime"].get("pilot_train_steps", 96))
+    stage_a_steps = _resolve_stage_a_steps(config)
+    stage_b_steps = _resolve_stage_b_steps(config)
     gradient_accumulation_steps = _resolve_gradient_accumulation_steps(config)
     projector_warmup_steps = int(config["runtime"].get("pilot_projector_warmup_steps", 32))
     lr_schedule = _resolve_lr_schedule(config)
@@ -5363,6 +5713,15 @@ def run_shared_injection_pilot(
         lr_warmup_steps = min(lr_warmup_steps, train_steps)
     projector_warmup_steps = min(projector_warmup_steps, train_steps)
     lr_warmup_steps = min(lr_warmup_steps, train_steps)
+    if stage_a_steps > train_steps:
+        raise ValueError(
+            f"runtime.stage_a_steps={stage_a_steps} exceeds pilot_train_steps={train_steps}."
+        )
+    if stage_b_steps > max(0, train_steps - stage_a_steps):
+        raise ValueError(
+            f"runtime.stage_b_steps={stage_b_steps} exceeds the remaining steps after stage_a_steps={stage_a_steps} "
+            f"for pilot_train_steps={train_steps}."
+        )
 
     task_evaluator = build_task_evaluator(config)
     support_examples = _load_task_dataset_with_path(config, support_dataset_path)
@@ -5388,13 +5747,30 @@ def run_shared_injection_pilot(
         train_examples = train_examples[: min(24, len(train_examples))]
         eval_examples = eval_examples[: min(12, len(eval_examples))]
 
-    eval_caches = _build_example_caches(eval_examples, prompt_variant=prompt_variant)
-    support_caches = _build_example_caches(support_examples, prompt_variant=prompt_variant)
-    train_caches = _build_example_caches(train_examples, prompt_variant=prompt_variant)
+    eval_caches = _build_example_caches(
+        eval_examples,
+        prompt_variant=prompt_variant,
+        backbone_prompt_mask_mode=backbone_prompt_mask_mode,
+        writer_context_prompt_mode=writer_context_prompt_mode,
+    )
+    support_caches = _build_example_caches(
+        support_examples,
+        prompt_variant=prompt_variant,
+        backbone_prompt_mask_mode=backbone_prompt_mask_mode,
+        writer_context_prompt_mode=writer_context_prompt_mode,
+    )
+    train_caches = _build_example_caches(
+        train_examples,
+        prompt_variant=prompt_variant,
+        backbone_prompt_mask_mode=backbone_prompt_mask_mode,
+        writer_context_prompt_mode=writer_context_prompt_mode,
+    )
     default_prefix_prompt_text = (
-        eval_caches[0].prompt_text
+        eval_caches[0].writer_prompt_text if bridge_mode == "writer_direct" else eval_caches[0].prompt_text
         if eval_caches
-        else (train_caches[0].prompt_text if train_caches else None)
+        else (
+            train_caches[0].writer_prompt_text if bridge_mode == "writer_direct" else train_caches[0].prompt_text
+        ) if train_caches else None
     )
     lookup_paths = _resolve_support_lookup_dataset_paths(
         config,
@@ -5612,6 +5988,7 @@ def run_shared_injection_pilot(
         runtime.set_writer_trainable(False)
         runtime.set_source_stub_trainable(False)
         runtime.set_support_encoder_trainable(False)
+        runtime.set_reconstruction_trainable(False)
         writer_base_parameters = runtime.writer_base_parameters()
         writer_adapter_parameters = runtime.writer_adapter_parameters()
         source_stub_parameters = runtime.source_stub_parameters()
@@ -5659,6 +6036,16 @@ def run_shared_injection_pilot(
                     "weight_decay": support_encoder_weight_decay,
                 }
             )
+        reconstruction_parameters = runtime.reconstruction_parameters()
+        if reconstruction_parameters:
+            optimizer_groups.append(
+                {
+                    "name": "reconstruction_head",
+                    "params": reconstruction_parameters,
+                    "lr": writer_learning_rate,
+                    "weight_decay": writer_weight_decay,
+                }
+            )
         if runtime.reader is not None:
             optimizer_groups.append(
                 {
@@ -5692,13 +6079,29 @@ def run_shared_injection_pilot(
         optimizer = torch.optim.AdamW(optimizer_groups)
         optimizer_base_lrs = [float(group["lr"]) for group in optimizer.param_groups]
         for step in range(train_steps):
+            current_step = step + 1
             bootstrap_active = _reader_fuser_bootstrap_active(
-                current_step=step + 1,
+                current_step=current_step,
                 bootstrap_steps=reader_fuser_bootstrap_steps,
             )
+            projector_warmup_active = bool(
+                trainable_variant != "receiver_then_joint" and step < projector_warmup_steps
+            )
+            receiver_only_stage_active = bool(
+                trainable_variant == "receiver_then_joint" and current_step <= stage_a_steps
+            )
+            if receiver_only_stage_active:
+                train_phase = "stage_a_receiver_only"
+            elif (
+                trainable_variant == "receiver_then_joint"
+                and current_step <= (stage_a_steps + stage_b_steps)
+            ):
+                train_phase = "stage_b_joint"
+            else:
+                train_phase = "joint"
             writer_adapter_frozen = bool(
                 trainable_variant == "projector_only"
-                or step < projector_warmup_steps
+                or projector_warmup_active
                 or bootstrap_active
             )
             writer_base_frozen = bool(
@@ -5712,17 +6115,32 @@ def run_shared_injection_pilot(
                 writer_base_frozen = True
                 writer_adapter_frozen = True
             projector_frozen = bool(bootstrap_active)
+            support_encoder_frozen = bool(writer_base_frozen)
+            reader_frozen = bool(bootstrap_active)
+            fuser_frozen = bool(bootstrap_active)
+            receiver_lora_trainable = bool(runtime.receiver_lora_enabled)
+            if receiver_only_stage_active:
+                writer_base_frozen = True
+                writer_adapter_frozen = True
+                projector_frozen = True
+                support_encoder_frozen = True
+                reader_frozen = True
+                fuser_frozen = True
             runtime.set_writer_base_trainable(not writer_base_frozen)
             runtime.set_writer_adapter_trainable(not writer_adapter_frozen)
             runtime.set_source_stub_trainable(not projector_frozen)
-            runtime.set_support_encoder_trainable(not writer_base_frozen)
+            runtime.set_support_encoder_trainable(not support_encoder_frozen)
+            runtime.set_reader_trainable(not reader_frozen)
+            runtime.set_fuser_trainable(not fuser_frozen)
             runtime.set_prefix_projector_trainable(not projector_frozen)
+            runtime.set_receiver_lora_trainable(receiver_lora_trainable)
+            runtime.set_reconstruction_trainable(not writer_base_frozen)
             optimizer_lr_by_group = _apply_learning_rate_schedule(
                 optimizer,
                 base_lrs=optimizer_base_lrs,
                 schedule=lr_schedule,
                 warmup_steps=lr_warmup_steps,
-                step=step + 1,
+                step=current_step,
             )
             optimizer.zero_grad(set_to_none=True)
             train_example_ids: list[str] = []
@@ -5778,12 +6196,12 @@ def run_shared_injection_pilot(
                 prefix_artifacts = runtime.build_prefix_artifacts(
                     masked_support_text_block,
                     support_rows=masked_support_rows_for_prefix,
-                    prompt_text=train_example.prompt_text,
+                    prompt_text=train_example.writer_prompt_text,
                 )
                 aux_view_prefix_artifacts = None
                 aux_view_support_rows = masked_support_rows_for_prefix
                 aux_view_support_text_block = masked_support_text_block
-                aux_view_prompt_text = train_example.prompt_text
+                aux_view_prompt_text = train_example.writer_prompt_text
                 if (
                     arm == "injected"
                     and writer_memory_control != "zero"
@@ -5799,7 +6217,7 @@ def run_shared_injection_pilot(
                         support_serialization_variant=support_serialization_variant,
                     )
                     aux_view_prompt_text = _drop_prompt_tokens_for_aux_view(
-                        train_example.prompt_text,
+                        train_example.writer_prompt_text,
                         dropout_probability=context_token_dropout,
                         generator=support_mask_generator,
                     )
@@ -5851,6 +6269,8 @@ def run_shared_injection_pilot(
                 barlow_aux_loss = None
                 writer_slot_orthogonality_loss = None
                 writer_support_coverage_loss = None
+                reconstruction_aux_loss = None
+                active_reconstruction_aux_weight = 0.0
                 aux_mean_embedding = None
                 aux_slot_embedding = None
                 aux_view_mean_embedding = None
@@ -6091,6 +6511,32 @@ def run_shared_injection_pilot(
                         )
                         auxiliary_loss_terms.append(weighted_writer_support_coverage_loss)
                         loss = loss + weighted_writer_support_coverage_loss
+                if reconstruction_aux_mode != "off" and reconstruction_aux_weight > 0.0:
+                    reconstruction_logits = runtime.reconstruction_logits(prefix_artifacts)
+                    reconstruction_target = _reconstruction_target_vector(
+                        example_cache=train_example,
+                        support_text_block=masked_support_text_block,
+                        mode=reconstruction_aux_mode,
+                        vocab_size=reconstruction_vocab_size,
+                        device=runtime.backbone.device,
+                    )
+                    if reconstruction_logits is not None and reconstruction_target is not None:
+                        reconstruction_aux_loss = F.binary_cross_entropy_with_logits(
+                            reconstruction_logits,
+                            reconstruction_target,
+                        )
+                        active_reconstruction_aux_weight = _active_reconstruction_weight(
+                            current_step=current_step,
+                            train_steps=train_steps,
+                            base_weight=reconstruction_aux_weight,
+                            schedule=reconstruction_weight_schedule,
+                        )
+                        if active_reconstruction_aux_weight > 0.0:
+                            weighted_reconstruction_aux_loss = (
+                                active_reconstruction_aux_weight * reconstruction_aux_loss
+                            )
+                            auxiliary_loss_terms.append(weighted_reconstruction_aux_loss)
+                            loss = loss + weighted_reconstruction_aux_loss
                 active_alignment_aux_weight = _active_competitor_hinge_weight(
                     current_step=step + 1,
                     max_weight=alignment_aux_weight_max,
@@ -6309,6 +6755,12 @@ def run_shared_injection_pilot(
                         "barlow_aux_loss": (
                             0.0 if barlow_aux_loss is None else float(barlow_aux_loss.item())
                         ),
+                        "reconstruction_aux_loss": (
+                            0.0
+                            if reconstruction_aux_loss is None
+                            else float(reconstruction_aux_loss.item())
+                        ),
+                        "reconstruction_aux_weight": float(active_reconstruction_aux_weight),
                         "barlow_on_diag_loss": float(barlow_diagnostics["barlow_on_diag_loss"]),
                         "barlow_off_diag_loss": float(barlow_diagnostics["barlow_off_diag_loss"]),
                         "writer_slot_orthogonality_loss": (
@@ -6677,6 +7129,17 @@ def run_shared_injection_pilot(
                         0.0 if barlow_aux_loss is None else float(barlow_aux_loss.item())
                     ),
                     "barlow_loss_weight": float(barlow_loss_weight),
+                    "reconstruction_aux_loss": (
+                        0.0
+                        if reconstruction_aux_loss is None
+                        else float(reconstruction_aux_loss.item())
+                    ),
+                    "reconstruction_aux_weight": float(active_reconstruction_aux_weight),
+                    "pilot_reconstruction_aux_mode": reconstruction_aux_mode,
+                    "pilot_reconstruction_aux_weight": float(reconstruction_aux_weight),
+                    "pilot_reconstruction_vocab_size": int(reconstruction_vocab_size),
+                    "pilot_reconstruction_hidden_dim": int(reconstruction_hidden_dim),
+                    "pilot_reconstruction_weight_schedule": reconstruction_weight_schedule,
                     "barlow_on_diag_loss": float(barlow_diagnostics["barlow_on_diag_loss"]),
                     "barlow_off_diag_loss": float(barlow_diagnostics["barlow_off_diag_loss"]),
                     "writer_slot_orthogonality_loss": (
@@ -6719,6 +7182,8 @@ def run_shared_injection_pilot(
                     "pilot_trainable_variant": trainable_variant,
                     "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
                     "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
+                    "pilot_backbone_prompt_mask_mode": runtime.backbone_prompt_mask_mode,
+                    "pilot_writer_context_prompt_mode": runtime.writer_context_prompt_mode,
                     "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
                     "pilot_writer_adapter_target_modules": list(runtime.writer_adapter_target_modules),
                     "pilot_writer_adapter_rank": int(runtime.writer_adapter_rank),
@@ -6844,6 +7309,9 @@ def run_shared_injection_pilot(
                     "gradient_probe_step_active": bool(probe_step_active),
                     "gradient_probe_interval": int(gradient_probe_interval),
                     "gradient_probe_max_steps": int(gradient_probe_max_steps),
+                    "train_phase": train_phase,
+                    "stage_a_steps": int(stage_a_steps),
+                    "stage_b_steps": int(stage_b_steps),
                     "source_stub_trainable": _module_trainable(runtime.source_stub),
                     "writer_trainable": _module_trainable(runtime.writer),
                     "writer_adapter_trainable": bool(
@@ -6853,6 +7321,13 @@ def run_shared_injection_pilot(
                     "reader_trainable": _module_trainable(runtime.reader),
                     "fuser_trainable": _module_trainable(runtime.fuser),
                     "prefix_projector_trainable": _module_trainable(runtime.prefix_projector),
+                    "receiver_lora_trainable": bool(
+                        runtime.receiver_lora_enabled
+                        and any(
+                            parameter.requires_grad
+                            for parameter in getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])()
+                        )
+                    ),
                     "writer_trainable_params": _trainable_parameter_count(runtime.writer),
                     "writer_adapter_trainable_params": int(
                         sum(
@@ -7017,7 +7492,11 @@ def run_shared_injection_pilot(
         runtime.set_writer_trainable(True)
         runtime.set_source_stub_trainable(True)
         runtime.set_support_encoder_trainable(True)
+        runtime.set_reader_trainable(True)
+        runtime.set_fuser_trainable(True)
         runtime.set_prefix_projector_trainable(True)
+        runtime.set_receiver_lora_trainable(True)
+        runtime.set_reconstruction_trainable(True)
 
     prefix_artifacts = PrefixInjectionArtifacts(
         prefix_embeddings=None,
@@ -7281,7 +7760,11 @@ def run_shared_injection_pilot(
             for event in train_events
             if not bool(event.get("writer_frozen", False))
         ),
-        max(1, projector_warmup_steps + 1),
+        max(
+            1,
+            projector_warmup_steps + 1,
+            (stage_a_steps + 1) if trainable_variant == "receiver_then_joint" else 1,
+        ),
     )
     post_unfreeze_end_step = min(train_steps, post_unfreeze_start_step + 49)
     train_grad_norm_writer_post_unfreeze_median = _median_train_event_metric(
@@ -7368,6 +7851,12 @@ def run_shared_injection_pilot(
         step_start=post_unfreeze_start_step,
         step_end=post_unfreeze_end_step,
     )
+    train_reconstruction_aux_loss_post_unfreeze_median = _median_train_event_metric(
+        train_events,
+        key="reconstruction_aux_loss",
+        step_start=post_unfreeze_start_step,
+        step_end=post_unfreeze_end_step,
+    )
     train_writer_slot_orthogonality_loss_post_unfreeze_median = _median_train_event_metric(
         train_events,
         key="writer_slot_orthogonality_loss",
@@ -7439,6 +7928,8 @@ def run_shared_injection_pilot(
         "pilot_context_balance_scale_init": float(runtime.context_balance_scale_init),
         "pilot_support_balance_scale_init": float(runtime.support_balance_scale_init),
         "pilot_trainable_variant": trainable_variant,
+        "pilot_backbone_prompt_mask_mode": backbone_prompt_mask_mode,
+        "pilot_writer_context_prompt_mode": writer_context_prompt_mode,
         "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
         "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
         "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
@@ -7472,6 +7963,11 @@ def run_shared_injection_pilot(
         "pilot_aux_projection_hidden_dim": (
             None if aux_projection_hidden_dim is None else int(aux_projection_hidden_dim)
         ),
+        "pilot_reconstruction_aux_mode": reconstruction_aux_mode,
+        "pilot_reconstruction_aux_weight": float(reconstruction_aux_weight),
+        "pilot_reconstruction_vocab_size": int(reconstruction_vocab_size),
+        "pilot_reconstruction_hidden_dim": int(reconstruction_hidden_dim),
+        "pilot_reconstruction_weight_schedule": reconstruction_weight_schedule,
         "pilot_support_row_dropout": float(support_row_dropout),
         "pilot_context_token_dropout": float(context_token_dropout),
         "pilot_contrastive_temperature": float(contrastive_temperature),
@@ -7572,6 +8068,8 @@ def run_shared_injection_pilot(
         "task_case_dump_rows": len(case_rows),
         "task_case_dump_path": str(task_case_dump_path.resolve()),
         "pilot_train_steps": train_steps,
+        "stage_a_steps": int(stage_a_steps),
+        "stage_b_steps": int(stage_b_steps),
         "pilot_gradient_accumulation_steps": int(gradient_accumulation_steps),
         "pilot_effective_train_examples": int(train_steps * gradient_accumulation_steps),
         "pilot_writer_learning_rate": writer_learning_rate,
@@ -7707,6 +8205,12 @@ def run_shared_injection_pilot(
             train_events[-1]["vicreg_covariance_loss"] if train_events else None
         ),
         "train_final_barlow_aux_loss": train_events[-1]["barlow_aux_loss"] if train_events else None,
+        "train_final_reconstruction_aux_loss": (
+            train_events[-1]["reconstruction_aux_loss"] if train_events else None
+        ),
+        "train_final_reconstruction_aux_weight": (
+            train_events[-1]["reconstruction_aux_weight"] if train_events else None
+        ),
         "train_final_barlow_on_diag_loss": (
             train_events[-1]["barlow_on_diag_loss"] if train_events else None
         ),
@@ -7883,6 +8387,9 @@ def run_shared_injection_pilot(
         "train_barlow_aux_loss_post_unfreeze_median": (
             train_barlow_aux_loss_post_unfreeze_median
         ),
+        "train_reconstruction_aux_loss_post_unfreeze_median": (
+            train_reconstruction_aux_loss_post_unfreeze_median
+        ),
         "train_writer_slot_orthogonality_loss_post_unfreeze_median": (
             train_writer_slot_orthogonality_loss_post_unfreeze_median
         ),
@@ -7908,6 +8415,7 @@ def run_shared_injection_pilot(
         "train_final_source_stub_trainable": (
             train_events[-1]["source_stub_trainable"] if train_events else None
         ),
+        "train_final_phase": train_events[-1]["train_phase"] if train_events else None,
         "train_final_writer_trainable": train_events[-1]["writer_trainable"] if train_events else None,
         "train_final_writer_adapter_trainable": (
             train_events[-1]["writer_adapter_trainable"] if train_events else None
@@ -7919,6 +8427,9 @@ def run_shared_injection_pilot(
         "train_final_fuser_trainable": train_events[-1]["fuser_trainable"] if train_events else None,
         "train_final_prefix_projector_trainable": (
             train_events[-1]["prefix_projector_trainable"] if train_events else None
+        ),
+        "train_final_receiver_lora_trainable": (
+            train_events[-1]["receiver_lora_trainable"] if train_events else None
         ),
         "train_final_writer_trainable_params": (
             train_events[-1]["writer_trainable_params"] if train_events else None
