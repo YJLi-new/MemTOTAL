@@ -3067,6 +3067,180 @@ class SharedInjectionHelpersTest(unittest.TestCase):
         self.assertTrue(train_events[1]["prefix_projector_trainable"])
         self.assertGreater(metrics["train_final_reconstruction_aux_loss"], 0.0)
 
+    @mock.patch("memtotal.training.m4_shared_injection.load_task_dataset")
+    @mock.patch("memtotal.training.m4_shared_injection._load_task_dataset_with_path")
+    @mock.patch("memtotal.training.m4_shared_injection.build_task_evaluator")
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_run_shared_injection_pilot_allows_l5_plus_vicreg_combo(
+        self,
+        mock_backbone_cls,
+        mock_build_task_evaluator,
+        mock_load_dataset_with_path,
+        mock_load_task_dataset,
+    ) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.score_param = torch.nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, prefix_hidden_by_layer, *_args, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in prefix_hidden_by_layer.items()
+                    },
+                    "layer_value_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in prefix_hidden_by_layer.items()
+                    },
+                }
+
+            def collect_deep_prefix_calibration(self, _texts, *, layer_indices, max_tokens):
+                hidden = torch.ones(1, max_tokens, self.hidden_size, dtype=torch.float32)
+                return {
+                    "semantic_anchor": torch.ones(1, self.hidden_size, dtype=torch.float32),
+                    "hidden_state_anchor": hidden.clone(),
+                    "layer_hidden_anchor_by_layer": {
+                        int(layer_index): hidden.clone()
+                        for layer_index in layer_indices
+                    },
+                }
+
+            def score_continuations(
+                self,
+                _prompt_text,
+                candidate_texts,
+                *,
+                prefix_embeddings=None,
+                layer_prefix_hidden_by_layer=None,
+                return_diagnostics=False,
+            ):
+                base = self.score_param
+                if layer_prefix_hidden_by_layer:
+                    base = base + sum(
+                        tensor.to(dtype=torch.float32).mean()
+                        for tensor in layer_prefix_hidden_by_layer.values()
+                    )
+                elif prefix_embeddings is not None:
+                    base = base + prefix_embeddings.to(dtype=torch.float32).mean()
+                scores = torch.stack([base, -base])[: len(candidate_texts)]
+                if return_diagnostics:
+                    return scores, {}
+                return scores
+
+            def count_tokens(self, text):
+                return len(str(text).split())
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        class DummyEvaluator:
+            evaluator_type = "multiple_choice"
+            metric_name = "accuracy"
+            mode = "multiple_choice"
+
+            def score_example(self, gold_answer, candidate_texts, *, prediction_text=None):
+                del gold_answer, candidate_texts, prediction_text
+                return 1.0
+
+        examples = [
+            {
+                "id": "ex-0",
+                "question": "What is 2 + 2?",
+                "segment": "What is 2 + 2?",
+                "choices": [
+                    {"label": "A", "text": "4"},
+                    {"label": "B", "text": "5"},
+                ],
+                "label": "A",
+                "gold_answer": "4",
+                "evaluator_type": "multiple_choice",
+            }
+        ]
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        mock_build_task_evaluator.return_value = DummyEvaluator()
+        mock_load_dataset_with_path.side_effect = lambda _config, _path: [dict(row) for row in examples]
+        mock_load_task_dataset.return_value = [dict(row) for row in examples]
+        output_dir = Path(tempfile.mkdtemp())
+        config = {
+            "backbone": {
+                "name": "fake",
+                "load_mode": "stub",
+                "dtype": "float32",
+                "model_id": "fake/model",
+            },
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 1,
+                    "dropout": 0.0,
+                }
+            },
+            "runtime": {
+                "shared_injection_arm": "injected",
+                "writer_memory_control": "real",
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [0],
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 2,
+                "pilot_train_steps": 2,
+                "pilot_gradient_accumulation_steps": 1,
+                "pilot_writer_learning_rate": 1.0e-4,
+                "pilot_projector_learning_rate": 1.0e-4,
+                "pilot_lr_schedule": "constant",
+                "pilot_deep_prefix_init_mode": "semantic_anchor",
+                "pilot_aux_loss_mode": "orthogonality_coverage",
+                "pilot_writer_slot_orthogonality_weight": 0.05,
+                "pilot_writer_support_coverage_weight": 0.05,
+                "pilot_aux_projection_dim": 8,
+                "pilot_aux_projection_hidden_dim": 16,
+                "pilot_vicreg_loss_weight": 0.02,
+                "pilot_vicreg_invariance_weight": 1.0,
+                "pilot_vicreg_variance_weight": 1.0,
+                "pilot_vicreg_covariance_weight": 1.0,
+                "pilot_vicreg_variance_target": 1.0,
+            },
+            "task": {
+                "name": "gsm8k-aux-combo-test",
+                "benchmark_id": "gsm8k",
+                "support_dataset_path": "support.jsonl",
+                "train_dataset_path": "train.jsonl",
+                "dataset_path": "eval.jsonl",
+                "metric_name": "accuracy",
+            },
+        }
+
+        metrics = run_shared_injection_pilot(
+            config=config,
+            seed=11,
+            output_dir=output_dir,
+            resume=None,
+            dry_run=False,
+        )
+        train_events = json.loads((output_dir / "train_events.json").read_text())["events"]
+
+        self.assertEqual(metrics["pilot_aux_loss_mode"], "orthogonality_coverage")
+        self.assertEqual(metrics["pilot_writer_slot_orthogonality_weight"], 0.05)
+        self.assertEqual(metrics["pilot_writer_support_coverage_weight"], 0.05)
+        self.assertEqual(metrics["pilot_vicreg_loss_weight"], 0.02)
+        self.assertGreaterEqual(train_events[0]["writer_slot_orthogonality_loss"], 0.0)
+        self.assertGreaterEqual(train_events[0]["writer_support_coverage_loss"], 0.0)
+        self.assertGreaterEqual(train_events[0]["vicreg_invariance_loss"], 0.0)
+
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_two_level_warm_start_allows_missing_receiver_lora_state(self, mock_backbone_cls) -> None:
         class FakeBackbone:

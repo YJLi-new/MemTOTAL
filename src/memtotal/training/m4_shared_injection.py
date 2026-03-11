@@ -914,6 +914,11 @@ def _resolve_barlow_lambda(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_barlow_lambda", 5e-3))
 
 
+def _runtime_explicitly_sets(config: dict[str, Any], key: str) -> bool:
+    runtime = config.get("runtime", {})
+    return isinstance(runtime, dict) and key in runtime
+
+
 def _resolve_writer_slot_orthogonality_weight(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_writer_slot_orthogonality_weight", 0.05))
 
@@ -5769,13 +5774,16 @@ def run_shared_injection_pilot(
         writer_slot_energy_balance_weight = 0.0
         writer_common_mode_penalty_weight = 0.0
         writer_covariance_diversity_weight = 0.0
-    if aux_loss_mode != "contrastive":
+    if aux_loss_mode != "contrastive" and not _runtime_explicitly_sets(config, "pilot_contrastive_loss_weight"):
         contrastive_loss_weight = 0.0
-    if aux_loss_mode != "vicreg":
+    if aux_loss_mode != "vicreg" and not _runtime_explicitly_sets(config, "pilot_vicreg_loss_weight"):
         vicreg_loss_weight = 0.0
-    if aux_loss_mode != "barlow":
+    if aux_loss_mode != "barlow" and not _runtime_explicitly_sets(config, "pilot_barlow_loss_weight"):
         barlow_loss_weight = 0.0
-    if aux_loss_mode != "orthogonality_coverage":
+    if aux_loss_mode != "orthogonality_coverage" and not (
+        _runtime_explicitly_sets(config, "pilot_writer_slot_orthogonality_weight")
+        or _runtime_explicitly_sets(config, "pilot_writer_support_coverage_weight")
+    ):
         writer_slot_orthogonality_weight = 0.0
         writer_support_coverage_weight = 0.0
     gradient_clip_norm = float(config["runtime"].get("pilot_gradient_clip_norm", 0.0))
@@ -6314,7 +6322,11 @@ def run_shared_injection_pilot(
                 if (
                     arm == "injected"
                     and writer_memory_control != "zero"
-                    and aux_loss_mode in {"contrastive", "vicreg", "barlow"}
+                    and (
+                        contrastive_loss_weight > 0.0
+                        or vicreg_loss_weight > 0.0
+                        or barlow_loss_weight > 0.0
+                    )
                 ):
                     aux_view_support_rows = _drop_support_rows_for_aux_view(
                         masked_support_rows_for_prefix,
@@ -6556,7 +6568,11 @@ def run_shared_injection_pilot(
                     )
                     auxiliary_loss_terms.append(weighted_writer_covariance_diversity_loss)
                     loss = loss + weighted_writer_covariance_diversity_loss
-                if aux_loss_mode in {"contrastive", "vicreg", "barlow"}:
+                if (
+                    contrastive_loss_weight > 0.0
+                    or vicreg_loss_weight > 0.0
+                    or barlow_loss_weight > 0.0
+                ):
                     aux_mean_embedding = _writer_aux_projection_mean(runtime, prefix_artifacts)
                     aux_slot_embedding = _writer_aux_projection_slots(runtime, prefix_artifacts)
                     aux_view_mean_embedding = _writer_aux_projection_mean(runtime, aux_view_prefix_artifacts)
