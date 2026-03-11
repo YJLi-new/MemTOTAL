@@ -63,6 +63,10 @@ ENCODED_SUPPORT_MODES = {
     "multi_item_cross_attn_encoded",
     "hybrid_pooled_plus_items",
 }
+ORACLE_PREFIX_SOURCE_MODES = {
+    "oracle_context_echo",
+    "oracle_support_echo",
+}
 
 
 @dataclass(frozen=True)
@@ -423,10 +427,10 @@ def _resolve_projector_token_source(config: dict[str, Any]) -> str:
 
 def _resolve_prefix_source_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_prefix_source_mode", "writer"))
-    if mode not in {"writer", "source_stub"}:
+    if mode not in {"writer", "source_stub", *ORACLE_PREFIX_SOURCE_MODES}:
         raise ValueError(
             f"Unsupported runtime.pilot_prefix_source_mode={mode}. "
-            "Expected one of writer, source_stub."
+            "Expected one of writer, source_stub, oracle_context_echo, oracle_support_echo."
         )
     return mode
 
@@ -2776,6 +2780,15 @@ class SharedInjectionPilotRuntime(nn.Module):
                 raise ValueError(
                     "runtime.pilot_prefix_source_mode=source_stub requires runtime.pilot_injection_mode=sparse_deep_prefix."
                 )
+        if self.prefix_source_mode in ORACLE_PREFIX_SOURCE_MODES:
+            if self.bridge_mode != "writer_direct":
+                raise ValueError(
+                    "oracle pilot_prefix_source_mode values currently require runtime.pilot_bridge_mode=writer_direct."
+                )
+            if self.injection_mode != "sparse_deep_prefix":
+                raise ValueError(
+                    "oracle pilot_prefix_source_mode values require runtime.pilot_injection_mode=sparse_deep_prefix."
+                )
         if self.bridge_mode != "writer_direct" and self.receiver_lora_enabled:
             return
         if self.bridge_mode == "writer_direct" and self.receiver_lora_enabled:
@@ -3440,6 +3453,66 @@ class SharedInjectionPilotRuntime(nn.Module):
             writer_support_states = torch.cat([pooled_support_state, writer_support_states], dim=1)
         return support_item_states, writer_support_states
 
+    def _oracle_source_text(
+        self,
+        *,
+        support_text_block: str,
+        prompt_text: str | None,
+    ) -> str:
+        if self.prefix_source_mode == "oracle_context_echo":
+            if prompt_text is None or not str(prompt_text).strip():
+                raise ValueError("oracle_context_echo requires a non-empty prompt_text.")
+            return str(prompt_text)
+        if self.prefix_source_mode == "oracle_support_echo":
+            if not str(support_text_block).strip():
+                raise ValueError("oracle_support_echo requires a non-empty support_text_block.")
+            return str(support_text_block)
+        raise RuntimeError(
+            f"_oracle_source_text called for unsupported pilot_prefix_source_mode={self.prefix_source_mode}."
+        )
+
+    def _oracle_memory_long(
+        self,
+        *,
+        source_text: str,
+    ) -> torch.Tensor:
+        extractor = getattr(self.backbone, "extract_prompt_hidden_state_slice", None)
+        if callable(extractor):
+            with torch.no_grad():
+                hidden_states, _ = extractor(
+                    [source_text],
+                    max_tokens=int(self.prefix_projector.prefix_tokens),
+                )
+        else:
+            with torch.no_grad():
+                hidden_states = self.backbone.summarize_texts([source_text]).unsqueeze(1).detach()
+            if int(hidden_states.shape[1]) < int(self.prefix_projector.prefix_tokens):
+                hidden_states = hidden_states.expand(-1, int(self.prefix_projector.prefix_tokens), -1).clone()
+        return hidden_states.detach().to(device=self.backbone.device, dtype=torch.float32)
+
+    def _oracle_layer_prefix_hidden(
+        self,
+        *,
+        source_text: str,
+    ) -> dict[int, torch.Tensor]:
+        extractor = getattr(self.backbone, "extract_layer_hidden_state_slices", None)
+        if callable(extractor):
+            with torch.no_grad():
+                layer_hidden, _ = extractor(
+                    [source_text],
+                    layer_indices=self.deep_prefix_layers,
+                    max_tokens=int(self.prefix_projector.prefix_tokens),
+                )
+            return {
+                int(layer_index): tensor.detach().to(device=self.backbone.device, dtype=torch.float32)
+                for layer_index, tensor in layer_hidden.items()
+            }
+        fallback_hidden = self._oracle_memory_long(source_text=source_text)
+        return {
+            int(layer_index): fallback_hidden.clone()
+            for layer_index in self.deep_prefix_layers
+        }
+
     def _two_level_memory_short(
         self,
         *,
@@ -3493,6 +3566,67 @@ class SharedInjectionPilotRuntime(nn.Module):
             if self.source_stub is None:
                 raise RuntimeError("pilot_prefix_source_mode=source_stub requires SourceStubMemory.")
             memory_long = self.source_stub(batch_size=1)
+        elif self.prefix_source_mode in ORACLE_PREFIX_SOURCE_MODES:
+            if prompt_text is not None:
+                writer_context_states, writer_context_mask = self._prompt_context_states(prompt_text)
+            if support_rows:
+                support_item_states, writer_support_states = self._writer_support_states(
+                    support_text_block,
+                    support_rows=support_rows,
+                )
+            source_text = self._oracle_source_text(
+                support_text_block=support_text_block,
+                prompt_text=prompt_text,
+            )
+            memory_long = self._oracle_memory_long(source_text=source_text)
+            layer_prefix_hidden_by_layer = self._oracle_layer_prefix_hidden(source_text=source_text)
+            prefix_stats = _prefix_stats(
+                layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+                memory_slots=memory_long,
+                memory_long=memory_long,
+                memory_short=None,
+                support_item_states=support_item_states,
+                writer_support_states=writer_support_states,
+                writer_context_states=writer_context_states,
+                reader_attention=None,
+                reader_base_queries=None,
+                reader_conditioned_queries=None,
+                reader_attention_logits=None,
+                reader_value_projected_slots=None,
+                reader_readouts=None,
+                writer_diagnostics=None,
+                fuser=self.fuser,
+                memory_path_variant=self.memory_path_variant,
+                projector_token_source=self.projector_token_source,
+                prefix_source_mode=self.prefix_source_mode,
+                deep_prefix_init_mode=self.deep_prefix_init_mode,
+                support_interface_mode=self.support_encoder_mode,
+                context_support_balance_mode=self.context_support_balance_mode,
+            )
+            prefix_stats = self._augment_prefix_stats_with_projection(
+                prefix_stats=prefix_stats,
+                layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+            )
+            return PrefixInjectionArtifacts(
+                prefix_embeddings=None,
+                layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+                prefix_stats=prefix_stats,
+                memory_slots=memory_long,
+                support_item_states=support_item_states,
+                writer_support_states=writer_support_states,
+                writer_context_states=writer_context_states,
+                writer_context_mask=writer_context_mask,
+                writer_diagnostics=None,
+                memory_long=memory_long,
+                memory_short=None,
+                reader_attention=None,
+                reader_gates=None,
+                reader_queries=None if self.reader is None else self.reader.queries.detach(),
+                reader_context=None,
+                reader_conditioned_queries=None,
+                reader_value_projected_slots=None,
+                reader_readouts=None,
+            )
         else:
             support_item_states, writer_support_states = self._writer_support_states(
                 support_text_block,
@@ -7240,6 +7374,7 @@ def run_shared_injection_pilot(
         "pilot_projector_token_source": projector_token_source,
         "pilot_prefix_source_mode": runtime.prefix_source_mode,
         "pilot_deep_prefix_init_mode": runtime.deep_prefix_init_mode,
+        "writer_memory_slots": int(runtime.writer.memory_slots),
         "pilot_support_encoder_mode": support_encoder_mode,
         "pilot_context_support_balance_mode": runtime.context_support_balance_mode,
         "pilot_context_balance_scale_init": float(runtime.context_balance_scale_init),
@@ -7383,6 +7518,11 @@ def run_shared_injection_pilot(
         "pilot_support_encoder_learning_rate": support_encoder_learning_rate,
         "pilot_source_stub_learning_rate": source_stub_learning_rate,
         "pilot_projector_learning_rate": projector_learning_rate,
+        "owner_locked_projector_lr": float(config["runtime"].get("owner_locked_projector_lr", 7.5e-6)),
+        "repo_confirmed_v65_projector_lr_reference": float(
+            config["runtime"].get("repo_confirmed_v65_projector_lr_reference", 7.5e-5)
+        ),
+        "owner_override_note": bool(config["runtime"].get("owner_override_note", True)),
         "pilot_receiver_lora_learning_rate": receiver_lora_learning_rate,
         "pilot_writer_weight_decay": writer_weight_decay,
         "pilot_support_encoder_weight_decay": support_encoder_weight_decay,

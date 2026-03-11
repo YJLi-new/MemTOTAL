@@ -8,7 +8,11 @@ from unittest import mock
 
 from memtotal.tasks.writer_jointpeft_data import (
     deterministic_split_rows,
+    load_split_plan_overrides,
     materialize_writer_jointpeft_bundle,
+    normalize_benchmarks,
+    resolve_split_plans,
+    SplitPlan,
 )
 
 
@@ -18,6 +22,48 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 class WriterJointPEFTDataTest(unittest.TestCase):
+    def test_normalize_benchmarks_deduplicates_and_uses_planv7_default(self) -> None:
+        self.assertEqual(normalize_benchmarks(None), ("gsm8k", "triviaqa", "fever"))
+        self.assertEqual(
+            normalize_benchmarks("gsm8k, triviaqa, gsm8k, fever"),
+            ("gsm8k", "triviaqa", "fever"),
+        )
+
+    def test_resolve_split_plans_supports_overrides(self) -> None:
+        resolved = resolve_split_plans(
+            ("gsm8k", "triviaqa"),
+            overrides={
+                "triviaqa": SplitPlan(
+                    source_examples=64,
+                    support_examples=8,
+                    train_examples=40,
+                    eval_examples=16,
+                )
+            },
+        )
+        self.assertEqual(resolved["gsm8k"].source_examples, 128)
+        self.assertEqual(resolved["triviaqa"].source_examples, 64)
+        self.assertEqual(resolved["triviaqa"].train_examples, 40)
+
+    def test_load_split_plan_overrides_reads_json_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            override_path = Path(tmpdir) / "splits.json"
+            override_path.write_text(
+                json.dumps(
+                    {
+                        "triviaqa": {
+                            "source_examples": 96,
+                            "support_examples": 8,
+                            "train_examples": 56,
+                            "eval_examples": 32,
+                        }
+                    }
+                )
+            )
+            overrides = load_split_plan_overrides(override_path)
+        self.assertEqual(overrides["triviaqa"].source_examples, 96)
+        self.assertEqual(overrides["triviaqa"].train_examples, 56)
+
     def test_deterministic_split_rows_is_reproducible(self) -> None:
         rows = [{"id": f"row-{index}"} for index in range(10)]
         split_sizes = {"support": 2, "train": 5, "eval": 3}
@@ -35,14 +81,14 @@ class WriterJointPEFTDataTest(unittest.TestCase):
         self.assertEqual(len(all_ids), 10)
 
     @mock.patch("memtotal.tasks.writer_jointpeft_data.materialize_benchmark_source")
-    def test_materialize_writer_jointpeft_bundle_writes_expected_medium_splits(
+    def test_materialize_writer_jointpeft_bundle_writes_expected_medium_splits_for_planv7_tasks(
         self,
         mock_materialize_benchmark_source,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             gsm8k_materialized = tmp_path / "gsm8k-materialized.jsonl"
-            narrativeqa_materialized = tmp_path / "narrativeqa-materialized.jsonl"
+            triviaqa_materialized = tmp_path / "triviaqa-materialized.jsonl"
             fever_support = tmp_path / "fever-support.jsonl"
             fever_eval = tmp_path / "fever-eval.jsonl"
             _write_jsonl(
@@ -50,8 +96,15 @@ class WriterJointPEFTDataTest(unittest.TestCase):
                 [{"id": f"gsm8k-{index}", "question": f"q{index}"} for index in range(128)],
             )
             _write_jsonl(
-                narrativeqa_materialized,
-                [{"id": f"narrativeqa-{index}", "question": f"q{index}"} for index in range(64)],
+                triviaqa_materialized,
+                [
+                    {
+                        "id": f"triviaqa-{index}",
+                        "question": f"q{index}",
+                        "aliases": [f"alias-{index}", f"alias-{index}-b"],
+                    }
+                    for index in range(128)
+                ],
             )
             _write_jsonl(
                 fever_support,
@@ -65,8 +118,8 @@ class WriterJointPEFTDataTest(unittest.TestCase):
             def fake_materialize(*, benchmark_id: str, **_: object) -> dict[str, str]:
                 if benchmark_id == "gsm8k":
                     return {"materialized_path": str(gsm8k_materialized)}
-                if benchmark_id == "narrativeqa":
-                    return {"materialized_path": str(narrativeqa_materialized)}
+                if benchmark_id == "triviaqa":
+                    return {"materialized_path": str(triviaqa_materialized)}
                 raise AssertionError(f"unexpected benchmark_id={benchmark_id}")
 
             mock_materialize_benchmark_source.side_effect = fake_materialize
@@ -79,6 +132,7 @@ class WriterJointPEFTDataTest(unittest.TestCase):
                 source_output_root=source_output_root,
                 manifest_root=manifest_root,
                 seed=23,
+                benchmarks=["gsm8k", "triviaqa", "fever"],
                 fever_support_path=fever_support,
                 fever_eval_path=fever_eval,
             )
@@ -89,14 +143,15 @@ class WriterJointPEFTDataTest(unittest.TestCase):
             )
             self.assertEqual(
                 mock_materialize_benchmark_source.call_args_list[1].kwargs["max_examples"],
-                64,
+                128,
             )
+            self.assertEqual(manifest["benchmarks"], ["gsm8k", "triviaqa", "fever"])
             self.assertEqual(manifest["tasks"]["gsm8k"]["splits"]["support"]["rows"], 8)
             self.assertEqual(manifest["tasks"]["gsm8k"]["splits"]["train"]["rows"], 80)
             self.assertEqual(manifest["tasks"]["gsm8k"]["splits"]["eval"]["rows"], 40)
-            self.assertEqual(manifest["tasks"]["narrativeqa"]["splits"]["support"]["rows"], 8)
-            self.assertEqual(manifest["tasks"]["narrativeqa"]["splits"]["train"]["rows"], 32)
-            self.assertEqual(manifest["tasks"]["narrativeqa"]["splits"]["eval"]["rows"], 24)
+            self.assertEqual(manifest["tasks"]["triviaqa"]["splits"]["support"]["rows"], 8)
+            self.assertEqual(manifest["tasks"]["triviaqa"]["splits"]["train"]["rows"], 80)
+            self.assertEqual(manifest["tasks"]["triviaqa"]["splits"]["eval"]["rows"], 40)
             self.assertEqual(manifest["tasks"]["fever"]["splits"]["support"]["rows"], 8)
             self.assertEqual(manifest["tasks"]["fever"]["splits"]["train"]["rows"], 64)
             self.assertEqual(manifest["tasks"]["fever"]["splits"]["eval"]["rows"], 64)
@@ -104,6 +159,21 @@ class WriterJointPEFTDataTest(unittest.TestCase):
             self.assertTrue(manifest_path.exists())
             persisted = json.loads(manifest_path.read_text())
             self.assertEqual(persisted["seed"], 23)
+            self.assertEqual(
+                persisted["tasks"]["triviaqa"]["split_plan"],
+                {
+                    "source_examples": 128,
+                    "support_examples": 8,
+                    "train_examples": 80,
+                    "eval_examples": 40,
+                },
+            )
             self.assertTrue((output_root / "gsm8k" / "support.jsonl").exists())
-            self.assertTrue((output_root / "narrativeqa" / "train.jsonl").exists())
+            self.assertTrue((output_root / "triviaqa" / "train.jsonl").exists())
             self.assertTrue((output_root / "fever" / "eval.jsonl").exists())
+            trivia_train_rows = [
+                json.loads(line)
+                for line in (output_root / "triviaqa" / "train.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertIn("aliases", trivia_train_rows[0])

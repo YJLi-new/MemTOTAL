@@ -2,28 +2,28 @@
 
 > This file is the **map for Codex/agents, not an encyclopedia**.
 > It is responsible for only four things: **entry-point navigation, the execution loop, research guardrails, and delivery format**.
-> Deeper knowledge should be written into and maintained in: `PLANv6.md`, `docs/MAIN_IDEA.md`, `docs/EXPERIMENTS_INFO.md`, `docs/exec-plans/`, and `docs/`.
+> Deeper knowledge should be written into and maintained in: `PLANv7.md`, `docs/MAIN_IDEA.md`, `docs/EXPERIMENTS_INFO.md`, `docs/exec-plans/`, and `docs/`.
 
 ---
 
 ## 0) One-Sentence TL;DR (always do this first)
 
-**Before starting any task, open `PLANv6.md` first and execute against it strictly.**
+**Before starting any task, open `PLANv7.md` first and execute against it strictly.**
 
-- `PLANv6.md`: single entry point / current execution plan / DoD / artifact requirements / milestone order
+- `PLANv7.md`: single entry point / current execution plan / DoD / artifact requirements / milestone order
 - `docs/MAIN_IDEA.md`: method definition / training stages / core hypotheses / key differences from MemGen
 - `docs/EXPERIMENTS_INFO.md`: experiment protocol / baselines / tables and figures / statistical rules / paper-facing artifact standards
 
 > Rules:
 > 1. Do **not** compress away or delete critical information from these three documents.
 > 2. You may reorganize structure, add a table of contents, improve cross-links, and tighten wording; you may not remove key experiments, controls, DoD items, script entry points, or paper claims.
-> 3. If documents conflict: **method authority belongs to `docs/MAIN_IDEA.md`; experiment authority belongs to `docs/EXPERIMENTS_INFO.md`; execution order and acceptance belong to `PLANv6.md`.**
+> 3. If documents conflict: **method authority belongs to `docs/MAIN_IDEA.md`; experiment authority belongs to `docs/EXPERIMENTS_INFO.md`; execution order and acceptance belong to `PLANv7.md`.**
 
 ---
 
 ## 1) Document Responsibilities (separate responsibilities before doing work)
 
-### `PLANv6.md` - the single authoritative runbook / backlog
+### `PLANv7.md` - the single authoritative runbook / backlog
 Every task starts here. It defines:
 - milestone order
 - P0/P1/P2 priorities
@@ -54,7 +54,7 @@ Read this whenever the task touches any of the following:
 ## 2) The Role of AGENTS: a map, not an encyclopedia
 
 This file should stay intentionally short. Do not turn it into a giant manual. Long-lived knowledge belongs in:
-- `PLANv6.md`: task breakdown, DoD, priorities, runbook
+- `PLANv7.md`: task breakdown, DoD, priorities, runbook
 - `docs/MAIN_IDEA.md`: method definition, hypotheses, paper narrative
 - `docs/EXPERIMENTS_INFO.md`: experiment matrix, baselines, statistics, figures
 - `docs/exec-plans/`: execution plans and relay status for multi-hour work
@@ -69,7 +69,7 @@ This file should stay intentionally short. Do not turn it into a giant manual. L
 ### 3.1 Ask -> Plan -> Code -> Validate -> Record -> PR
 
 1. **Ask / Understand**
-   First locate the relevant milestone, item, and DoD in `PLANv6.md`.
+   First locate the relevant milestone, item, and DoD in `PLANv7.md`.
    Do not work "by feel" outside the plan.
 
 2. **Plan**
@@ -93,7 +93,7 @@ This file should stay intentionally short. Do not turn it into a giant manual. L
 
 6. **PR / Deliver**
    Every delivery must state clearly:
-   - which `PLANv6.md` item was completed
+   - which `PLANv7.md` item was completed
    - which files changed
    - reproduction commands
    - validation commands
@@ -174,7 +174,7 @@ Agents copy existing repo patterns, including bad ones.
 Therefore:
 - continuously remove stale configs, outdated scripts, duplicate helpers, and dead docs
 - upgrade recurring review comments into mechanical rules
-- maintain the golden principles / quality tracker / tech-debt tracker in `docs/` when `PLANv6.md` requires it
+- maintain the golden principles / quality tracker / tech-debt tracker in `docs/` when `PLANv7.md` requires it
 
 ### 4.7 GitHub review export is a separate publication surface
 - The local working repo may stay full, but the GitHub-facing review branch is a curated publication layer for external review and reproduction.
@@ -223,7 +223,7 @@ The final paper's core selling points are fixed and must not be diluted or rewri
 
 ---
 
-## 6) Minimum Repo and Artifact Contract (details defer to `PLANv6.md`)
+## 6) Minimum Repo and Artifact Contract (details defer to `PLANv7.md`)
 
 ### 6.1 Directory and knowledge layout
 Recommended layout:
@@ -273,7 +273,7 @@ This project studies an internal memory mechanism for reasoning LLMs / agents:
 
 Every milestone delivery must include:
 
-1. **Completed work**: the corresponding `PLANv6.md` item and a short explanation
+1. **Completed work**: the corresponding `PLANv7.md` item and a short explanation
 2. **Modified files**: file list
 3. **Reproduction**: commands + config + seed + output directory
 4. **Validation**: tests / eval / plots
@@ -293,7 +293,7 @@ When any of the following is unclear, do not invent defaults or commands:
 - baseline budget alignment
 
 Correct handling sequence:
-1. Check `PLANv6.md`
+1. Check `PLANv7.md`
 2. Then check `docs/MAIN_IDEA.md` and `docs/EXPERIMENTS_INFO.md`
 3. If still unclear: list 2-3 options with risks / cost / recommended option, and wait for human direction
 

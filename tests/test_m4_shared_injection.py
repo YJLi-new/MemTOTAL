@@ -1601,6 +1601,15 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             def summarize_texts(self, texts):
                 return torch.full((len(texts), self.hidden_size), 0.25, dtype=torch.float32)
 
+            def enable_receiver_micro_lora(self, **_kwargs):
+                return None
+
+            def receiver_lora_parameter_count(self):
+                return 0
+
+            def set_receiver_lora_trainable(self, _enabled: bool) -> None:
+                return None
+
             def summarize_layer_prefix_projection(self, layer_prefix_hidden_by_layer, **_kwargs):
                 return {
                     "layer_key_l2_by_layer": {
@@ -1721,6 +1730,151 @@ class SharedInjectionHelpersTest(unittest.TestCase):
             torch.save(checkpoint, checkpoint_path)
             loaded = runtime.load_injection_checkpoint(checkpoint_path)
             self.assertIn("source_stub_state", loaded)
+
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_writer_direct_oracle_support_echo_builds_layerwise_prefix_without_projector(
+        self,
+        mock_backbone_cls,
+    ) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.prompt_calls: list[tuple[tuple[str, ...], int]] = []
+                self.layer_calls: list[tuple[tuple[str, ...], tuple[int, ...], int]] = []
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.full((len(texts), self.hidden_size), 0.25, dtype=torch.float32)
+
+            def enable_receiver_micro_lora(self, **_kwargs):
+                return None
+
+            def receiver_lora_parameter_count(self):
+                return 0
+
+            def set_receiver_lora_trainable(self, _enabled: bool) -> None:
+                return None
+
+            def summarize_layer_prefix_projection(self, layer_prefix_hidden_by_layer, **_kwargs):
+                return {
+                    "layer_key_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in layer_prefix_hidden_by_layer.items()
+                    },
+                    "layer_value_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in layer_prefix_hidden_by_layer.items()
+                    },
+                    "layer_hidden_l2_by_layer": {
+                        str(layer_index): float(tensor.norm().item())
+                        for layer_index, tensor in layer_prefix_hidden_by_layer.items()
+                    },
+                }
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                text_list = tuple(str(text) for text in texts)
+                self.prompt_calls.append((text_list, int(max_tokens)))
+                hidden = torch.full((len(text_list), max_tokens, self.hidden_size), 0.6, dtype=torch.float32)
+                mask = torch.ones(len(text_list), max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def extract_layer_hidden_state_slices(self, texts, *, layer_indices, max_tokens=8):
+                text_list = tuple(str(text) for text in texts)
+                layer_tuple = tuple(int(layer_index) for layer_index in layer_indices)
+                self.layer_calls.append((text_list, layer_tuple, int(max_tokens)))
+                return (
+                    {
+                        int(layer_index): torch.full(
+                            (len(text_list), max_tokens, self.hidden_size),
+                            1.0 + float(layer_index),
+                            dtype=torch.float32,
+                        )
+                        for layer_index in layer_tuple
+                    },
+                    torch.ones(len(text_list), max_tokens, dtype=torch.bool),
+                )
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        config = {
+            "backbone": {"name": "fake", "load_mode": "stub", "dtype": "float32", "model_id": "fake/model"},
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 2,
+                    "dropout": 0.0,
+                },
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [12, 13],
+                    "target_modules": ["k_proj", "v_proj"],
+                    "rank": 2,
+                    "alpha": 4.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_deep_prefix_layers": [12, 13],
+                "pilot_prefix_source_mode": "oracle_support_echo",
+                "pilot_support_encoder_mode": "multi_item_cross_attn_raw",
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_context_support_balance_mode": "layernorm_learned_scalar",
+                "pilot_context_balance_scale_init": 0.75,
+                "pilot_support_balance_scale_init": 1.25,
+                "pilot_writer_context_tokens": 4,
+            },
+        }
+
+        runtime = SharedInjectionPilotRuntime(
+            config=config,
+            seed=37,
+            arm="injected",
+            writer_memory_control="real",
+        )
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            "Support block for oracle",
+            support_rows=[
+                {
+                    "id": "s1",
+                    "benchmark_id": "gsm8k",
+                    "segment": "Question: 1+1?",
+                    "gold_answer": "2",
+                }
+            ],
+            prompt_text="Prompt side context",
+        )
+
+        self.assertIsNone(prefix_artifacts.prefix_embeddings)
+        self.assertIsNotNone(prefix_artifacts.layer_prefix_hidden_by_layer)
+        assert prefix_artifacts.layer_prefix_hidden_by_layer is not None
+        self.assertEqual(sorted(prefix_artifacts.layer_prefix_hidden_by_layer), [12, 13])
+        self.assertEqual(
+            prefix_artifacts.prefix_stats["pilot_prefix_source_mode"],
+            "oracle_support_echo",
+        )
+        self.assertEqual(
+            prefix_artifacts.prefix_stats["pilot_support_encoder_mode"],
+            "multi_item_cross_attn_raw",
+        )
+        self.assertEqual(fake_backbone.prompt_calls[0][0], ("Prompt side context",))
+        self.assertEqual(fake_backbone.prompt_calls[1][0], ("Support block for oracle",))
+        self.assertEqual(fake_backbone.layer_calls[0][0], ("Support block for oracle",))
+        self.assertEqual(fake_backbone.layer_calls[0][1], (12, 13))
+        self.assertEqual(list(prefix_artifacts.memory_long.shape), [1, 4, 6])
+        self.assertIsNotNone(prefix_artifacts.writer_context_states)
 
     def test_update_writer_weaver_summary_reports_move_to_w1(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

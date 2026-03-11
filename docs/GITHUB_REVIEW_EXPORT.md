@@ -30,7 +30,7 @@ These commands are run from the full local working repository, not from the ligh
 - Root text entrypoints such as:
   - `README.md`
   - `AGENTS.md`
-  - `PLANv6.md`
+  - `PLANv7.md`
   - root `PLAN*.md` files
   - `pyproject.toml`
   - lightweight root entry scripts

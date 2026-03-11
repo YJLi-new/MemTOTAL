@@ -15,7 +15,7 @@ class RepoLintTest(unittest.TestCase):
     def test_governing_doc_cross_links_exist(self) -> None:
         checks = {
             ROOT / "AGENTS.md": [
-                "PLANv6.md",
+                "PLANv7.md",
                 "MAIN_IDEA.md",
                 "EXPERIMENTS_INFO.md",
                 "31 MB",
