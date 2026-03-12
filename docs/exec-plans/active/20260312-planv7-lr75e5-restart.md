@@ -142,6 +142,16 @@ Acceptance for this prep slice:
   - queue script: [`queue_planv7_lr75e5_v7_5_after_v7_4.sh`](/root/mydir/MemTOTAL/scripts/queue_planv7_lr75e5_v7_5_after_v7_4.sh)
   - detached queue session: `planv7_lr75e5_v75_queue`
   - guardrails: wait for `V7-4` summary, wait for `planv7_lr75e5_v74_post` to finish, require GitHub `main` to move off `2e3efc4893ca0d33a8fb178886335cddd75ba850`, then parse `recommended_next_step` before launching `V7-5`
+- 2026-03-12 UTC: `V7-4` completed and pushed with:
+  - `main`: `0a05e04a48a619e6e397d6e9bc39ba99c53504cc`
+  - `review`: `446f0421a0df952a9276bfbb405c42c834aebd25`
+- 2026-03-12 UTC: The first detached `V7-5` queue did not fire because it was armed with the post-`V7-4` head `0a05e04a48a619e6e397d6e9bc39ba99c53504cc` instead of the required pre-`V7-4` sentinel `2e3efc4893ca0d33a8fb178886335cddd75ba850`. The relay harness is being re-armed with the correct predecessor SHA so the queue can pass immediately once rechecked.
+- 2026-03-12 UTC: Re-ran the corrected `V7-5` queue helper directly with pre-`V7-4` head `2e3efc4893ca0d33a8fb178886335cddd75ba850`. It immediately launched:
+  - run session: `planv7_lr75e5_v75`
+  - post-publisher: `planv7_lr75e5_v75_post`
+  - run root: `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25`
+  - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25`
+- 2026-03-12 UTC: `V7-6` remains queued behind the forthcoming `V7-5` milestone push in detached session `planv7_lr75e5_v76_queue`, still guarded on `recommended_next_step=prepare_v7_6_decision_point`.
 
 ## Decision Log
 
@@ -152,6 +162,7 @@ Acceptance for this prep slice:
 - Continue phase-by-phase under the original `PLANv7` decision rules, even when the LR-updated replay reproduces the historical phase winner exactly.
 - Fix the harness in-place when a launch bug is clearly script-local, then relaunch the same milestone and keep the review/publish automation attached to the repaired run rather than opening a side branch.
 - For unattended owner-away execution, add guarded queue helpers for the next authorized phase rather than speculative launches; each queue must wait on summary publication, milestone push completion, and an explicit `recommended_next_step` match.
+- When a guarded relay waits on GitHub head movement, the sentinel must be the pre-milestone head, not the just-pushed milestone head; otherwise the queue deadlocks after a successful push.
 
 ## Surprises & Discoveries
 

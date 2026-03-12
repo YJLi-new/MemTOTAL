@@ -55,11 +55,20 @@ Acceptance for this queued handoff:
   - require GitHub `main` to move off `2e3efc4893ca0d33a8fb178886335cddd75ba850`
   - parse `recommended_next_step` and only launch `V7-5` if it equals `open_v7_5_targeted_aux_revisit`
   - arm detached `planv7_lr75e5_v75_post` for milestone publication/push
+- 2026-03-12 UTC: After `V7-4` pushed, inspection showed the live queue had actually been launched with the wrong predecessor argument (`0a05e04...`, the post-`V7-4` head), so it was waiting forever for `main` to move again. The queue is being re-armed with the correct pre-`V7-4` sentinel `2e3efc4893ca0d33a8fb178886335cddd75ba850`.
+- 2026-03-12 UTC: Re-ran the corrected queue helper directly. It passed the existing `V7-4` summary and GitHub-head checks immediately, then launched:
+  - `planv7_lr75e5_v75`
+  - `planv7_lr75e5_v75_post`
+- 2026-03-12 UTC: Current live state:
+  - dataset/materialization step is active under `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25`
+  - `tmux-session.log` is being written at the run root
+  - the post-publisher is waiting on `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.json`
 
 ## Decision Log
 
 - Keep the restart line phase-accurate: `V7-5` should only open from the governed `V7-4` decision point, not from historical expectation alone.
 - Use the current `main` head `2e3efc4893ca0d33a8fb178886335cddd75ba850` as the pre-`V7-4` push sentinel for the guarded queue.
+- Carry the relay-script repairs in the `V7-5` milestone commit so the unattended chain is reproducible from the repo state instead of depending on local uncommitted fixes.
 
 ## Surprises & Discoveries
 

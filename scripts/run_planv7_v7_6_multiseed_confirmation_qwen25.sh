@@ -118,6 +118,7 @@ materialize_config() {
   local eval_path="$6"
   python - "${task_name}" "${variant_id}" "${output_config}" "${support_path}" "${train_path}" "${eval_path}" "${TRAIN_STEPS}" "${MODEL_DIR}" "${RESULT_ROOT}/selection-manifest.json" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 

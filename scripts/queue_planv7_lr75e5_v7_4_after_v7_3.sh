@@ -67,7 +67,11 @@ tmux new-session -d -s planv7_lr75e5_v74_post \
   "bash -lc 'while [ ! -f ${RESULT_ROOT}/v7-4-summary.json ]; do sleep 30; done; \
    cd ${ROOT_DIR}; \
    bash scripts/publish_review_artifacts.sh; \
-   git add docs/exec-plans/active/20260312-planv7-lr75e5-v7-4-forced-consumption.md \
+   git add scripts/run_planv7_v7_4_forced_consumption_qwen25.sh \
+     scripts/queue_planv7_lr75e5_v7_5_after_v7_4.sh \
+     docs/exec-plans/active/20260312-planv7-lr75e5-restart.md \
+     docs/exec-plans/active/20260312-planv7-lr75e5-v7-4-forced-consumption.md \
+     docs/exec-plans/active/20260312-planv7-lr75e5-v7-5-targeted-aux-revisit.md \
      results/generated/review/planv7-lr75e5-v7-4-forced-consumption-qwen25 \
      runs/review/planv7-lr75e5-v7-4-forced-consumption-qwen25; \
    git commit -m \"feat: complete planv7 lr-updated v7-4 forced consumption\"; \

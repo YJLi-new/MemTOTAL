@@ -80,6 +80,7 @@ materialize_config() {
   local eval_path="$6"
   python - "${task_name}" "${variant_id}" "${output_config}" "${support_path}" "${train_path}" "${eval_path}" "${TRAIN_STEPS}" "${MODEL_DIR}" "${BASE_ARM_ID}" "${BASE_SOURCE_PHASE}" "${CONTROL_SOURCE_ARM_ID}" "${DIRECT_CONTROL_ARM_ID}" "${WINNING_DEPTH}" "${WINNING_DEPTH_LABEL}" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
