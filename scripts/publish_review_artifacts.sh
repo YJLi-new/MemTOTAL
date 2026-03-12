@@ -160,6 +160,30 @@ sync_first_available "runs/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
   "runs/verify/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
   "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
   "/tmp/memtotal-runs/planv7-lr75e5-v7-0-metrics-oracle-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-1-width-depth-scout-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-1-width-depth-scout-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-1-width-depth-scout-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-1-width-depth-scout-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-2-direct-bandwidth-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-2-direct-bandwidth-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-2-direct-bandwidth-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-2-direct-bandwidth-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-3-bridge-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-3-bridge-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-3-bridge-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-3-bridge-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-4-forced-consumption-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-4-forced-consumption-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-4-forced-consumption-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-4-forced-consumption-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25"
 sync_first_available "runs/review/planv7-v7-1-width-depth-scout-qwen25" \
   "runs/verify/planv7-v7-1-width-depth-scout-qwen25" \
   "/root/autodl-tmp/runs/verify/planv7-v7-1-width-depth-scout-qwen25" \
@@ -281,6 +305,30 @@ sync_first_available "results/generated/review/planv7-lr75e5-v7-0-metrics-oracle
   "results/generated/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
   "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
   "/tmp/memtotal-results/planv7-lr75e5-v7-0-metrics-oracle-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-1-width-depth-scout-qwen25" \
+  "results/generated/planv7-lr75e5-v7-1-width-depth-scout-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-1-width-depth-scout-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-1-width-depth-scout-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-2-direct-bandwidth-qwen25" \
+  "results/generated/planv7-lr75e5-v7-2-direct-bandwidth-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-2-direct-bandwidth-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-2-direct-bandwidth-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-3-bridge-qwen25" \
+  "results/generated/planv7-lr75e5-v7-3-bridge-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-3-bridge-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-3-bridge-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-4-forced-consumption-qwen25" \
+  "results/generated/planv7-lr75e5-v7-4-forced-consumption-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-4-forced-consumption-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-4-forced-consumption-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25" \
+  "results/generated/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25" \
+  "results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25"
 sync_first_available "results/generated/review/planv7-v7-1-width-depth-scout-qwen25" \
   "results/generated/planv7-v7-1-width-depth-scout-qwen25" \
   "/root/autodl-tmp/results/generated/planv7-v7-1-width-depth-scout-qwen25" \
