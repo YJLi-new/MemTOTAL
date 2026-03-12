@@ -104,6 +104,27 @@ Acceptance for this prep slice:
   - `winning_depth=D1`
   - owner LR metadata remained aligned with the restart override (`7.5e-5`, `false`)
 - 2026-03-12 UTC: Opened LR-updated `V7-2` under the restart namespace with detached run session `planv7_lr75e5_v72` and detached post-completion publisher `planv7_lr75e5_v72_post`.
+- 2026-03-12 UTC: Restarted `V7-2` completed and was pushed to GitHub:
+  - `main`: `1a9c9ac18babeaff27402cc22eaf40daf714230e`
+  - `review`: `94043ec22ece969145170ccc5802b68fe89986c3`
+- 2026-03-12 UTC: LR-updated `V7-2` reproduced the historical direct-bandwidth conclusion:
+  - `comparison_conclusion=direct_32_slot_noisy_move_to_v7_3_bridge_first`
+  - `recommended_next_step=open_v7_3_bridge_first_wide_writer`
+  - `promoted_arms=d_w1_shared,d_w2_shared`
+- 2026-03-12 UTC: Opened LR-updated `V7-3` under the restart namespace with detached run session `planv7_lr75e5_v73` and detached post-completion publisher `planv7_lr75e5_v73_post`.
+- 2026-03-12 UTC: The first `V7-3` launch failed immediately with `NameError: name 'os' is not defined` inside the base bridge runner's config-materialization heredoc. The missing import was added to [`scripts/run_planv7_v7_3_bridge_qwen25.sh`](/root/mydir/MemTOTAL/scripts/run_planv7_v7_3_bridge_qwen25.sh), and targeted validation passed again:
+  - `bash -n scripts/run_planv7_v7_3_bridge_qwen25.sh scripts/run_planv7_lr75e5_v7_3_bridge_qwen25.sh scripts/publish_review_artifacts.sh`
+  - `python -m unittest tests.test_repo_lints tests.test_repo_contract -v`
+- 2026-03-12 UTC: Re-launched LR-updated `V7-3` cleanly with the same namespace and re-armed the detached post-completion publisher after clearing the stale failed-launch session.
+- 2026-03-12 UTC: Current live state:
+  - both detached sessions are alive: `planv7_lr75e5_v73`, `planv7_lr75e5_v73_post`
+  - configs are materialized under `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-3-bridge-qwen25/materialized-configs`
+  - the phase is actively executing `gsm8k-control` via `run_m4_selected_shared_injection_suite.py`
+- 2026-03-12 UTC: Added a queued `V7-4` relay so the restart line can continue unattended after `V7-3` milestone push:
+  - queue doc: [`20260312-planv7-lr75e5-v7-4-forced-consumption.md`](/root/mydir/MemTOTAL/docs/exec-plans/active/20260312-planv7-lr75e5-v7-4-forced-consumption.md)
+  - queue script: [`queue_planv7_lr75e5_v7_4_after_v7_3.sh`](/root/mydir/MemTOTAL/scripts/queue_planv7_lr75e5_v7_4_after_v7_3.sh)
+  - detached queue session: `planv7_lr75e5_v74_queue`
+  - guardrails: wait for `V7-3` summary, wait for `planv7_lr75e5_v73_post` to finish, require GitHub `main` to move off `1a9c9ac18babeaff27402cc22eaf40daf714230e`, then parse `recommended_next_step` before launching `V7-4`
 
 ## Decision Log
 
@@ -112,7 +133,10 @@ Acceptance for this prep slice:
 - Make the V7 runners env-configurable so the same harness can execute both historical and restarted lines.
 - Treat the LR-updated `V7-0` as a full milestone closeout before opening `V7-1`, because the owner asked for GitHub publication after each completed milestone.
 - Continue phase-by-phase under the original `PLANv7` decision rules, even when the LR-updated replay reproduces the historical phase winner exactly.
+- Fix the harness in-place when a launch bug is clearly script-local, then relaunch the same milestone and keep the review/publish automation attached to the repaired run rather than opening a side branch.
+- For unattended owner-away execution, add guarded queue helpers for the next authorized phase rather than speculative launches; each queue must wait on summary publication, milestone push completion, and an explicit `recommended_next_step` match.
 
 ## Surprises & Discoveries
 
 - The original `V7` runner family hardcoded `7.5e-6` directly in each phase script, so a clean restart requires a harness-level LR parameterization rather than only a one-off launch command.
+- The base `V7-3` bridge runner had an unexercised missing `import os` in its second embedded Python block; the LR-updated restart surfaced it before the first suite, so the repair was safe and local.

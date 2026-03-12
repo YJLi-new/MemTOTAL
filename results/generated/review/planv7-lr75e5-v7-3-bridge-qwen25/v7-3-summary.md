@@ -1,0 +1,206 @@
+# PLANv7 V7-3 Bridge Summary
+
+- comparison_conclusion: bridge_stabilizes_wide_writer_tasks_flat_move_to_v7_4
+- recommended_next_step: open_v7_4_forced_consumption
+- direct_control_arm_id: d_w1_shared
+- winning_depth: D1
+- winning_depth_label: mid4
+- top_bridge_arm_id: b_w3_q16_s8
+
+## Owner LR Metadata
+- owner_locked_projector_lr: 7.5e-05
+- repo_confirmed_v65_projector_lr_reference: 7.5e-05
+- owner_override_note: False
+
+## Evidence
+- any_bridge_primary_score_improvement: False
+- any_bridge_strict_metric_gain: False
+- any_bridge_wide_writer_stable_non_regressive: True
+- bridge_stabilizes_wide_writer_without_primary_gain: True
+- direct_control_writer_slots: 16
+- direct_control_strict_writer_memory_task_count: 0
+- direct_control_strict_rank_fraction_mean: 0.069859
+
+## Direct Control
+- writer_family: W1
+- bridge_family: B0
+- projector_family: P1_shared_rank64
+- projector_mode: shared_low_rank
+- memory_path_variant: single_level
+- projector_token_source: writer_slots
+- active_depth_layers: [12, 13, 14, 15]
+- writer_memory_slots: 16
+- control.gsm8k.task_score: 0.000000
+- control.gsm8k.route_live_post_unfreeze: True
+- control.gsm8k.stable_training_v6: False
+- control.triviaqa.task_score: 0.000000
+- control.triviaqa.route_live_post_unfreeze: True
+- control.triviaqa.stable_training_v6: False
+
+## b_w3_q8
+- writer_family: W3
+- bridge_family: B1
+- projector_family: P2
+- projector_mode: per_layer_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: two_level
+- projector_token_source: short_slots
+- reader_context_mode: prompt_summary
+- bridge_queries: 8
+- bridge_short_slots: 8
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 128
+- writer_memory_slots: 64
+- writer_conditioning_layers: 3
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.015640
+- projector_rank_gain_factor_mean: 17.211270
+- route_live_task_count: 2
+- stable_training_task_count: 2
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: 3.483696
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: True
+- gsm8k.tail_window_source: train_loss_tail_50_steps_median
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: True
+- triviaqa.tail_window_source: train_loss_tail_50_steps_median
+
+## b_w3_q16
+- writer_family: W3
+- bridge_family: B2
+- projector_family: P2
+- projector_mode: per_layer_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: two_level
+- projector_token_source: short_slots
+- reader_context_mode: prompt_summary
+- bridge_queries: 16
+- bridge_short_slots: 16
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 128
+- writer_memory_slots: 64
+- writer_conditioning_layers: 3
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.015639
+- projector_rank_gain_factor_mean: 17.332201
+- route_live_task_count: 2
+- stable_training_task_count: 2
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: 2.128147
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: True
+- gsm8k.tail_window_source: train_loss_tail_50_steps_median
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: True
+- triviaqa.tail_window_source: train_loss_tail_50_steps_median
+
+## b_w3_q16_s8
+- writer_family: W3
+- bridge_family: B3
+- projector_family: P2
+- projector_mode: per_layer_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: two_level
+- projector_token_source: short_slots
+- reader_context_mode: prompt_summary
+- bridge_queries: 16
+- bridge_short_slots: 8
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 128
+- writer_memory_slots: 64
+- writer_conditioning_layers: 3
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.015641
+- projector_rank_gain_factor_mean: 17.277014
+- route_live_task_count: 2
+- stable_training_task_count: 2
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: 3.003742
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: True
+- gsm8k.tail_window_source: train_loss_tail_50_steps_median
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: True
+- triviaqa.tail_window_source: train_loss_tail_50_steps_median
+
+## b_w4_q16
+- writer_family: W4
+- bridge_family: B2
+- projector_family: P3
+- projector_mode: per_layer_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: two_level
+- projector_token_source: short_slots
+- reader_context_mode: prompt_summary
+- bridge_queries: 16
+- bridge_short_slots: 16
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 256
+- writer_memory_slots: 96
+- writer_conditioning_layers: 3
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.010427
+- projector_rank_gain_factor_mean: 17.051110
+- route_live_task_count: 2
+- stable_training_task_count: 2
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: 1.048984
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: True
+- gsm8k.tail_window_source: train_loss_tail_50_steps_median
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: True
+- triviaqa.tail_window_source: train_loss_tail_50_steps_median
