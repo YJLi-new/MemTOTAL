@@ -72,6 +72,18 @@ Acceptance for this prep slice:
 ## Progress
 
 - 2026-03-12 UTC: Opened the restart after the owner requested `PLANv7 (LR updated version)` with projector LR `7.5e-5`.
+- 2026-03-12 UTC: Added the restart overlay doc, updated `AGENTS.md` to point at it, patched the `V7` runner family to read projector LR + owner metadata from env defaults, added the dedicated `V7-0` LR-`7.5e-5` wrapper, and wired restart `V7-0` publication into `publish_review_artifacts.sh`.
+- 2026-03-12 UTC: Validation passed:
+  - `bash -n` on the touched `V7` runners, the restart wrapper, and `publish_review_artifacts.sh`
+  - `python -m unittest tests.test_repo_lints tests.test_repo_contract -v`
+- 2026-03-12 UTC: Pushed the restart-prep milestone to GitHub:
+  - `main`: `1b6f3233f89ed154da43635f093f87c83bc4fe45`
+  - `review`: `9bf1936...` from the same source commit
+- 2026-03-12 UTC: Launched restarted `V7-0` in detached `tmux` as `planv7_lr75e5_v70` with:
+  - run root: `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-0-metrics-oracle-qwen25`
+  - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-0-metrics-oracle-qwen25`
+  - wrapper: `scripts/run_planv7_lr75e5_v7_0_metrics_oracle_qwen25.sh`
+- 2026-03-12 UTC: Initial live status: the tmux session is alive and the restart namespace has begun materializing datasets/configs/manifests/sources.
 
 ## Decision Log
 
