@@ -1,0 +1,150 @@
+# PLANv7 V7-2 Direct Bandwidth Summary
+
+- comparison_conclusion: direct_32_slot_noisy_move_to_v7_3_bridge_first
+- recommended_next_step: open_v7_3_bridge_first_wide_writer
+- winning_depth: D1
+- winning_depth_label: mid4
+- promoted_arms: d_w1_shared, d_w2_shared
+
+## Owner LR Metadata
+- owner_locked_projector_lr: 7.5e-05
+- repo_confirmed_v65_projector_lr_reference: 7.5e-05
+- owner_override_note: False
+
+## Evidence
+- bandwidth_strict_improvement_observed: False
+- projector_scaling_usefulness_change_observed: True
+- w1_shared_strict_writer_memory_task_count: 0
+- w2_shared_strict_writer_memory_task_count: 0
+- w2_perlayer_strict_writer_memory_task_count: 0
+- w1_shared_strict_rank_fraction_mean: 0.068181
+- w2_shared_strict_rank_fraction_mean: 0.031288
+- w2_perlayer_strict_rank_fraction_mean: 0.031283
+- w2_shared_primary_task_score_delta_sum: 0.000000
+- w2_perlayer_primary_task_score_delta_sum: 0.000000
+
+## FEVER Guardrail
+- complete: True
+- fever_not_used_to_override_primary: True
+- evaluated_arms: d_w1_shared, d_w2_shared
+- missing_reason: 
+
+## d_w1_shared
+- writer_family: W1
+- depth_family: D1
+- projector_family: P1_shared_rank64
+- projector_mode: shared_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: single_level
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 64
+- writer_memory_slots: 16
+- writer_conditioning_layers: 2
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.068181
+- projector_rank_gain_factor_mean: 16.401912
+- route_live_task_count: 2
+- stable_training_task_count: 0
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: -4.220705
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: False
+- gsm8k.projector_manufactured_diversity: True
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: False
+- triviaqa.projector_manufactured_diversity: False
+- fever.task_score_delta_vs_control: 0.000000
+- fever.writer_memory_not_collapsed_strict: False
+- fever.primary_usefulness_positive: False
+
+## d_w2_shared
+- writer_family: W2
+- depth_family: D1
+- projector_family: shared_rank64_control
+- projector_mode: shared_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: single_level
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 64
+- writer_memory_slots: 32
+- writer_conditioning_layers: 2
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.031288
+- projector_rank_gain_factor_mean: 31.153949
+- route_live_task_count: 2
+- stable_training_task_count: 0
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: -1.135034
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: False
+- gsm8k.projector_manufactured_diversity: True
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: False
+- triviaqa.projector_manufactured_diversity: False
+- fever.task_score_delta_vs_control: 0.000000
+- fever.writer_memory_not_collapsed_strict: False
+- fever.primary_usefulness_positive: False
+
+## d_w2_perlayer
+- writer_family: W2
+- depth_family: D1
+- projector_family: P2_per_layer_rank128
+- projector_mode: per_layer_low_rank
+- bridge_mode: writer_direct
+- memory_path_variant: single_level
+- active_depth_layers: [12, 13, 14, 15]
+- projector_rank: 128
+- writer_memory_slots: 32
+- writer_conditioning_layers: 2
+- gsm8k_task_score_delta_vs_control: 0.000000
+- triviaqa_task_score_delta_vs_control: 0.000000
+- primary_task_score_delta_sum: 0.000000
+- strict_writer_memory_task_count: 0
+- strict_rank_fraction_mean: 0.031283
+- projector_rank_gain_factor_mean: 33.082715
+- route_live_task_count: 2
+- stable_training_task_count: 0
+- primary_branch_success_task_count: 0
+- any_primary_usefulness_positive: False
+- answer_switch_helpfulness_score: -1.970326
+- ranking_penalty_count: 4
+- gsm8k.task_score_delta_vs_control: 0.000000
+- gsm8k.writer_memory_not_collapsed_strict: False
+- gsm8k.primary_usefulness_positive: False
+- gsm8k.primary_branch_success: False
+- gsm8k.route_live_post_unfreeze: True
+- gsm8k.stable_training_v6: False
+- gsm8k.projector_manufactured_diversity: True
+- triviaqa.task_score_delta_vs_control: 0.000000
+- triviaqa.writer_memory_not_collapsed_strict: False
+- triviaqa.primary_usefulness_positive: False
+- triviaqa.primary_branch_success: False
+- triviaqa.route_live_post_unfreeze: True
+- triviaqa.stable_training_v6: False
+- triviaqa.projector_manufactured_diversity: False

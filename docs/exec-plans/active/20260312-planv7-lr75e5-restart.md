@@ -95,6 +95,15 @@ Acceptance for this prep slice:
     - `owner_locked_projector_lr=7.5e-5`
     - `repo_confirmed_v65_projector_lr_reference=7.5e-5`
     - `owner_override_note=false`
+- 2026-03-12 UTC: Restarted `V7-1` completed and was pushed to GitHub:
+  - `main`: `6d779f68c07ac2ffcd830c340106f3218583a2b8`
+  - `review`: `aaffef178d0319c1d41e1f37ddc033d1bd5aeedf`
+- 2026-03-12 UTC: LR-updated `V7-1` again selected `D1 / mid4`:
+  - `comparison_conclusion=select_mid4_for_v7_2`
+  - `recommended_next_step=open_v7_2_direct_bandwidth_mid4`
+  - `winning_depth=D1`
+  - owner LR metadata remained aligned with the restart override (`7.5e-5`, `false`)
+- 2026-03-12 UTC: Opened LR-updated `V7-2` under the restart namespace with detached run session `planv7_lr75e5_v72` and detached post-completion publisher `planv7_lr75e5_v72_post`.
 
 ## Decision Log
 
@@ -102,6 +111,7 @@ Acceptance for this prep slice:
 - Use a restart overlay doc plus distinct artifact namespace rather than overwriting historical results.
 - Make the V7 runners env-configurable so the same harness can execute both historical and restarted lines.
 - Treat the LR-updated `V7-0` as a full milestone closeout before opening `V7-1`, because the owner asked for GitHub publication after each completed milestone.
+- Continue phase-by-phase under the original `PLANv7` decision rules, even when the LR-updated replay reproduces the historical phase winner exactly.
 
 ## Surprises & Discoveries
 
