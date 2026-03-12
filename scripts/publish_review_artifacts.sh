@@ -156,6 +156,10 @@ sync_first_available "runs/review/planv7-v7-0-metrics-oracle-qwen25" \
   "runs/verify/planv7-v7-0-metrics-oracle-qwen25" \
   "/root/autodl-tmp/runs/verify/planv7-v7-0-metrics-oracle-qwen25" \
   "/tmp/memtotal-runs/planv7-v7-0-metrics-oracle-qwen25"
+sync_first_available "runs/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
+  "runs/verify/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
+  "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
+  "/tmp/memtotal-runs/planv7-lr75e5-v7-0-metrics-oracle-qwen25"
 sync_first_available "runs/review/planv7-v7-1-width-depth-scout-qwen25" \
   "runs/verify/planv7-v7-1-width-depth-scout-qwen25" \
   "/root/autodl-tmp/runs/verify/planv7-v7-1-width-depth-scout-qwen25" \
@@ -273,6 +277,10 @@ sync_first_available "results/generated/review/planv7-v7-0-metrics-oracle-qwen25
   "results/generated/planv7-v7-0-metrics-oracle-qwen25" \
   "/root/autodl-tmp/results/generated/planv7-v7-0-metrics-oracle-qwen25" \
   "/tmp/memtotal-results/planv7-v7-0-metrics-oracle-qwen25"
+sync_first_available "results/generated/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
+  "results/generated/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
+  "/root/autodl-tmp/results/generated/planv7-lr75e5-v7-0-metrics-oracle-qwen25" \
+  "/tmp/memtotal-results/planv7-lr75e5-v7-0-metrics-oracle-qwen25"
 sync_first_available "results/generated/review/planv7-v7-1-width-depth-scout-qwen25" \
   "results/generated/planv7-v7-1-width-depth-scout-qwen25" \
   "/root/autodl-tmp/results/generated/planv7-v7-1-width-depth-scout-qwen25" \

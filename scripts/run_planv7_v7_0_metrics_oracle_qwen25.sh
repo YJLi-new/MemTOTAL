@@ -14,6 +14,11 @@ MODEL_DIR="${6:-/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct}"
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PLANV7_PROJECTOR_LR="${PLANV7_PROJECTOR_LR:-7.5e-6}"
+export PLANV7_OWNER_LOCKED_PROJECTOR_LR="${PLANV7_OWNER_LOCKED_PROJECTOR_LR:-${PLANV7_PROJECTOR_LR}}"
+export PLANV7_REPO_CONFIRMED_V65_PROJECTOR_LR_REFERENCE="${PLANV7_REPO_CONFIRMED_V65_PROJECTOR_LR_REFERENCE:-7.5e-5}"
+export PLANV7_OWNER_OVERRIDE_NOTE="${PLANV7_OWNER_OVERRIDE_NOTE:-true}"
+export PLANV7_EXPERIMENT_PREFIX="${PLANV7_EXPERIMENT_PREFIX:-planv7}"
 
 mkdir -p "${RUN_ROOT}" "${RESULT_ROOT}"
 
@@ -44,6 +49,7 @@ materialize_config() {
   local eval_path="$6"
   python - "${task_name}" "${variant}" "${output_config}" "${support_path}" "${train_path}" "${eval_path}" "${TRAIN_STEPS}" "${MODEL_DIR}" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -75,11 +81,15 @@ config["runtime"]["pilot_lr_schedule"] = "constant_with_linear_warmup"
 config["runtime"]["pilot_lr_warmup_steps"] = 0
 config["runtime"]["pilot_projector_warmup_steps"] = 0
 config["runtime"]["pilot_writer_learning_rate"] = 1.0e-4
-config["runtime"]["pilot_projector_learning_rate"] = 7.5e-6
+config["runtime"]["pilot_projector_learning_rate"] = float(os.environ["PLANV7_PROJECTOR_LR"])
 config["runtime"]["pilot_receiver_lora_learning_rate"] = 5.0e-5
-config["runtime"]["owner_locked_projector_lr"] = 7.5e-6
-config["runtime"]["repo_confirmed_v65_projector_lr_reference"] = 7.5e-5
-config["runtime"]["owner_override_note"] = True
+config["runtime"]["owner_locked_projector_lr"] = float(os.environ["PLANV7_OWNER_LOCKED_PROJECTOR_LR"])
+config["runtime"]["repo_confirmed_v65_projector_lr_reference"] = float(
+    os.environ["PLANV7_REPO_CONFIRMED_V65_PROJECTOR_LR_REFERENCE"]
+)
+config["runtime"]["owner_override_note"] = (
+    os.environ["PLANV7_OWNER_OVERRIDE_NOTE"].strip().lower() == "true"
+)
 config["runtime"]["pilot_writer_weight_decay"] = 0.0
 config["runtime"]["pilot_projector_weight_decay"] = 0.0
 config["runtime"]["pilot_receiver_lora_weight_decay"] = 0.0
@@ -177,7 +187,7 @@ elif variant in {"o_ctx_early", "o_ctx_mid", "o_sup_early", "o_sup_mid"}:
 else:
     raise ValueError(f"Unsupported V7-0 variant={variant}")
 
-config["experiment"]["name"] = f"planv7_v7_0_{task_name}_{variant}"
+config["experiment"]["name"] = f"{os.environ['PLANV7_EXPERIMENT_PREFIX']}_v7_0_{task_name}_{variant}"
 output_config.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
 PY
 }

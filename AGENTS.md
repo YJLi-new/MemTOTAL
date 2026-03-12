@@ -8,23 +8,31 @@
 
 ## 0) One-Sentence TL;DR (always do this first)
 
-**Before starting any task, open `PLANv7.md` first and execute against it strictly.**
+**Before starting any task, open `PLANv7-LR-updated.md` first and execute against it strictly.**
 
-- `PLANv7.md`: single entry point / current execution plan / DoD / artifact requirements / milestone order
+- `PLANv7-LR-updated.md`: current restart entry point / active execution plan / explicit override layer for the restarted `PLANv7` line
+- `PLANv7.md`: backbone phase definitions / inherited DoD / artifact requirements / milestone order unless the restart doc overrides them
 - `docs/MAIN_IDEA.md`: method definition / training stages / core hypotheses / key differences from MemGen
 - `docs/EXPERIMENTS_INFO.md`: experiment protocol / baselines / tables and figures / statistical rules / paper-facing artifact standards
 
 > Rules:
 > 1. Do **not** compress away or delete critical information from these three documents.
 > 2. You may reorganize structure, add a table of contents, improve cross-links, and tighten wording; you may not remove key experiments, controls, DoD items, script entry points, or paper claims.
-> 3. If documents conflict: **method authority belongs to `docs/MAIN_IDEA.md`; experiment authority belongs to `docs/EXPERIMENTS_INFO.md`; execution order and acceptance belong to `PLANv7.md`.**
+> 3. If documents conflict: **method authority belongs to `docs/MAIN_IDEA.md`; experiment authority belongs to `docs/EXPERIMENTS_INFO.md`; execution order and acceptance belong to `PLANv7-LR-updated.md`, with `PLANv7.md` as the inherited backbone where the restart doc is silent.**
 
 ---
 
 ## 1) Document Responsibilities (separate responsibilities before doing work)
 
-### `PLANv7.md` - the single authoritative runbook / backlog
-Every task starts here. It defines:
+### `PLANv7-LR-updated.md` - the current authoritative restart runbook / backlog
+Every task starts here for the active restarted line. It defines:
+- the active restart override layer
+- the current milestone entry point
+- artifact namespace rules for the restarted line
+- when to fall through to `PLANv7.md`
+
+### `PLANv7.md` - the inherited backbone runbook
+The restart still depends on this document for the full phase definitions. It defines:
 - milestone order
 - P0/P1/P2 priorities
 - the Definition of Done (DoD) for each task
@@ -69,7 +77,7 @@ This file should stay intentionally short. Do not turn it into a giant manual. L
 ### 3.1 Ask -> Plan -> Code -> Validate -> Record -> PR
 
 1. **Ask / Understand**
-   First locate the relevant milestone, item, and DoD in `PLANv7.md`.
+   First locate the relevant milestone, item, and DoD in `PLANv7-LR-updated.md`, then fall through to `PLANv7.md` for inherited phase details.
    Do not work "by feel" outside the plan.
 
 2. **Plan**

@@ -15,6 +15,11 @@ V72_SUMMARY_JSON="${7:-results/generated/review/planv7-v7-2-direct-bandwidth-qwe
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export PLANV7_PROJECTOR_LR="${PLANV7_PROJECTOR_LR:-7.5e-6}"
+export PLANV7_OWNER_LOCKED_PROJECTOR_LR="${PLANV7_OWNER_LOCKED_PROJECTOR_LR:-${PLANV7_PROJECTOR_LR}}"
+export PLANV7_REPO_CONFIRMED_V65_PROJECTOR_LR_REFERENCE="${PLANV7_REPO_CONFIRMED_V65_PROJECTOR_LR_REFERENCE:-7.5e-5}"
+export PLANV7_OWNER_OVERRIDE_NOTE="${PLANV7_OWNER_OVERRIDE_NOTE:-true}"
+export PLANV7_EXPERIMENT_PREFIX="${PLANV7_EXPERIMENT_PREFIX:-planv7}"
 
 mkdir -p "${RUN_ROOT}" "${RESULT_ROOT}"
 
@@ -27,6 +32,7 @@ mkdir -p "${DATA_ROOT}" "${SOURCE_ROOT}" "${MANIFEST_ROOT}" "${CONFIG_ROOT}"
 read -r DIRECT_CONTROL_ARM_ID WINNING_DEPTH WINNING_DEPTH_LABEL < <(
   python - "${V72_SUMMARY_JSON}" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -240,11 +246,15 @@ config["runtime"]["pilot_lr_schedule"] = "constant_with_linear_warmup"
 config["runtime"]["pilot_lr_warmup_steps"] = 0
 config["runtime"]["pilot_projector_warmup_steps"] = 0
 config["runtime"]["pilot_writer_learning_rate"] = 1.0e-4
-config["runtime"]["pilot_projector_learning_rate"] = 7.5e-6
+config["runtime"]["pilot_projector_learning_rate"] = float(os.environ["PLANV7_PROJECTOR_LR"])
 config["runtime"]["pilot_receiver_lora_learning_rate"] = 5.0e-5
-config["runtime"]["owner_locked_projector_lr"] = 7.5e-6
-config["runtime"]["repo_confirmed_v65_projector_lr_reference"] = 7.5e-5
-config["runtime"]["owner_override_note"] = True
+config["runtime"]["owner_locked_projector_lr"] = float(os.environ["PLANV7_OWNER_LOCKED_PROJECTOR_LR"])
+config["runtime"]["repo_confirmed_v65_projector_lr_reference"] = float(
+    os.environ["PLANV7_REPO_CONFIRMED_V65_PROJECTOR_LR_REFERENCE"]
+)
+config["runtime"]["owner_override_note"] = (
+    os.environ["PLANV7_OWNER_OVERRIDE_NOTE"].strip().lower() == "true"
+)
 config["runtime"]["pilot_writer_weight_decay"] = 0.0
 config["runtime"]["pilot_projector_weight_decay"] = 0.0
 config["runtime"]["pilot_receiver_lora_weight_decay"] = 0.0
@@ -330,7 +340,7 @@ else:
     }
     config["method"]["receiver_lora"] = dict(receiver_lora_config)
 
-config["experiment"]["name"] = f"planv7_v7_3_{task_name}_{arm_id}"
+config["experiment"]["name"] = f"{os.environ['PLANV7_EXPERIMENT_PREFIX']}_v7_3_{task_name}_{arm_id}"
 output_config.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
 PY
 }
