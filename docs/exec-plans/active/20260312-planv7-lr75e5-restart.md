@@ -84,12 +84,24 @@ Acceptance for this prep slice:
   - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-0-metrics-oracle-qwen25`
   - wrapper: `scripts/run_planv7_lr75e5_v7_0_metrics_oracle_qwen25.sh`
 - 2026-03-12 UTC: Initial live status: the tmux session is alive and the restart namespace has begun materializing datasets/configs/manifests/sources.
+- 2026-03-12 UTC: Restarted `V7-0` completed and published under the governed review namespace:
+  - `results/generated/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25/v7-0-summary.json`
+  - `results/generated/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25/v7-0-summary.md`
+- 2026-03-12 UTC: The LR-updated replay reproduced the historical `V7-0` decision:
+  - `comparison_conclusion=oracle_flat_direct_injection_high_risk`
+  - `recommended_next_step=open_v7_1_width_depth_scout_keep_bridge_ready`
+  - `preferred_depth=indeterminate`
+  - recorded metadata now correctly matches the restart override:
+    - `owner_locked_projector_lr=7.5e-5`
+    - `repo_confirmed_v65_projector_lr_reference=7.5e-5`
+    - `owner_override_note=false`
 
 ## Decision Log
 
 - Preserve `PLANv7.md` as the scientific backbone instead of rewriting it.
 - Use a restart overlay doc plus distinct artifact namespace rather than overwriting historical results.
 - Make the V7 runners env-configurable so the same harness can execute both historical and restarted lines.
+- Treat the LR-updated `V7-0` as a full milestone closeout before opening `V7-1`, because the owner asked for GitHub publication after each completed milestone.
 
 ## Surprises & Discoveries
 
