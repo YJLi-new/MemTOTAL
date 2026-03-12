@@ -125,6 +125,23 @@ Acceptance for this prep slice:
   - queue script: [`queue_planv7_lr75e5_v7_4_after_v7_3.sh`](/root/mydir/MemTOTAL/scripts/queue_planv7_lr75e5_v7_4_after_v7_3.sh)
   - detached queue session: `planv7_lr75e5_v74_queue`
   - guardrails: wait for `V7-3` summary, wait for `planv7_lr75e5_v73_post` to finish, require GitHub `main` to move off `1a9c9ac18babeaff27402cc22eaf40daf714230e`, then parse `recommended_next_step` before launching `V7-4`
+- 2026-03-12 UTC: LR-updated `V7-3` completed and was pushed to GitHub:
+  - `main`: `2e3efc4893ca0d33a8fb178886335cddd75ba850`
+  - `review`: `6cb5ed6d72ddf21cc90dbbf6fdd38f31ac90dbba`
+- 2026-03-12 UTC: LR-updated `V7-3` again selected the historical handoff:
+  - `comparison_conclusion=bridge_stabilizes_wide_writer_tasks_flat_move_to_v7_4`
+  - `recommended_next_step=open_v7_4_forced_consumption`
+  - `top_bridge_arm_id=b_w3_q16_s8`
+- 2026-03-12 UTC: The first `V7-4` launch failed with the same missing-import pattern as `V7-3`: `NameError: name 'os' is not defined` inside the base forced-consumption runner's config-materialization heredoc. The missing import was added to [`scripts/run_planv7_v7_4_forced_consumption_qwen25.sh`](/root/mydir/MemTOTAL/scripts/run_planv7_v7_4_forced_consumption_qwen25.sh), and the queue/publish harness was widened to carry the repair and the next relay files.
+- 2026-03-12 UTC: Re-launched LR-updated `V7-4` cleanly. Current live state:
+  - run session: `planv7_lr75e5_v74`
+  - post-publisher: `planv7_lr75e5_v74_post`
+  - current work is in `writer_jointpeft_data` materialization for `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-4-forced-consumption-qwen25`
+- 2026-03-12 UTC: Added a queued `V7-5` relay so the restart line can continue unattended after `V7-4` milestone push:
+  - queue doc: [`20260312-planv7-lr75e5-v7-5-targeted-aux-revisit.md`](/root/mydir/MemTOTAL/docs/exec-plans/active/20260312-planv7-lr75e5-v7-5-targeted-aux-revisit.md)
+  - queue script: [`queue_planv7_lr75e5_v7_5_after_v7_4.sh`](/root/mydir/MemTOTAL/scripts/queue_planv7_lr75e5_v7_5_after_v7_4.sh)
+  - detached queue session: `planv7_lr75e5_v75_queue`
+  - guardrails: wait for `V7-4` summary, wait for `planv7_lr75e5_v74_post` to finish, require GitHub `main` to move off `2e3efc4893ca0d33a8fb178886335cddd75ba850`, then parse `recommended_next_step` before launching `V7-5`
 
 ## Decision Log
 
@@ -140,3 +157,4 @@ Acceptance for this prep slice:
 
 - The original `V7` runner family hardcoded `7.5e-6` directly in each phase script, so a clean restart requires a harness-level LR parameterization rather than only a one-off launch command.
 - The base `V7-3` bridge runner had an unexercised missing `import os` in its second embedded Python block; the LR-updated restart surfaced it before the first suite, so the repair was safe and local.
+- The base `V7-4` forced-consumption runner had the same missing-`import os` defect in its second embedded Python block, so the LR-updated restart is now surfacing a repeatable harness bug class across phase scripts rather than a one-off `V7-3` mistake.

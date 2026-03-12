@@ -2,16 +2,19 @@
 
 ## Purpose
 
-Queue restarted `V7-4` behind LR-updated `V7-3` so the forced-consumption stress test starts automatically if the bridge phase publishes an authorized handoff under projector LR `7.5e-5`.
+Run restarted `V7-4` behind LR-updated `V7-3` so the forced-consumption stress test executes under projector LR `7.5e-5`, while preserving a guarded handoff contract from the governed `V7-3` summary.
 
 ## Context
 
-- LR-updated `V7-3` is currently running under:
+- LR-updated `V7-3` completed and published under:
   - run root: `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-3-bridge-qwen25`
   - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-3-bridge-qwen25`
 - Historical `PLANv7` advanced from `V7-3` into `V7-4`, but the restart line should only do that if the new `V7-3` summary publishes the same authorization.
 - The restart wrapper already exists at:
   - [`scripts/run_planv7_lr75e5_v7_4_forced_consumption_qwen25.sh`](/root/mydir/MemTOTAL/scripts/run_planv7_lr75e5_v7_4_forced_consumption_qwen25.sh)
+- The governing `V7-3` summary did authorize this handoff:
+  - `comparison_conclusion=bridge_stabilizes_wide_writer_tasks_flat_move_to_v7_4`
+  - `recommended_next_step=open_v7_4_forced_consumption`
 
 ## Plan Of Work
 
@@ -55,12 +58,20 @@ Acceptance for this queued handoff:
   - require GitHub `main` to move off `1a9c9ac18babeaff27402cc22eaf40daf714230e`
   - parse `recommended_next_step` and only launch `V7-4` if it equals `open_v7_4_forced_consumption`
   - arm detached `planv7_lr75e5_v74_post` for milestone publication/push
+- 2026-03-12 UTC: `V7-3` completed and pushed, but the first `V7-4` launch failed before the first suite with `NameError: name 'os' is not defined` in the base forced-consumption runner's second embedded Python block.
+- 2026-03-12 UTC: Patched the missing import in [`run_planv7_v7_4_forced_consumption_qwen25.sh`](/root/mydir/MemTOTAL/scripts/run_planv7_v7_4_forced_consumption_qwen25.sh) and widened the `V7-4` post-publisher add-set so the repair and the queued `V7-5` relay will be included in the `V7-4` milestone push.
+- 2026-03-12 UTC: Re-launched restarted `V7-4` manually on the repaired base script. Current live state:
+  - detached sessions alive: `planv7_lr75e5_v74`, `planv7_lr75e5_v74_post`
+  - `writer_jointpeft_data` is materializing the `gsm8k,triviaqa` bundle
+  - run root: `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-4-forced-consumption-qwen25`
+  - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-4-forced-consumption-qwen25`
 
 ## Decision Log
 
 - Treat `V7-4` as a guarded queue rather than launching speculatively; the restart line must still obey the `V7-3` decision point.
 - Gate the queue on a changed GitHub `main` head so the next phase does not jump ahead of the milestone-push requirement.
+- After the first launch bug, re-use the same namespace and post-publisher rather than forking a second `V7-4` branch; the milestone history should remain single-threaded.
 
 ## Surprises & Discoveries
 
-- None yet; this document is the queued handoff before `V7-3` closeout.
+- The base `V7-4` runner repeated the same missing-`import os` pattern that `V7-3` exposed, which confirms this was a shared harness defect rather than a phase-specific anomaly.
