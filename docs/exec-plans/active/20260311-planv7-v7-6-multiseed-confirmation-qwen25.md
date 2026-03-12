@@ -100,6 +100,70 @@ Acceptance:
 - 2026-03-11 UTC: Added the new multi-seed runner and summary script skeleton, plus regression coverage for the core `Path P` and `Path Q` decisions.
 - 2026-03-11 UTC: Validation passed for the new `V7-6` surface: `bash -n`, `py_compile`, `python -m unittest tests.test_planv7_v7_6_multiseed_confirmation_summary -v`, and `python -m unittest discover -s tests -v` (`293` tests, `OK`).
 - 2026-03-11 UTC: Deliberately deferred publish-hook edits and the live `V7-6` launch until the active `V7-5` run is closed and committed.
+- 2026-03-11 16:40 UTC: `V7-5` closed with `comparison_conclusion=aux_revisit_flat_best_branch_for_decision_point` and selected `base_for_v7_6_arm_id=a5_barlow`, so the decision gate now uses the Barlow branch as `p1`.
+- 2026-03-11 16:42 UTC: After pushing `main` commit `302e515` and republishing the `review` branch from that exact source commit, launched the governed `V7-6` run in detached `tmux` as `planv7_v76`.
+- 2026-03-11 16:42 UTC: Live roots:
+  - run root: `/root/autodl-tmp/runs/verify/planv7-v7-6-multiseed-confirmation-qwen25`
+  - result root: `/root/autodl-tmp/results/generated/planv7-v7-6-multiseed-confirmation-qwen25`
+  - session log: `/root/autodl-tmp/runs/verify/planv7-v7-6-multiseed-confirmation-qwen25/tmux-session.log`
+- 2026-03-11 16:42 UTC: Initial status: the detached job is alive and still in the early config/materialization stage; no confirmation suites have finished yet.
+- 2026-03-12 UTC: The first `V7-6` attempt stopped on a data-disk checkpoint write failure while the matrix was nearly complete.
+- 2026-03-12 UTC: Preserved partial state audit:
+  - completed suites: `43/45`
+  - missing suites:
+    - `p2_a1_reconstruction/seed_61111/triviaqa`
+    - `p2_a1_reconstruction/seed_61111/fever`
+- 2026-03-12 UTC: Performed a non-experimental cleanup only. Deleted:
+  - old GitHub snapshot temp trees under `/root/autodl-tmp/memtotal-github-review-*`
+  - `/root/autodl-tmp/memtotal-review-snapshot-expanded`
+  - old dry-run temp trees under `/root/autodl-tmp/tmp/m4-deep-*`
+  - unused Hugging Face cache entries for `Qwen3-8B` and `NarrativeQA`
+- 2026-03-12 UTC: No experimental raw run tree was deleted in this pass. The deletion manifest is recorded at `/root/runtime-archives/memtotal/deletion-manifests/20260312-v76-space-recovery-first-pass.md`.
+- 2026-03-12 UTC: Data-disk headroom after cleanup: approximately `37G` free on `/root/autodl-tmp`.
+- 2026-03-12 UTC: Relaunched the same `V7-6` runner in detached `tmux` as `planv7_v76` against the same run/result roots so it can resume from the preserved `43/45` state.
+- 2026-03-12 UTC: Post-relaunch health check:
+  - `tmux` session is alive
+  - a GPU process is active again
+  - the run remains targeted at the preserved missing `p2_a1_reconstruction/seed_61111` tail
+- 2026-03-12 UTC: Performed approved experimental runtime-data preservation for the cold `V6-5` raw verify tree before deleting it from the data disk:
+  - preserved source: `/root/autodl-tmp/runs/verify/planv6-v6-5-recipe-stabilization-qwen25`
+  - preserved archive: `/root/runtime-archives/memtotal/experimental-runtime/20260312-planv6-v6-5-recipe-stabilization-qwen25-runtime-only.tar.zst`
+  - checksum: `/root/runtime-archives/memtotal/experimental-runtime/20260312-planv6-v6-5-recipe-stabilization-qwen25-runtime-only.sha256`
+  - manifest: `/root/runtime-archives/memtotal/experimental-runtime/20260312-planv6-v6-5-recipe-stabilization-qwen25-runtime-only.manifest.md`
+  - scope: runtime-only files, explicitly excluding `checkpoint.pt` and `snapshot_evals/`
+- 2026-03-12 UTC: The experimental preservation verified cleanly before deletion:
+  - archived file count: `1388`
+  - archived uncompressed bytes: `855635211`
+  - compressed archive bytes: `90881891`
+  - checksum status: `OK`
+- 2026-03-12 UTC: Deleted the preserved cold raw run tree from the data disk and recorded the action at `/root/runtime-archives/memtotal/deletion-manifests/20260312-v65-runtime-preservation-and-deletion.md`.
+- 2026-03-12 UTC: Data-disk headroom after experimental preservation + deletion increased to approximately `208G` free on `/root/autodl-tmp`, while the resumed `V7-6` run remained alive.
+- 2026-03-12 UTC: After `V7-6` completed, performed a second approved cold-run cleanup pass to restore durable free-space margin on `/root/autodl-tmp`.
+- 2026-03-12 UTC: Preserved runtime-only archives, checksums, and manifests for these deleted cold raw verify trees under `/root/runtime-archives/memtotal/experimental-runtime/` and `/root/runtime-archives/memtotal/deletion-manifests/`:
+  - `planv7-v7-5-targeted-aux-revisit-qwen25`
+  - `planv7-v7-3-bridge-qwen25`
+  - `planv7-v7-4-forced-consumption-qwen25`
+  - `planv6-v6-4-mixed-matrix-qwen25`
+  - `planv6-v6-3-loss-screening-qwen25`
+  - `planv6-v6-2-support-screening-qwen25`
+  - `planv7-v7-2-direct-bandwidth-qwen25`
+  - `planv7-v7-0-metrics-oracle-qwen25`
+  - `planv7-v7-1-width-depth-scout-qwen25`
+- 2026-03-12 UTC: Post-cleanup data-disk state reached approximately `575G` free and `46%` used on `/root/autodl-tmp`, which clears the `>=50% free` target.
+- 2026-03-12 UTC: `V7-6` closed successfully with all `45/45` suites complete and governed outputs written to:
+  - `/root/autodl-tmp/results/generated/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json`
+  - `/root/autodl-tmp/results/generated/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.md`
+- 2026-03-12 UTC: Final governed decision:
+  - `comparison_conclusion=path_r_architecture_pivot_required`
+  - `recommended_next_step=prepare_backbone_native_writer_pivot`
+  - `best_confirmed_variant_id=p1_a5_barlow`
+  - `winner_uses_bridge=true`
+  - `winning_depth=D1`
+- 2026-03-12 UTC: Final readout:
+  - no real three-seed primary-task gain on `GSM8K` or `TriviaQA`
+  - no strict Writer-memory improvement sustained across the promoted branch set
+  - both promoted bridge arms remained route-live and stable, but actual score movement stayed flat
+  - this satisfies `PLANv7` `Path R`, so the external bridge line is no longer the active mainline after `V7-6`
 
 ## Decision Log
 
