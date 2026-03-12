@@ -152,6 +152,21 @@ Acceptance for this prep slice:
   - run root: `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25`
   - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25`
 - 2026-03-12 UTC: `V7-6` remains queued behind the forthcoming `V7-5` milestone push in detached session `planv7_lr75e5_v76_queue`, still guarded on `recommended_next_step=prepare_v7_6_decision_point`.
+- 2026-03-12 UTC: LR-updated `V7-5` completed and was pushed to GitHub:
+  - `main`: `2178f5af0cd2923e352897729701b02b387db3e8`
+  - `review`: `ddd183f83a353682cc1e23b212ce739aa6cb9a26`
+- 2026-03-12 UTC: LR-updated `V7-5` again matched the historical decision point:
+  - `comparison_conclusion=aux_revisit_flat_best_branch_for_decision_point`
+  - `recommended_next_step=prepare_v7_6_decision_point`
+  - `base_for_v7_6_arm_id=a5_barlow`
+- 2026-03-12 UTC: The detached `V7-6` queue did not survive the `V7-5` tmux server shutdown, so the restart line is opening `V7-6` directly from the now-pushed governed `V7-5` handoff instead of waiting on a dead queue session.
+- 2026-03-12 UTC: Opened LR-updated `V7-6` directly from the validated `V7-5` handoff using the existing guarded launcher. Current live state:
+  - run session: `planv7_lr75e5_v76`
+  - post-publisher: `planv7_lr75e5_v76_post`
+  - run root: `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25`
+  - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25`
+  - active work begins with dataset/config materialization for `gsm8k,triviaqa,fever`
+- 2026-03-12 UTC: Added detached watcher `planv7_lr75e5_v76_watch` to log five-minute suite-count and GPU snapshots to `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/watch.log` while the multiseed run remains in flight.
 
 ## Decision Log
 

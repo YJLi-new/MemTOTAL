@@ -57,6 +57,27 @@ Acceptance for this queued handoff:
   - `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.json`
   - `planv7_lr75e5_v75_post` to exit
   - GitHub `main` to move off `0a05e04a48a619e6e397d6e9bc39ba99c53504cc`
+- 2026-03-12 UTC: LR-updated `V7-5` completed with governed handoff:
+  - `comparison_conclusion=aux_revisit_flat_best_branch_for_decision_point`
+  - `recommended_next_step=prepare_v7_6_decision_point`
+  - `base_for_v7_6_arm_id=a5_barlow`
+  - `main` moved to `2178f5af0cd2923e352897729701b02b387db3e8`
+  - `review` moved to `ddd183f83a353682cc1e23b212ce739aa6cb9a26`
+- 2026-03-12 UTC: The queue session was not present after the `V7-5` tmux server exited, so the phase is being launched directly from the validated `V7-5` handoff rather than through the original detached waiter.
+- 2026-03-12 UTC: Launched LR-updated `V7-6` directly with:
+  - `planv7_lr75e5_v76`
+  - `planv7_lr75e5_v76_post`
+  - run root `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25`
+  - result root `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25`
+- 2026-03-12 UTC: Initial live status:
+  - the launcher is in `writer_jointpeft_data` materialization
+  - the post-publisher is waiting on `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json`
+- 2026-03-12 UTC: `V7-6` progressed past setup and into seeded suite execution. Early nested outputs are already present under:
+  - `c0_frozen_no_memory/seed_61109/{gsm8k,triviaqa,fever}/suite_metrics.json`
+  - `c1_additive_continuity/seed_61109/{gsm8k,triviaqa}/suite_metrics.json`
+- 2026-03-12 UTC: Added detached monitoring session `planv7_lr75e5_v76_watch`, which appends five-minute snapshots to:
+  - `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/watch.log`
+  - first recorded sample: `suites=6`, `gpu=5715 MiB, util=55%`
 
 ## Decision Log
 

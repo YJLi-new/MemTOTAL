@@ -1,0 +1,211 @@
+{
+  "_meta": {
+    "config_path": "/root/mydir/MemTOTAL/configs/exp/writer_circuit_g2_writer_direct_gsm8k_template.yaml",
+    "includes": [
+      "/root/mydir/MemTOTAL/configs/tasks/benchmarks/materialized/gsm8k_real_smoke.yaml",
+      "/root/mydir/MemTOTAL/configs/method/writer_direct_deep_prefix_receiver_lora_r2_early4.yaml"
+    ]
+  },
+  "backbone": {
+    "cache_dir": "/root/autodl-tmp/hf-cache",
+    "dtype": "bfloat16",
+    "load_mode": "hf_causal_lm",
+    "model_id": "/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct",
+    "name": "Qwen2.5-1.5B-Instruct"
+  },
+  "experiment": {
+    "method_variant": "writer-circuit-g2-writer-direct-gsm8k",
+    "name": "planv7_lr75e5_v7_6_gsm8k_p1_a5_barlow",
+    "stage": "Writer-Circuit-G2"
+  },
+  "method": {
+    "embed_dim": "auto",
+    "fuser": {
+      "arch": "resampler",
+      "dropout": 0.0,
+      "hidden_dim": 1536,
+      "num_heads": 8,
+      "short_slots": 8
+    },
+    "injector": {
+      "enabled": true,
+      "mode": "prefix",
+      "position": "segment"
+    },
+    "name": "general-writer-adaptable-reader-transformer-bootstrap",
+    "reader": {
+      "attention_mode": "standard",
+      "condition_on_context": true,
+      "conditioning_mode": "add",
+      "dropout": 0.0,
+      "num_heads": 8,
+      "num_queries": 16,
+      "query_residual_scale": 0.0,
+      "use_query_gating": false
+    },
+    "receiver_lora": {
+      "alpha": 4.0,
+      "dropout": 0.0,
+      "enabled": true,
+      "rank": 2,
+      "target_layers": [
+        12,
+        13,
+        14,
+        15
+      ],
+      "target_modules": [
+        "k_proj",
+        "v_proj"
+      ]
+    },
+    "segmenter": {
+      "delimiter": "||",
+      "mode": "delimiter"
+    },
+    "writer": {
+      "arch": "transformer",
+      "conditioning_layers": 3,
+      "dropout": 0.0,
+      "hidden_dim": 3072,
+      "memory_slots": 64,
+      "num_heads": 8,
+      "transformer_layers": 4
+    }
+  },
+  "runtime": {
+    "device": "cuda",
+    "owner_locked_projector_lr": 7.5e-05,
+    "owner_override_note": false,
+    "pilot_active_aux_arm": "A5",
+    "pilot_active_aux_family": "A5_L5_plus_barlow",
+    "pilot_active_bridge_family": "B3",
+    "pilot_active_context_family": "C2",
+    "pilot_active_depth_family": "D1",
+    "pilot_active_depth_label": "mid4",
+    "pilot_active_projector_family": "P2",
+    "pilot_active_support_family": "S3",
+    "pilot_active_writer_family": "W3",
+    "pilot_alignment_aux_mode": false,
+    "pilot_arm_alias": "A5_BARLOW",
+    "pilot_aux_loss_mode": "orthogonality_coverage",
+    "pilot_aux_projection_dim": 128,
+    "pilot_aux_projection_hidden_dim": 256,
+    "pilot_backbone_prompt_mask_mode": "none",
+    "pilot_barlow_lambda": 0.005,
+    "pilot_barlow_loss_weight": 0.02,
+    "pilot_bridge_mode": "writer_direct",
+    "pilot_choice_ce_weight": 1.0,
+    "pilot_competitor_hinge_weight_max": 0.0,
+    "pilot_context_balance_scale_init": 0.75,
+    "pilot_context_support_balance_mode": "layernorm_learned_scalar",
+    "pilot_contrastive_loss_weight": 0.0,
+    "pilot_contrastive_queue_size": 64,
+    "pilot_contrastive_temperature": 0.1,
+    "pilot_deep_prefix_init_mode": "kv_stat_match",
+    "pilot_deep_prefix_layers": [
+      12,
+      13,
+      14,
+      15
+    ],
+    "pilot_deep_prefix_projector_mode": "per_layer_low_rank",
+    "pilot_deep_prefix_rank": 128,
+    "pilot_fuser_short_slots": 8,
+    "pilot_gradient_accumulation_steps": 4,
+    "pilot_gradient_clip_norm": 1.0,
+    "pilot_gradient_probe_enabled": true,
+    "pilot_gradient_probe_interval": 5,
+    "pilot_gradient_probe_max_steps": 150,
+    "pilot_gradient_probe_modules": [
+      "writer",
+      "projector",
+      "receiver_lora"
+    ],
+    "pilot_groupwise_grad_clip": true,
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "pilot_lr_schedule": "constant_with_linear_warmup",
+    "pilot_lr_warmup_steps": 0,
+    "pilot_memory_path_variant": "two_level",
+    "pilot_prefix_source_mode": "writer",
+    "pilot_projector_grad_clip_norm": 0.5,
+    "pilot_projector_learning_rate": 7.5e-05,
+    "pilot_projector_token_source": "short_slots",
+    "pilot_projector_warmup_steps": 0,
+    "pilot_projector_weight_decay": 0.0,
+    "pilot_prompt_variant": "task_native",
+    "pilot_reader_context_mode": "prompt_summary",
+    "pilot_reader_num_queries": 16,
+    "pilot_receiver_lora_grad_clip_norm": 0.5,
+    "pilot_receiver_lora_learning_rate": 5e-05,
+    "pilot_receiver_lora_weight_decay": 0.0,
+    "pilot_reconstruction_aux_mode": "off",
+    "pilot_reconstruction_aux_weight": 0.0,
+    "pilot_reconstruction_hidden_dim": 1024,
+    "pilot_reconstruction_vocab_size": 1024,
+    "pilot_reconstruction_weight_schedule": "constant",
+    "pilot_snapshot_steps": [
+      0,
+      10,
+      25,
+      50,
+      100,
+      150,
+      200,
+      250,
+      300
+    ],
+    "pilot_support_balance_scale_init": 1.25,
+    "pilot_support_encoder_mode": "multi_item_cross_attn_raw",
+    "pilot_support_examples": 8,
+    "pilot_support_serialization": "example_blocks_raw8",
+    "pilot_train_backbone_prompt_mask_schedule": "none",
+    "pilot_train_steps": 300,
+    "pilot_train_support_mode": "static_support_rows",
+    "pilot_trainable_variant": "full",
+    "pilot_vicreg_covariance_weight": 1.0,
+    "pilot_vicreg_invariance_weight": 1.0,
+    "pilot_vicreg_loss_weight": 0.0,
+    "pilot_vicreg_variance_target": 1.0,
+    "pilot_vicreg_variance_weight": 1.0,
+    "pilot_writer_common_mode_penalty_weight": 0.1,
+    "pilot_writer_context_prompt_mode": "same_as_backbone",
+    "pilot_writer_context_tokens": 8,
+    "pilot_writer_covariance_diversity_weight": 0.05,
+    "pilot_writer_gain_margin": 0.05,
+    "pilot_writer_gain_margin_weight": 0.25,
+    "pilot_writer_grad_clip_norm": 1.0,
+    "pilot_writer_learning_rate": 0.0001,
+    "pilot_writer_orthogonalize_slot_basis": false,
+    "pilot_writer_slot_energy_balance_weight": 0.01,
+    "pilot_writer_slot_orthogonality_weight": 0.05,
+    "pilot_writer_stimulus_mode": "support_and_context",
+    "pilot_writer_support_coverage_weight": 0.05,
+    "pilot_writer_weight_decay": 0.0,
+    "repo_confirmed_v65_projector_lr_reference": 7.5e-05,
+    "shared_injection_arm": "injected",
+    "stage_a_steps": 0,
+    "stage_b_steps": 0,
+    "stage_c_choice_margin": 0.1,
+    "training_stage": "shared_injection_pilot",
+    "writer_memory_control": "real"
+  },
+  "task": {
+    "benchmark_id": "gsm8k",
+    "dataset_path": "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/materialized-datasets/gsm8k/eval.jsonl",
+    "domain": "math",
+    "evaluator": {
+      "type": "exact_match"
+    },
+    "metric_name": "exact_match",
+    "name": "gsm8k_real_smoke",
+    "pilot_split": "eval",
+    "smoke_subset": "hf_real_smoke4",
+    "split": "eval",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/materialized-datasets/gsm8k/support.jsonl",
+    "support_lookup_dataset_paths": [],
+    "train_dataset_path": "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/materialized-datasets/gsm8k/train.jsonl",
+    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/materialized-datasets/gsm8k/support.jsonl",
+    "train_support_episode_bank_path": ""
+  }
+}
