@@ -1,91 +1,79 @@
 # MemTOTAL
 
-MemTOTAL studies an internal-memory route for frozen reasoning LLMs: write a high-capacity latent memory `M_long`, read and compress it into a short memory `M_short`, and inject only the short memory into the next reasoning context.
+MemTOTAL studies an internal-memory route for frozen reasoning LLMs: write a high-capacity latent memory `M_long`, read and compress it into `M_short`, and inject only the short memory into the next reasoning context.
 
-This repository is in active research mode. The current authoritative runbook is [PLANv7.md](PLANv7.md).
+This repository is now at the `PLANv7` decision closeout. The external-Writer bridge line was tested through oracle checks, width/depth scouting, bandwidth expansion, bounded query compression, forced-consumption reopening, targeted auxiliary revisit, and final three-seed confirmation.
 
 ## Current Status
 
-As of March 11, 2026:
+- `PLANv7` is complete.
+- Final governed decision: `Path R`.
+- `comparison_conclusion = path_r_architecture_pivot_required`
+- `recommended_next_step = prepare_backbone_native_writer_pivot`
 
-- The active program is `PLANv7`, focused on external-Writer bandwidth expansion, pure mid-layer injection, projector co-scaling, and bounded query compression.
-- The mandatory first governed slice is `V7-0`: measurement repair, continuity replay, and the oracle gate.
-- `GSM8K` and `TriviaQA` are now the primary decision pair. `FEVER` is retained only as a calibration guardrail.
-- The preserved architecture anchor is `S3 + C2 + L5`.
-- The preserved stabilization defaults come from the completed `V6-5` branch, but `PLANv7` does not let FEVER-only wins define the mainline architecture.
+The current repo conclusion is not “the route is dead.” The bridge path remained route-live and stable. The problem is that after the full `PLANv7` sequence, it still produced no real three-seed primary-task gain on `GSM8K` or `TriviaQA`, and strict Writer-memory improvement did not survive confirmation.
 
-## Latest Useful Reports
+## Final PLANv7 Report
 
- - `PLANv7 runbook`:
-  [plan](PLANv7.md)
-  - Outcome: current root execution authority
-  - Readout: `V7-0` must run first, with TriviaQA bundle support, mid4 presets, strict Writer-memory gates, oracle context/support echo paths, and continuity replay before any new W2/W3 bandwidth sweep.
+- `PLANv7` runbook: [PLANv7.md](PLANv7.md)
+- Final multi-seed confirmation report:
+  - [v7-6-summary.md](results/generated/review/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.md)
+  - [v7-6-summary.json](results/generated/review/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json)
+- Pivot handoff:
+  - [20260312-planv7-path-r-pivot-handoff.md](docs/exec-plans/active/20260312-planv7-path-r-pivot-handoff.md)
+- Full `V7-6` execution log:
+  - [20260311-planv7-v7-6-multiseed-confirmation-qwen25.md](docs/exec-plans/active/20260311-planv7-v7-6-multiseed-confirmation-qwen25.md)
 
-- `V6-5 recipe stabilization`:
-  [summary](results/generated/review/planv6-v6-5-recipe-stabilization-qwen25/v6-5-summary.md),
-  [json](results/generated/review/planv6-v6-5-recipe-stabilization-qwen25/v6-5-summary.json)
-  - Outcome: `comparison_conclusion=select_stabilized_recipe`
-  - Readout: the best stabilized FEVER recipe was `F3__w0__clip_groupwise__plr75e6__acc4__layers_additive`, with `F1__w0__clip_global__plr5e5__acc1__layers_additive` as the runner-up; both passed all `3/3` confirmation seeds and now serve as stabilization references rather than architecture winners.
+## Final Readout From V7-6
 
-- `V6-4 mixed matrix`:
-  [summary](results/generated/review/planv6-v6-4-mixed-matrix-qwen25/v6-4-summary.md),
-  [json](results/generated/review/planv6-v6-4-mixed-matrix-qwen25/v6-4-summary.json)
-  - Outcome: `comparison_conclusion=select_finalists`
-  - Readout: `S3 + C2 + L5` became the `PLANv7` architecture anchor.
+- Best confirmed branch: `p1_a5_barlow`
+- Best promoted arm: `a5_barlow`
+- Winner uses bridge: `true`
+- Winning depth: `D1` / `mid4`
+- Seeds: `61109, 61110, 61111`
 
-- `V6-3 anti-homogenization screening`:
-  [summary](results/generated/review/planv6-v6-3-loss-screening-qwen25/v6-3-summary.md),
-  [json](results/generated/review/planv6-v6-3-loss-screening-qwen25/v6-3-summary.json)
-  - Outcome: `comparison_conclusion=select_top_auxiliary_families`
-  - Readout: the best auxiliary families were `l2_contrastive`, `l5_orthogonality_coverage`, and `l3_vicreg`.
+Primary-task outcome:
 
-- `V6-2 support screening`:
-  [summary](results/generated/review/planv6-v6-2-support-screening-qwen25/v6-2-summary.md),
-  [json](results/generated/review/planv6-v6-2-support-screening-qwen25/v6-2-summary.json)
-  - Outcome: `comparison_conclusion=select_top_two_support_modes`
-  - Readout: the best support interfaces were `s3_multi_item_cross_attn_raw` and `s5_hybrid_pooled_plus_items`.
+- `GSM8K`: no real gain across the confirmed branch set
+- `TriviaQA`: no real gain across the confirmed branch set
+- `FEVER`: calibration-flat and not allowed to overrule the primary decision
 
-- `V6-5 execution log`:
-  [exec plan](docs/exec-plans/active/20260310-planv6-v6-5-recipe-stabilization.md)
-  - Scope: FEVER-first recipe stabilization across warmup, clipping, projector LR, gradient accumulation, and additive layer expansion.
-  - Final status: completed with `recommended_next_step=open_v6_7_reader_reopening`.
+Key evidence from the governed summary:
 
-- `Historical route reset before PLANv6`:
-  [writer-direct summary](results/generated/review/writer-deep-prefix-jointpeft-qwen25/writer-deep-prefix-jointpeft-summary.md),
-  [json](results/generated/review/writer-deep-prefix-jointpeft-qwen25/writer-deep-prefix-jointpeft-summary.json),
-  [PLANv5 addendum summary](results/generated/review/writer-circuit-opening-qwen25/writer-circuit-opening-addendum-summary.json)
-  - Why it matters: this is the route-correction bundle that separated route-liveness from usefulness and directly motivated `PLANv6` and the stricter `PLANv7` continuation.
+- `oracle_gate_weak = true`
+- `any_real_primary_gain_across_three_seeds = false`
+- `any_strict_writer_metric_improvement_across_three_seeds = false`
+- `best_branch_not_projector_only = true`
+
+Interpretation:
+
+- the current bridge route is real,
+- the route is not merely a projector-only illusion,
+- but the external-Writer line is no longer the active mainline after `PLANv7`,
+- so the next justified research step is a backbone-native / integrated-weaver pivot.
+
+## Most Useful Supporting Reports
+
+- `V7-5 targeted auxiliary revisit`:
+  - [v7-5-summary.md](results/generated/review/planv7-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.md)
+  - [v7-5-summary.json](results/generated/review/planv7-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.json)
+- `V7-4 forced consumption`:
+  - [v7-4-summary.md](results/generated/review/planv7-v7-4-forced-consumption-qwen25/v7-4-summary.md)
+  - [v7-4-summary.json](results/generated/review/planv7-v7-4-forced-consumption-qwen25/v7-4-summary.json)
+- `V7-3 bridge`:
+  - [v7-3-summary.md](results/generated/review/planv7-v7-3-bridge-qwen25/v7-3-summary.md)
+  - [v7-3-summary.json](results/generated/review/planv7-v7-3-bridge-qwen25/v7-3-summary.json)
+- `V7-0 metrics + oracle`:
+  - [v7-0-summary.md](results/generated/review/planv7-v7-0-metrics-oracle-qwen25/v7-0-summary.md)
+  - [v7-0-summary.json](results/generated/review/planv7-v7-0-metrics-oracle-qwen25/v7-0-summary.json)
 
 ## What To Read First
 
-- [PLANv7.md](PLANv7.md): current execution order, acceptance criteria, and milestone gating.
-- [docs/MAIN_IDEA.md](docs/MAIN_IDEA.md): method definition, Writer/Reader/Fuser roles, and paper-story constraints.
-- [docs/EXPERIMENTS_INFO.md](docs/EXPERIMENTS_INFO.md): experiment protocol, baselines, artifact rules, and paper-facing reporting standards.
-- [AGENTS.md](AGENTS.md): repo entry-point map for coding agents.
+- [PLANv7.md](PLANv7.md): the completed execution authority for the external-Writer line
+- [docs/MAIN_IDEA.md](docs/MAIN_IDEA.md): method definition and paper-story constraints
+- [docs/EXPERIMENTS_INFO.md](docs/EXPERIMENTS_INFO.md): experiment protocol and reporting rules
+- [AGENTS.md](AGENTS.md): repo entry-point map for agents
 
-## Repo Map
+## Review-Branch Policy
 
-- `src/`: core models, training runtime, task adapters, and analysis logic.
-- `scripts/`: single-command runners, summary builders, and artifact publishers.
-- `docs/exec-plans/active/`: active multi-hour execution plans and relay logs.
-- `runs/review/`: governed raw run bundles copied from live run roots.
-- `results/generated/review/`: governed summaries, tables, JSON reports, and review-ready artifacts.
-- [docs_review_bundle.zip](docs_review_bundle.zip): continuously refreshed documentation bundle for external review.
-
-## Supported Backbones
-
-The current codebase supports two backbone families:
-
-- `Qwen2.5-1.5B-Instruct`
-- `Qwen3-8B`
-
-## Current Bottom Line
-
-The repo is past the old "is the route physically connected?" question. Under `PLANv7`, the current evidence says:
-
-- structured multi-item support is better than pooled-only support,
-- anti-homogenization losses materially help,
-- FEVER can be stabilized, but FEVER alone no longer decides the architecture,
-- the current Writer is still under-provisioned relative to the hypothesis being tested,
-- pure mid-layer `[12,13,14,15]` remains the most important unscreened injection variable,
-- the next authorized step is `V7-0`: metrics repair, continuity replay, and oracle gating on GSM8K plus TriviaQA.
+GitHub’s default downloadable branch is the lightweight `review` branch. It is maintained for external review and lightweight reproduction, and it stays under the repository zip-size budget while keeping the latest governed reports and the minimal code/docs surface.
