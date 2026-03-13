@@ -78,12 +78,26 @@ Acceptance for this queued handoff:
 - 2026-03-12 UTC: Added detached monitoring session `planv7_lr75e5_v76_watch`, which appends five-minute snapshots to:
   - `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/watch.log`
   - first recorded sample: `suites=6`, `gpu=5715 MiB, util=55%`
+- 2026-03-13 UTC: `V7-6` completed with all `45/45` nested suites present in the run root and the governed summary written to:
+  - `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json`
+  - `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.md`
+- 2026-03-13 UTC: Final LR-updated closeout:
+  - `comparison_conclusion=path_q_external_writer_unresolved_not_dead`
+  - `recommended_next_step=open_stronger_integrated_writer_or_true_highdim_branch`
+  - `best_confirmed_variant_id=p1_a5_barlow`
+  - `winner_uses_bridge=true`
+  - `winning_depth=D1`
+- 2026-03-13 UTC: The detached post-publisher completed successfully and pushed:
+  - `main`: `73e5a04b0a9f608cd76a31d01742fe5e801e8f06`
+  - `review`: `078ec6e49c6f42e766f5d57af62afed1dee397a0`
 
 ## Decision Log
 
 - Honor the `V7-5` summary contract literally: the launch gate is `prepare_v7_6_decision_point`, not a guessed `open_v7_6_*` string.
 - Require `base_for_v7_6_arm_id` to be non-empty so the multiseed selection manifest can be built on the intended promoted arm.
+- Treat the LR-updated `V7-6` outcome as the terminal decision point for this replay line; the next branch requires a successor plan, not a speculative `V7-7`.
 
 ## Surprises & Discoveries
 
 - The later-phase restart line shares the same embedded-Python structure as the earlier phases, so proactive harness checks are cheaper than phase-by-phase rediscovery.
+- The LR-`7.5e-5` replay did change the final decision materially enough to move the repo from historical `Path R` to replay `Path Q`, even though it still did not unlock consistent primary-task gains.

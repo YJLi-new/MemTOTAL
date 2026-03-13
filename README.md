@@ -2,29 +2,31 @@
 
 MemTOTAL studies an internal-memory route for frozen reasoning LLMs: write a high-capacity latent memory `M_long`, read and compress it into `M_short`, and inject only the short memory into the next reasoning context.
 
-This repository is now at the `PLANv7` decision closeout. The external-Writer bridge line was tested through oracle checks, width/depth scouting, bandwidth expansion, bounded query compression, forced-consumption reopening, targeted auxiliary revisit, and final three-seed confirmation.
+This repository is now at the `PLANv7 (LR updated version)` decision closeout. The external-Writer bridge line was rerun end-to-end with projector LR `7.5e-5` through oracle checks, width/depth scouting, bandwidth expansion, bounded query compression, forced-consumption reopening, targeted auxiliary revisit, and final three-seed confirmation.
 
 ## Current Status
 
-- `PLANv7` is complete.
-- Final governed decision: `Path R`.
-- `comparison_conclusion = path_r_architecture_pivot_required`
-- `recommended_next_step = prepare_backbone_native_writer_pivot`
+- `PLANv7 (LR updated version)` is complete.
+- Latest governed decision: `Path Q`.
+- `comparison_conclusion = path_q_external_writer_unresolved_not_dead`
+- `recommended_next_step = open_stronger_integrated_writer_or_true_highdim_branch`
 
-The current repo conclusion is not “the route is dead.” The bridge path remained route-live and stable. The problem is that after the full `PLANv7` sequence, it still produced no real three-seed primary-task gain on `GSM8K` or `TriviaQA`, and strict Writer-memory improvement did not survive confirmation.
+The current repo conclusion is not “the route is dead,” and it is no longer the older `Path R` closeout. Under the LR-updated restart, the bridge line remained live enough that the justified next branch is still external-Writer-adjacent: either a stronger integrated Writer or a true high-dimensional `M_long` extension. The current line still failed to produce consistent three-seed primary-task movement on `GSM8K` or `TriviaQA`, so it is unresolved rather than vindicated.
 
-## Final PLANv7 Report
+## Latest LR-Updated Report
 
-- `PLANv7` runbook: [PLANv7.md](PLANv7.md)
+- `PLANv7 (LR updated version)` runbook: [PLANv7-LR-updated.md](PLANv7-LR-updated.md)
+- inherited backbone runbook: [PLANv7.md](PLANv7.md)
 - Final multi-seed confirmation report:
-  - [v7-6-summary.md](results/generated/review/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.md)
-  - [v7-6-summary.json](results/generated/review/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json)
-- Pivot handoff:
-  - [20260312-planv7-path-r-pivot-handoff.md](docs/exec-plans/active/20260312-planv7-path-r-pivot-handoff.md)
-- Full `V7-6` execution log:
-  - [20260311-planv7-v7-6-multiseed-confirmation-qwen25.md](docs/exec-plans/active/20260311-planv7-v7-6-multiseed-confirmation-qwen25.md)
+  - [v7-6-summary.md](results/generated/review/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.md)
+  - [v7-6-summary.json](results/generated/review/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json)
+- LR-updated Path Q handoff:
+  - [20260313-planv7-lr75e5-path-q-handoff.md](docs/exec-plans/active/20260313-planv7-lr75e5-path-q-handoff.md)
+- Full LR-updated restart relay:
+  - [20260312-planv7-lr75e5-restart.md](docs/exec-plans/active/20260312-planv7-lr75e5-restart.md)
+  - [20260312-planv7-lr75e5-v7-6-multiseed-confirmation.md](docs/exec-plans/active/20260312-planv7-lr75e5-v7-6-multiseed-confirmation.md)
 
-## Final Readout From V7-6
+## Latest Readout From V7-6
 
 - Best confirmed branch: `p1_a5_barlow`
 - Best promoted arm: `a5_barlow`
@@ -49,27 +51,40 @@ Interpretation:
 
 - the current bridge route is real,
 - the route is not merely a projector-only illusion,
-- but the external-Writer line is no longer the active mainline after `PLANv7`,
-- so the next justified research step is a backbone-native / integrated-weaver pivot.
+- but the current external-Writer line is still unresolved on primary tasks,
+- so the next justified research step is a stronger integrated Writer branch or a true high-dimensional `M_long` branch.
 
-## Most Useful Supporting Reports
+## Historical Contrast
+
+Historical `PLANv7` without the LR update is preserved and still important:
+
+- historical final report:
+  - [v7-6-summary.md](results/generated/review/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.md)
+  - [v7-6-summary.json](results/generated/review/planv7-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json)
+- historical closeout:
+  - [20260312-planv7-path-r-pivot-handoff.md](docs/exec-plans/active/20260312-planv7-path-r-pivot-handoff.md)
+
+The important repo-level fact is that the LR-updated rerun changed the final conclusion from historical `Path R` to current `Path Q`.
+
+## Most Useful Supporting LR-Updated Reports
 
 - `V7-5 targeted auxiliary revisit`:
-  - [v7-5-summary.md](results/generated/review/planv7-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.md)
-  - [v7-5-summary.json](results/generated/review/planv7-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.json)
+  - [v7-5-summary.md](results/generated/review/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.md)
+  - [v7-5-summary.json](results/generated/review/planv7-lr75e5-v7-5-targeted-aux-revisit-qwen25/v7-5-summary.json)
 - `V7-4 forced consumption`:
-  - [v7-4-summary.md](results/generated/review/planv7-v7-4-forced-consumption-qwen25/v7-4-summary.md)
-  - [v7-4-summary.json](results/generated/review/planv7-v7-4-forced-consumption-qwen25/v7-4-summary.json)
+  - [v7-4-summary.md](results/generated/review/planv7-lr75e5-v7-4-forced-consumption-qwen25/v7-4-summary.md)
+  - [v7-4-summary.json](results/generated/review/planv7-lr75e5-v7-4-forced-consumption-qwen25/v7-4-summary.json)
 - `V7-3 bridge`:
-  - [v7-3-summary.md](results/generated/review/planv7-v7-3-bridge-qwen25/v7-3-summary.md)
-  - [v7-3-summary.json](results/generated/review/planv7-v7-3-bridge-qwen25/v7-3-summary.json)
+  - [v7-3-summary.md](results/generated/review/planv7-lr75e5-v7-3-bridge-qwen25/v7-3-summary.md)
+  - [v7-3-summary.json](results/generated/review/planv7-lr75e5-v7-3-bridge-qwen25/v7-3-summary.json)
 - `V7-0 metrics + oracle`:
-  - [v7-0-summary.md](results/generated/review/planv7-v7-0-metrics-oracle-qwen25/v7-0-summary.md)
-  - [v7-0-summary.json](results/generated/review/planv7-v7-0-metrics-oracle-qwen25/v7-0-summary.json)
+  - [v7-0-summary.md](results/generated/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25/v7-0-summary.md)
+  - [v7-0-summary.json](results/generated/review/planv7-lr75e5-v7-0-metrics-oracle-qwen25/v7-0-summary.json)
 
 ## What To Read First
 
-- [PLANv7.md](PLANv7.md): the completed execution authority for the external-Writer line
+- [PLANv7-LR-updated.md](PLANv7-LR-updated.md): the completed restart overlay and current closeout entry point
+- [PLANv7.md](PLANv7.md): the completed backbone execution authority for the external-Writer line
 - [docs/MAIN_IDEA.md](docs/MAIN_IDEA.md): method definition and paper-story constraints
 - [docs/EXPERIMENTS_INFO.md](docs/EXPERIMENTS_INFO.md): experiment protocol and reporting rules
 - [AGENTS.md](AGENTS.md): repo entry-point map for agents

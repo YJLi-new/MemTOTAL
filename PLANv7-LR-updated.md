@@ -1,7 +1,7 @@
 # PLANv7 (LR updated version)
 
 **Version:** 2026-03-12  
-**Status:** active restart of the `PLANv7` program with a single intentional optimizer override  
+**Status:** completed restart of the `PLANv7` program with a single intentional optimizer override  
 **Backbone authority:** [`PLANv7.md`](PLANv7.md) remains the full phase-definition backbone unless this document explicitly overrides it
 
 ## 0. Purpose
@@ -49,17 +49,25 @@ The phase order is unchanged and remains inherited from `PLANv7.md`:
 
 Do not skip ahead. The restart must re-earn each gate in order.
 
-## 4. Current Entry Point
+## 4. Current State
 
-The active restart begins at `V7-0`.
+The restart is now complete through `V7-6`.
 
-Use the dedicated restart exec plan:
+Final governed outcome:
+
+- `comparison_conclusion = path_q_external_writer_unresolved_not_dead`
+- `recommended_next_step = open_stronger_integrated_writer_or_true_highdim_branch`
+- `best_confirmed_variant_id = p1_a5_barlow`
+- `winner_uses_bridge = true`
+- `winning_depth = D1`
+
+Primary closeout artifacts:
 
 - [`20260312-planv7-lr75e5-restart.md`](docs/exec-plans/active/20260312-planv7-lr75e5-restart.md)
+- [`20260312-planv7-lr75e5-v7-6-multiseed-confirmation.md`](docs/exec-plans/active/20260312-planv7-lr75e5-v7-6-multiseed-confirmation.md)
+- [`20260313-planv7-lr75e5-path-q-handoff.md`](docs/exec-plans/active/20260313-planv7-lr75e5-path-q-handoff.md)
 
-Use the dedicated restart runner:
-
-- [`run_planv7_lr75e5_v7_0_metrics_oracle_qwen25.sh`](scripts/run_planv7_lr75e5_v7_0_metrics_oracle_qwen25.sh)
+No further `V7-*` phases are authorized under this restart overlay. The next live work requires a successor plan that explicitly opens the stronger integrated Writer branch or the true high-dimensional `M_long` branch.
 
 ## 5. Decision Rules
 
@@ -68,6 +76,10 @@ Acceptance criteria, milestone gates, and `Path P / Q / R` logic are inherited u
 This restart exists to answer one narrower question:
 
 > Does rerunning the same governed `PLANv7` sequence with projector LR `7.5e-5` materially change the primary-task outcome?
+
+Answer from the completed restart:
+
+> Yes, materially enough to move the final decision from historical `Path R` to `Path Q`, but not enough to keep the current external-Writer bridge line as a solved main thesis.
 
 ## 6. Documentation Rule
 

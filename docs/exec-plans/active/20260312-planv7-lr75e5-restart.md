@@ -167,6 +167,16 @@ Acceptance for this prep slice:
   - result root: `/root/autodl-tmp/results/generated/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25`
   - active work begins with dataset/config materialization for `gsm8k,triviaqa,fever`
 - 2026-03-12 UTC: Added detached watcher `planv7_lr75e5_v76_watch` to log five-minute suite-count and GPU snapshots to `/root/autodl-tmp/runs/verify/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/watch.log` while the multiseed run remains in flight.
+- 2026-03-13 UTC: LR-updated `V7-6` completed and was pushed to GitHub:
+  - `main`: `73e5a04b0a9f608cd76a31d01742fe5e801e8f06`
+  - `review`: `078ec6e49c6f42e766f5d57af62afed1dee397a0`
+- 2026-03-13 UTC: LR-updated `V7-6` closed the replay at `Path Q`, not the historical `Path R`:
+  - `comparison_conclusion=path_q_external_writer_unresolved_not_dead`
+  - `recommended_next_step=open_stronger_integrated_writer_or_true_highdim_branch`
+  - `best_confirmed_variant_id=p1_a5_barlow`
+  - `winner_uses_bridge=true`
+  - `winning_depth=D1`
+- 2026-03-13 UTC: The restart overlay is now complete. No further `V7-*` phases are authorized under `PLANv7 (LR updated version)`; the next live work requires a successor plan for the stronger integrated Writer branch or the true high-dimensional `M_long` branch.
 
 ## Decision Log
 
