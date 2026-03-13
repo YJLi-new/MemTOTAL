@@ -615,10 +615,17 @@ def _resolve_support_encoder_weight_decay(config: dict[str, Any]) -> float | Non
 
 def _resolve_trainable_variant(config: dict[str, Any]) -> str:
     variant = str(config["runtime"].get("pilot_trainable_variant", "full"))
-    if variant not in {"full", "projector_only", "writer_adapter_only", "receiver_then_joint"}:
+    if variant not in {
+        "full",
+        "projector_only",
+        "writer_adapter_only",
+        "reader_only",
+        "receiver_then_joint",
+    }:
         raise ValueError(
             f"Unsupported runtime.pilot_trainable_variant={variant}. "
-            "Expected one of full, projector_only, writer_adapter_only, receiver_then_joint."
+            "Expected one of full, projector_only, writer_adapter_only, reader_only, "
+            "receiver_then_joint."
         )
     return variant
 
@@ -6754,7 +6761,8 @@ def run_shared_injection_pilot(
                 bootstrap_steps=reader_fuser_bootstrap_steps,
             )
             projector_warmup_active = bool(
-                trainable_variant != "receiver_then_joint" and step < projector_warmup_steps
+                trainable_variant not in {"receiver_then_joint", "reader_only"}
+                and step < projector_warmup_steps
             )
             receiver_only_stage_active = bool(
                 trainable_variant == "receiver_then_joint" and current_step <= stage_a_steps
@@ -6784,27 +6792,44 @@ def run_shared_injection_pilot(
                 writer_base_frozen = True
                 writer_adapter_frozen = True
             projector_frozen = bool(bootstrap_active)
+            source_stub_frozen = bool(projector_frozen)
             support_encoder_frozen = bool(writer_base_frozen)
             reader_frozen = bool(bootstrap_active)
             fuser_frozen = bool(bootstrap_active)
             receiver_lora_trainable = bool(runtime.receiver_lora_enabled)
+            reconstruction_frozen = bool(writer_base_frozen)
+            if trainable_variant == "reader_only":
+                writer_base_frozen = True
+                writer_adapter_frozen = True
+                support_encoder_frozen = True
+                source_stub_frozen = True
+                reconstruction_frozen = True
+                projector_frozen = bool(
+                    bootstrap_active or runtime.memory_consumer_mode != "legacy_prefix"
+                )
+                receiver_lora_trainable = bool(
+                    runtime.receiver_lora_enabled
+                    and runtime.memory_consumer_mode != "reader_cross_attn"
+                )
             if receiver_only_stage_active:
                 writer_base_frozen = True
                 writer_adapter_frozen = True
                 projector_frozen = True
+                source_stub_frozen = True
                 support_encoder_frozen = True
                 reader_frozen = True
                 fuser_frozen = True
+                reconstruction_frozen = True
             runtime.set_writer_base_trainable(not writer_base_frozen)
             runtime.set_writer_adapter_trainable(not writer_adapter_frozen)
-            runtime.set_source_stub_trainable(not projector_frozen)
+            runtime.set_source_stub_trainable(not source_stub_frozen)
             runtime.set_support_encoder_trainable(not support_encoder_frozen)
             runtime.set_reader_trainable(not reader_frozen)
             runtime.set_fuser_trainable(not fuser_frozen)
             runtime.set_prefix_projector_trainable(not projector_frozen)
             runtime.set_receiver_lora_trainable(receiver_lora_trainable)
             runtime.set_reader_cross_attn_trainable(not reader_frozen)
-            runtime.set_reconstruction_trainable(not writer_base_frozen)
+            runtime.set_reconstruction_trainable(not reconstruction_frozen)
             optimizer_lr_by_group = _apply_learning_rate_schedule(
                 optimizer,
                 base_lrs=optimizer_base_lrs,

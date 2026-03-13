@@ -2940,6 +2940,199 @@ class SharedInjectionHelpersTest(unittest.TestCase):
     @mock.patch("memtotal.training.m4_shared_injection._load_task_dataset_with_path")
     @mock.patch("memtotal.training.m4_shared_injection.build_task_evaluator")
     @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
+    def test_run_shared_injection_pilot_reader_only_freezes_writer_side_modules(
+        self,
+        mock_backbone_cls,
+        mock_build_task_evaluator,
+        mock_load_dataset_with_path,
+        mock_load_task_dataset,
+    ) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.hidden_size = 6
+                self.device = "cpu"
+                self.receiver_param = torch.nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
+
+            def parameters(self):
+                return []
+
+            def summarize_texts(self, texts):
+                return torch.ones(len(texts), self.hidden_size, dtype=torch.float32)
+
+            def summarize_layer_prefix_projection(self, *_args, **_kwargs):
+                return {}
+
+            def extract_prompt_hidden_state_slice(self, texts, *, max_tokens=8):
+                batch_size = len(list(texts))
+                hidden = torch.ones(batch_size, max_tokens, self.hidden_size, dtype=torch.float32)
+                mask = torch.ones(batch_size, max_tokens, dtype=torch.bool)
+                return hidden, mask
+
+            def collect_deep_prefix_calibration(self, _texts, *, layer_indices, max_tokens):
+                hidden = torch.ones(1, max_tokens, self.hidden_size, dtype=torch.float32)
+                return {
+                    "semantic_anchor": torch.ones(1, self.hidden_size, dtype=torch.float32),
+                    "hidden_state_anchor": hidden.clone(),
+                    "layer_hidden_anchor_by_layer": {
+                        int(layer_index): hidden.clone()
+                        for layer_index in layer_indices
+                    },
+                }
+
+            def enable_receiver_micro_lora(self, **_kwargs):
+                return None
+
+            def receiver_lora_parameter_count(self) -> int:
+                return int(self.receiver_param.numel())
+
+            def set_receiver_lora_trainable(self, enabled: bool) -> None:
+                self.receiver_param.requires_grad_(enabled)
+
+            def receiver_lora_parameters(self):
+                return [self.receiver_param]
+
+            def receiver_lora_state_dict(self):
+                return {"receiver_param": self.receiver_param.detach().clone()}
+
+            def load_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def validate_receiver_lora_state_dict(self, *_args, **_kwargs):
+                return None
+
+            def score_continuations(
+                self,
+                _prompt_text,
+                candidate_texts,
+                *,
+                prefix_embeddings=None,
+                memory_tokens=None,
+                memory_consumer_mode="prepend_block",
+                layer_prefix_hidden_by_layer=None,
+                return_diagnostics=False,
+            ):
+                base = self.receiver_param
+                if layer_prefix_hidden_by_layer:
+                    base = base + sum(
+                        tensor.to(dtype=torch.float32).mean()
+                        for tensor in layer_prefix_hidden_by_layer.values()
+                    )
+                elif prefix_embeddings is not None:
+                    base = base + prefix_embeddings.to(dtype=torch.float32).mean()
+                elif memory_tokens is not None and memory_consumer_mode in {"prepend_block", "reader_cross_attn"}:
+                    base = base + memory_tokens.to(dtype=torch.float32).mean()
+                scores = torch.stack([base, -base])[: len(candidate_texts)]
+                if return_diagnostics:
+                    return scores, {}
+                return scores
+
+            def count_tokens(self, text):
+                return len(str(text).split())
+
+            def to(self, *_args, **_kwargs):
+                return self
+
+        class DummyEvaluator:
+            evaluator_type = "multiple_choice"
+
+        examples = [
+            {
+                "id": "gsm8k-train-1",
+                "benchmark_id": "gsm8k",
+                "segment": "Alice has 12 apples and buys 3 more.",
+                "choices": [
+                    {"label": "A", "text": "15"},
+                    {"label": "B", "text": "16"},
+                ],
+                "label": "A",
+                "gold_answer": "15",
+                "evaluator_type": "multiple_choice",
+            }
+        ]
+        fake_backbone = FakeBackbone()
+        mock_backbone_cls.return_value = fake_backbone
+        mock_build_task_evaluator.return_value = DummyEvaluator()
+        mock_load_dataset_with_path.side_effect = lambda _config, _path: [dict(row) for row in examples]
+        mock_load_task_dataset.return_value = [dict(row) for row in examples]
+        output_dir = Path(tempfile.mkdtemp())
+        config = {
+            "backbone": {
+                "name": "fake",
+                "load_mode": "stub",
+                "dtype": "float32",
+                "model_id": "fake/model",
+            },
+            "method": {
+                "writer": {
+                    "memory_slots": 4,
+                    "hidden_dim": 12,
+                    "num_heads": 2,
+                    "transformer_layers": 1,
+                    "conditioning_layers": 1,
+                    "dropout": 0.0,
+                },
+                "receiver_lora": {
+                    "enabled": True,
+                    "target_layers": [0],
+                    "target_modules": ["k_proj"],
+                    "rank": 1,
+                    "alpha": 1.0,
+                    "dropout": 0.0,
+                },
+            },
+            "runtime": {
+                "shared_injection_arm": "injected",
+                "writer_memory_control": "real",
+                "device": "cpu",
+                "pilot_bridge_mode": "writer_direct",
+                "pilot_memory_path_variant": "single_level",
+                "pilot_injection_mode": "sparse_deep_prefix",
+                "pilot_prefix_source_mode": "oracle_hidden_state_slots",
+                "pilot_memory_consumer_mode": "reader_lora_sequence",
+                "pilot_memory_segment_mode": "prepend_block",
+                "pilot_deep_prefix_layers": [0],
+                "pilot_writer_stimulus_mode": "support_and_context",
+                "pilot_writer_context_tokens": 2,
+                "pilot_train_steps": 1,
+                "pilot_gradient_accumulation_steps": 1,
+                "pilot_writer_learning_rate": 1.0e-4,
+                "pilot_projector_learning_rate": 1.0e-4,
+                "pilot_receiver_lora_learning_rate": 1.0e-4,
+                "pilot_trainable_variant": "reader_only",
+                "pilot_lr_schedule": "constant",
+                "pilot_deep_prefix_init_mode": "semantic_anchor",
+            },
+            "task": {
+                "name": "gsm8k-reader-only-test",
+                "benchmark_id": "gsm8k",
+                "support_dataset_path": "support.jsonl",
+                "train_dataset_path": "train.jsonl",
+                "dataset_path": "eval.jsonl",
+                "metric_name": "accuracy",
+            },
+        }
+
+        metrics = run_shared_injection_pilot(
+            config=config,
+            seed=11,
+            output_dir=output_dir,
+            resume=None,
+            dry_run=False,
+        )
+        train_events = json.loads((output_dir / "train_events.json").read_text())["events"]
+
+        self.assertEqual(metrics["pilot_trainable_variant"], "reader_only")
+        self.assertEqual(train_events[0]["train_phase"], "joint")
+        self.assertFalse(train_events[0]["writer_trainable"])
+        self.assertFalse(train_events[0]["writer_adapter_trainable"])
+        self.assertFalse(train_events[0]["support_encoder_trainable"])
+        self.assertFalse(train_events[0]["prefix_projector_trainable"])
+        self.assertTrue(train_events[0]["receiver_lora_trainable"])
+
+    @mock.patch("memtotal.training.m4_shared_injection.load_task_dataset")
+    @mock.patch("memtotal.training.m4_shared_injection._load_task_dataset_with_path")
+    @mock.patch("memtotal.training.m4_shared_injection.build_task_evaluator")
+    @mock.patch("memtotal.training.m4_shared_injection.BackboneWrapper")
     def test_run_shared_injection_pilot_receiver_then_joint_logs_stage_transitions(
         self,
         mock_backbone_cls,
