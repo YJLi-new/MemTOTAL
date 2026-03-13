@@ -47,6 +47,7 @@ from memtotal.training.m4_shared_injection import (
     LatentPrefixProjector,
     PerLayerLowRankDeepPrefixProjector,
     PrefixInjectionArtifacts,
+    SharedInjectionExampleCache,
     SharedLowRankDeepPrefixProjector,
     SharedInjectionPilotRuntime,
     StructuredSupportSetEncoder,
@@ -114,6 +115,83 @@ def _classification_rows(
 
 
 class SharedInjectionHelpersTest(unittest.TestCase):
+    def test_legacy_prefix_runtime_does_not_forward_memory_tokens_to_backbone(self) -> None:
+        class FakeBackbone:
+            def __init__(self) -> None:
+                self.score_calls: list[dict[str, object]] = []
+                self.generate_calls: list[dict[str, object]] = []
+
+            def score_continuations(self, prompt, candidate_texts, **kwargs):
+                self.score_calls.append(
+                    {
+                        "prompt": prompt,
+                        "candidate_texts": list(candidate_texts),
+                        **kwargs,
+                    }
+                )
+                return torch.zeros(len(candidate_texts), dtype=torch.float32)
+
+            def generate(self, prompts, **kwargs):
+                self.generate_calls.append(
+                    {
+                        "prompts": list(prompts),
+                        **kwargs,
+                    }
+                )
+                return ["ok"]
+
+        runtime = SharedInjectionPilotRuntime.__new__(SharedInjectionPilotRuntime)
+        runtime.arm = "injected"
+        runtime.memory_consumer_mode = "legacy_prefix"
+        runtime.memory_segment_mode = "prepend_block"
+        runtime.backbone = FakeBackbone()
+
+        example_cache = SharedInjectionExampleCache(
+            example={"id": "gsm8k-1"},
+            candidate_labels=["A", "B"],
+            candidate_texts=["4", "5"],
+            gold_index=0,
+            raw_prompt_text="What is 2+2?",
+            prompt_text="What is 2+2?",
+            writer_prompt_text="What is 2+2?",
+            prompt_variant="q3_gsm8k_nonthink",
+            evaluator_type="multiple_choice",
+            task_mode="choice",
+        )
+        memory_tokens = torch.randn(1, 4, 6)
+        layer_prefix_hidden_by_layer = {12: torch.randn(1, 4, 6)}
+
+        runtime.score_example(
+            example_cache,
+            support_text_block="Support block",
+            memory_tokens=memory_tokens,
+            prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+            return_diagnostics=False,
+        )
+        runtime.generate_text(
+            prompt_text="What is 2+2?",
+            support_text_block="Support block",
+            memory_tokens=memory_tokens,
+            prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+        )
+
+        self.assertEqual(len(runtime.backbone.score_calls), 1)
+        self.assertIsNone(runtime.backbone.score_calls[0]["memory_tokens"])
+        self.assertEqual(runtime.backbone.score_calls[0]["memory_consumer_mode"], "legacy_prefix")
+        self.assertEqual(
+            runtime.backbone.score_calls[0]["layer_prefix_hidden_by_layer"],
+            layer_prefix_hidden_by_layer,
+        )
+        self.assertEqual(len(runtime.backbone.generate_calls), 1)
+        self.assertIsNone(runtime.backbone.generate_calls[0]["memory_tokens"])
+        self.assertEqual(runtime.backbone.generate_calls[0]["memory_consumer_mode"], "legacy_prefix")
+        self.assertEqual(
+            runtime.backbone.generate_calls[0]["layer_prefix_hidden_by_layer"],
+            layer_prefix_hidden_by_layer,
+        )
+
     def test_build_example_caches_splits_backbone_and_writer_prompts(self) -> None:
         examples = [
             {
@@ -2928,6 +3006,8 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                 candidate_texts,
                 *,
                 prefix_embeddings=None,
+                memory_tokens=None,
+                memory_consumer_mode="prepend_block",
                 layer_prefix_hidden_by_layer=None,
                 return_diagnostics=False,
             ):
@@ -2939,6 +3019,8 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                     )
                 elif prefix_embeddings is not None:
                     base = base + prefix_embeddings.to(dtype=torch.float32).mean()
+                elif memory_tokens is not None and memory_consumer_mode in {"prepend_block", "reader_cross_attn"}:
+                    base = base + memory_tokens.to(dtype=torch.float32).mean()
                 scores = torch.stack([base, -base])[: len(candidate_texts)]
                 if return_diagnostics:
                     return scores, {}
@@ -3119,6 +3201,8 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                 candidate_texts,
                 *,
                 prefix_embeddings=None,
+                memory_tokens=None,
+                memory_consumer_mode="prepend_block",
                 layer_prefix_hidden_by_layer=None,
                 return_diagnostics=False,
             ):
@@ -3130,6 +3214,8 @@ class SharedInjectionHelpersTest(unittest.TestCase):
                     )
                 elif prefix_embeddings is not None:
                     base = base + prefix_embeddings.to(dtype=torch.float32).mean()
+                elif memory_tokens is not None and memory_consumer_mode in {"prepend_block", "reader_cross_attn"}:
+                    base = base + memory_tokens.to(dtype=torch.float32).mean()
                 scores = torch.stack([base, -base])[: len(candidate_texts)]
                 if return_diagnostics:
                     return scores, {}

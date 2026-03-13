@@ -393,6 +393,90 @@ class BackboneRealModeTest(unittest.TestCase):
             self.assertTrue(torch.allclose(state[target_path]["down.weight"], reloaded_state[target_path]["down.weight"]))
             self.assertTrue(torch.allclose(state[target_path]["up.weight"], reloaded_state[target_path]["up.weight"]))
 
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_real_mode_supports_chunk_pooled_slots_and_sequence_memory(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen3-8B",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        memory_tokens, memory_mask = backbone.extract_chunk_pooled_hidden_state_slots(
+            ["Prompt alpha", "Prompt beta"],
+            layer_index=1,
+            pool_window=2,
+            slot_cap=3,
+        )
+        self.assertEqual(list(memory_tokens.shape), [2, 3, 8])
+        self.assertEqual(list(memory_mask.shape), [2, 3])
+        self.assertTrue(bool(memory_mask[0].any().item()))
+
+        baseline_scores = backbone.score_continuations("Prompt", ["good ending", "bad"])
+        memory_scores, diagnostics = backbone.score_continuations(
+            "Prompt",
+            ["good ending", "bad"],
+            memory_tokens=memory_tokens[:1],
+            memory_consumer_mode="prepend_block",
+            return_diagnostics=True,
+        )
+        self.assertEqual(list(memory_scores.shape), [2])
+        self.assertEqual(diagnostics["memory_consumer_mode"], "prepend_block")
+        self.assertEqual(int(diagnostics["prefix_length"]), int(memory_tokens[:1].shape[1]))
+        self.assertEqual(list(baseline_scores.shape), list(memory_scores.shape))
+
+        generations = backbone.generate(
+            ["Prompt"],
+            memory_tokens=memory_tokens[:1],
+            memory_consumer_mode="prepend_block",
+        )
+        self.assertEqual(len(generations), 1)
+        self.assertTrue(generations[0])
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_reader_cross_attn_state_dict_round_trip(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen3-8B",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        backbone.enable_reader_cross_attention(
+            layer_indices=[0, 1],
+            num_heads=2,
+            ff_hidden_dim=16,
+            gate_init=0.0,
+        )
+        metadata = backbone.reader_cross_attn_metadata()
+        self.assertTrue(metadata["enabled"])
+        self.assertEqual(metadata["target_layers"], [0, 1])
+        self.assertGreater(metadata["trainable_params"], 0)
+
+        state = backbone.reader_cross_attn_state_dict()
+        assert state is not None
+        with torch.no_grad():
+            for layer_state in state.values():
+                for state_key, tensor in layer_state.items():
+                    layer_state[state_key] = tensor + 0.25
+        backbone.load_reader_cross_attn_state_dict(state, checkpoint_path="fake-reader-cross-attn.pt")
+        reloaded_state = backbone.reader_cross_attn_state_dict()
+        assert reloaded_state is not None
+        for adapter_key in state:
+            for state_key in state[adapter_key]:
+                self.assertTrue(
+                    torch.allclose(
+                        state[adapter_key][state_key],
+                        reloaded_state[adapter_key][state_key],
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

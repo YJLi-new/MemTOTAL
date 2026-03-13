@@ -1,0 +1,154 @@
+{
+  "_meta": {
+    "config_path": "/root/mydir/MemTOTAL/configs/exp/writer_circuit_g2_writer_direct_fever_template.yaml",
+    "includes": [
+      "/root/mydir/MemTOTAL/configs/tasks/benchmarks/materialized/fever_real_smoke.yaml",
+      "/root/mydir/MemTOTAL/configs/method/writer_direct_deep_prefix_receiver_lora_r2_early4.yaml"
+    ]
+  },
+  "backbone": {
+    "cache_dir": "/root/autodl-tmp/hf-cache",
+    "dtype": "bfloat16",
+    "gradient_checkpointing": false,
+    "load_mode": "hf_causal_lm",
+    "model_id": "/root/autodl-tmp/models/Qwen3-8B",
+    "name": "Qwen3-8B"
+  },
+  "experiment": {
+    "method_variant": "b4_q3_fever_nonthink",
+    "name": "MemTOTAL_b4_q3_fever_nonthink",
+    "stage": "V8-0"
+  },
+  "method": {
+    "embed_dim": "auto",
+    "fuser": {
+      "arch": "resampler",
+      "dropout": 0.0,
+      "hidden_dim": null,
+      "num_heads": 4,
+      "short_slots": 2
+    },
+    "injector": {
+      "enabled": true,
+      "mode": "prefix",
+      "position": "segment"
+    },
+    "name": "general-writer-adaptable-reader-transformer-bootstrap",
+    "reader": {
+      "attention_mode": "standard",
+      "condition_on_context": true,
+      "conditioning": {
+        "domain_key": "domain",
+        "include_task_name": true
+      },
+      "conditioning_mode": "add",
+      "dropout": 0.0,
+      "gated_add_scale": 0.1,
+      "gating_mode": false,
+      "num_heads": 4,
+      "num_queries": 4,
+      "query_residual_scale": 1.0
+    },
+    "receiver_lora": {
+      "alpha": 4.0,
+      "dropout": 0.0,
+      "enabled": false,
+      "rank": 0,
+      "target_layers": [],
+      "target_modules": [
+        "k_proj",
+        "v_proj"
+      ]
+    },
+    "segmenter": {
+      "delimiter": "||",
+      "mode": "delimiter"
+    },
+    "writer": {
+      "arch": "transformer",
+      "dropout": 0.0,
+      "hidden_dim": 128,
+      "memory_slots": 8,
+      "num_heads": 4,
+      "transformer_layers": 2
+    }
+  },
+  "runtime": {
+    "device": "cuda",
+    "pilot_alignment_aux_mode": "off",
+    "pilot_arm_alias": "b4_q3_fever_nonthink",
+    "pilot_aux_loss_mode": "off",
+    "pilot_backbone_prompt_mask_mode": "none",
+    "pilot_bridge_mode": "writer_direct",
+    "pilot_choice_ce_weight": 1.0,
+    "pilot_competitor_hinge_weight_max": 0.0,
+    "pilot_deep_prefix_init_mode": "kv_stat_match",
+    "pilot_deep_prefix_layers": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "pilot_gradient_accumulation_steps": 1,
+    "pilot_gradient_clip_norm": 1.0,
+    "pilot_gradient_probe_enabled": false,
+    "pilot_groupwise_grad_clip": true,
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "pilot_lr_schedule": "constant",
+    "pilot_lr_warmup_steps": 0,
+    "pilot_memory_consumer_mode": "legacy_prefix",
+    "pilot_memory_path_variant": "single_level",
+    "pilot_memory_segment_mode": "prepend_block",
+    "pilot_prefix_source_mode": "writer",
+    "pilot_projector_learning_rate": 0.0,
+    "pilot_projector_token_source": "writer_slots",
+    "pilot_projector_warmup_steps": 50,
+    "pilot_projector_weight_decay": 0.0,
+    "pilot_prompt_variant": "answer_slot_labels",
+    "pilot_receiver_lora_learning_rate": 0.0,
+    "pilot_receiver_lora_weight_decay": 0.0,
+    "pilot_snapshot_steps": [
+      0
+    ],
+    "pilot_support_encoder_learning_rate": 0.0,
+    "pilot_support_encoder_mode": "pooled_block",
+    "pilot_support_encoder_weight_decay": 0.0,
+    "pilot_support_examples": 8,
+    "pilot_support_serialization": "example_blocks_raw8",
+    "pilot_train_steps": 0,
+    "pilot_train_support_mode": "static_support_rows",
+    "pilot_writer_common_mode_penalty_weight": 0.0,
+    "pilot_writer_context_prompt_mode": "same_as_backbone",
+    "pilot_writer_context_tokens": 8,
+    "pilot_writer_covariance_diversity_weight": 0.0,
+    "pilot_writer_gain_margin": 0.05,
+    "pilot_writer_gain_margin_weight": 0.0,
+    "pilot_writer_learning_rate": 0.0,
+    "pilot_writer_orthogonalize_slot_basis": false,
+    "pilot_writer_slot_energy_balance_weight": 0.0,
+    "pilot_writer_stimulus_mode": "support_only",
+    "pilot_writer_weight_decay": 0.0,
+    "shared_injection_arm": "base_only",
+    "stage_c_choice_margin": 0.1,
+    "training_stage": "shared_injection_pilot",
+    "writer_memory_control": "real"
+  },
+  "task": {
+    "benchmark_id": "fever",
+    "dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/eval.jsonl",
+    "domain": "qa",
+    "evaluator": {
+      "type": "multiple_choice"
+    },
+    "metric_name": "accuracy",
+    "name": "fever_real_smoke",
+    "pilot_split": "eval",
+    "smoke_subset": "hf_real_smoke4",
+    "split": "eval",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/support.jsonl",
+    "support_lookup_dataset_paths": [],
+    "train_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/train.jsonl",
+    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/support.jsonl",
+    "train_support_episode_bank_path": ""
+  }
+}

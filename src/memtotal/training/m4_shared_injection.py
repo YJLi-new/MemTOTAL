@@ -70,6 +70,17 @@ ORACLE_PREFIX_SOURCE_MODES = {
     "oracle_context_echo",
     "oracle_support_echo",
 }
+ORACLE_SLOT_SOURCE_MODES = {
+    "oracle_hidden_state_slots",
+}
+SEQUENCE_MEMORY_CONSUMER_MODES = {
+    "legacy_prefix",
+    "reader_lora_sequence",
+    "reader_cross_attn",
+}
+MEMORY_SEGMENT_MODES = {
+    "prepend_block",
+}
 PROMPT_MASK_MODES = {
     "none",
     "gsm8k_numbers",
@@ -105,6 +116,7 @@ class PrefixInjectionArtifacts:
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None
     prefix_stats: dict[str, Any]
     writer_diagnostics: dict[str, Any] | None = None
+    memory_tokens: torch.Tensor | None = None
     memory_slots: torch.Tensor | None = None
     support_item_states: torch.Tensor | None = None
     writer_support_states: torch.Tensor | None = None
@@ -119,6 +131,7 @@ class PrefixInjectionArtifacts:
     reader_conditioned_queries: torch.Tensor | None = None
     reader_value_projected_slots: torch.Tensor | None = None
     reader_readouts: torch.Tensor | None = None
+    reader_cross_attn_diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -387,6 +400,38 @@ def _resolve_memory_path_variant(config: dict[str, Any]) -> str:
     return variant
 
 
+def _resolve_memory_consumer_mode(config: dict[str, Any]) -> str:
+    raw_mode = str(config["runtime"].get("pilot_memory_consumer_mode", "legacy_prefix")).strip().lower()
+    aliases = {
+        "ri0": "legacy_prefix",
+        "legacy": "legacy_prefix",
+        "legacy_prefix": "legacy_prefix",
+        "ri1": "reader_lora_sequence",
+        "reader_lora_sequence": "reader_lora_sequence",
+        "prepend_block": "reader_lora_sequence",
+        "ri2": "reader_cross_attn",
+        "reader_cross_attn": "reader_cross_attn",
+        "cross_attn": "reader_cross_attn",
+    }
+    mode = aliases.get(raw_mode)
+    if mode is None or mode not in SEQUENCE_MEMORY_CONSUMER_MODES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_memory_consumer_mode={raw_mode}. "
+            f"Expected one of {sorted(SEQUENCE_MEMORY_CONSUMER_MODES)}."
+        )
+    return mode
+
+
+def _resolve_memory_segment_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_memory_segment_mode", "prepend_block"))
+    if mode not in MEMORY_SEGMENT_MODES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_memory_segment_mode={mode}. "
+            f"Expected one of {sorted(MEMORY_SEGMENT_MODES)}."
+        )
+    return mode
+
+
 def _resolve_deep_prefix_layers(config: dict[str, Any]) -> list[int]:
     explicit = config["runtime"].get("pilot_deep_prefix_layers")
     if explicit is None:
@@ -472,10 +517,11 @@ def _resolve_projector_token_source(config: dict[str, Any]) -> str:
 
 def _resolve_prefix_source_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_prefix_source_mode", "writer"))
-    if mode not in {"writer", "source_stub", *ORACLE_PREFIX_SOURCE_MODES}:
+    if mode not in {"writer", "source_stub", *ORACLE_PREFIX_SOURCE_MODES, *ORACLE_SLOT_SOURCE_MODES}:
         raise ValueError(
             f"Unsupported runtime.pilot_prefix_source_mode={mode}. "
-            "Expected one of writer, source_stub, oracle_context_echo, oracle_support_echo."
+            "Expected one of writer, source_stub, oracle_context_echo, oracle_support_echo, "
+            "oracle_hidden_state_slots."
         )
     return mode
 
@@ -718,6 +764,21 @@ def _resolve_writer_context_tokens(config: dict[str, Any]) -> int:
     return max(1, int(config["runtime"].get("pilot_writer_context_tokens", 8)))
 
 
+def _resolve_oracle_extract_layer(config: dict[str, Any]) -> int:
+    return int(config["runtime"].get("pilot_writer_extract_layer", -1))
+
+
+def _resolve_oracle_slot_pool_window(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("pilot_writer_slot_pool_window", 16)))
+
+
+def _resolve_oracle_slot_cap(config: dict[str, Any]) -> int:
+    runtime_value = config["runtime"].get("pilot_writer_slot_cap")
+    if runtime_value is not None:
+        return max(1, int(runtime_value))
+    return max(1, int(config.get("method", {}).get("writer", {}).get("memory_slots", 8)))
+
+
 def _resolve_backbone_prompt_mask_mode(config: dict[str, Any]) -> str:
     mode = str(config["runtime"].get("pilot_backbone_prompt_mask_mode", "none"))
     if mode not in PROMPT_MASK_MODES:
@@ -812,12 +873,13 @@ def _resolve_gradient_probe_modules(config: dict[str, Any]) -> tuple[str, ...]:
         )
     else:
         modules = tuple(str(module_name) for module_name in raw_modules)
-    supported = {"writer", "support_encoder", "projector", "receiver_lora", "source_stub"}
+    supported = {"writer", "support_encoder", "projector", "receiver_lora", "reader_cross_attn", "source_stub"}
     unsupported = sorted(set(modules) - supported)
     if unsupported:
         raise ValueError(
             f"Unsupported runtime.pilot_gradient_probe_modules={unsupported}. "
-            "Expected only writer, support_encoder, projector, receiver_lora, and/or source_stub."
+            "Expected only writer, support_encoder, projector, receiver_lora, reader_cross_attn, "
+            "and/or source_stub."
         )
     return modules
 
@@ -999,13 +1061,47 @@ def _resolve_receiver_lora_target_modules(config: dict[str, Any]) -> tuple[str, 
         ("k_proj", "v_proj"),
     )
     normalized = tuple(str(module_name) for module_name in target_modules)
-    unsupported = sorted(set(normalized) - {"k_proj", "v_proj"})
+    unsupported = sorted(set(normalized) - {"q_proj", "k_proj", "v_proj", "o_proj"})
     if unsupported:
         raise ValueError(
             f"Unsupported method.receiver_lora.target_modules={unsupported}. "
-            "Expected only k_proj and/or v_proj."
+            "Expected only q_proj, k_proj, v_proj, and/or o_proj."
         )
     return normalized
+
+
+def _resolve_reader_cross_attn_layers(config: dict[str, Any]) -> tuple[int, ...]:
+    layers = config["runtime"].get("pilot_reader_cross_attn_layers", [])
+    return tuple(sorted({int(layer_index) for layer_index in layers}))
+
+
+def _resolve_reader_cross_attn_heads(config: dict[str, Any]) -> int:
+    return max(1, int(config["runtime"].get("pilot_reader_cross_attn_heads", 16)))
+
+
+def _resolve_reader_cross_attn_ff_hidden_dim(config: dict[str, Any]) -> int:
+    raw = config["runtime"].get("pilot_reader_cross_attn_ff_hidden_dim")
+    if raw is None:
+        return 0
+    return max(1, int(raw))
+
+
+def _resolve_reader_cross_attn_gate_init(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_reader_cross_attn_gate_init", 0.0))
+
+
+def _resolve_reader_cross_attn_learning_rate(config: dict[str, Any]) -> float | None:
+    raw = config["runtime"].get("pilot_reader_cross_attn_learning_rate")
+    if raw is None:
+        return None
+    return float(raw)
+
+
+def _resolve_reader_cross_attn_weight_decay(config: dict[str, Any]) -> float | None:
+    raw = config["runtime"].get("pilot_reader_cross_attn_weight_decay")
+    if raw is None:
+        return None
+    return float(raw)
 
 
 def _resolve_receiver_lora_rank(config: dict[str, Any]) -> int:
@@ -1783,6 +1879,7 @@ def _prefix_stats(
     prefix_embeddings: torch.Tensor | None = None,
     *,
     layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
+    memory_tokens: torch.Tensor | None = None,
     memory_slots: torch.Tensor | None = None,
     memory_long: torch.Tensor | None = None,
     memory_short: torch.Tensor | None = None,
@@ -1804,6 +1901,8 @@ def _prefix_stats(
     deep_prefix_projector_mode: str = "shared_low_rank",
     support_interface_mode: str = "pooled_block",
     context_support_balance_mode: str = "off",
+    memory_consumer_mode: str = "legacy_prefix",
+    reader_cross_attn_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     memory_long = memory_slots if memory_long is None else memory_long
     memory_short = memory_long if memory_short is None else memory_short
@@ -1933,7 +2032,7 @@ def _prefix_stats(
         memory_short=memory_short,
     )
     projected_memory_effective_rank = (
-        _effective_rank(prefix_embeddings)
+        _effective_rank(memory_tokens if prefix_embeddings is None else prefix_embeddings)
         if layer_prefix_hidden_by_layer is None
         else _effective_rank(
             torch.cat(
@@ -1942,6 +2041,46 @@ def _prefix_stats(
             )
         )
     )
+    memory_token_stats = {
+        "memory_tokens_l2": 0.0,
+        "memory_tokens_count": 0.0,
+        "memory_tokens_slot_norm_mean": 0.0,
+        "memory_tokens_slot_norm_std": 0.0,
+        "memory_tokens_slot_norm_max": 0.0,
+    }
+    if memory_tokens is not None and memory_tokens.numel() > 0:
+        memory_token_summary = _slot_norm_summary(memory_tokens)
+        memory_token_stats = {
+            "memory_tokens_l2": float(memory_token_summary["l2"]),
+            "memory_tokens_count": float(memory_tokens.shape[1]),
+            "memory_tokens_slot_norm_mean": float(memory_token_summary["slot_norm_mean"]),
+            "memory_tokens_slot_norm_std": float(memory_token_summary["slot_norm_std"]),
+            "memory_tokens_slot_norm_max": float(memory_token_summary["slot_norm_max"]),
+        }
+    cross_attn_by_layer = {}
+    if isinstance(reader_cross_attn_diagnostics, dict):
+        raw_by_layer = reader_cross_attn_diagnostics.get("by_layer")
+        if isinstance(raw_by_layer, dict):
+            cross_attn_by_layer = {
+                str(layer_key): dict(payload)
+                for layer_key, payload in raw_by_layer.items()
+                if isinstance(payload, dict)
+            }
+        else:
+            cross_attn_by_layer = {
+                str(layer_key): dict(payload)
+                for layer_key, payload in reader_cross_attn_diagnostics.items()
+                if isinstance(payload, dict)
+            }
+    cross_attn_gate_values = [
+        float(payload.get("gate_open_fraction", 0.0))
+        for payload in cross_attn_by_layer.values()
+    ]
+    cross_attn_gate_open_fraction = float(reader_cross_attn_diagnostics.get("cross_attn_gate_open_fraction", 0.0)) if isinstance(reader_cross_attn_diagnostics, dict) else 0.0
+    if cross_attn_gate_open_fraction == 0.0 and cross_attn_gate_values:
+        cross_attn_gate_open_fraction = float(sum(cross_attn_gate_values) / len(cross_attn_gate_values))
+    cross_attn_attention_mass_mean = float(reader_cross_attn_diagnostics.get("memory_token_attention_mass_mean", 0.0)) if isinstance(reader_cross_attn_diagnostics, dict) else 0.0
+    cross_attn_attention_top_mass_mean = float(reader_cross_attn_diagnostics.get("memory_token_attention_top_mass_mean", 0.0)) if isinstance(reader_cross_attn_diagnostics, dict) else 0.0
     if layer_prefix_hidden_by_layer is not None:
         if not layer_prefix_hidden_by_layer:
             return {
@@ -1949,6 +2088,7 @@ def _prefix_stats(
                 "pilot_projector_token_source": projector_token_source,
                 "pilot_injection_mode": "sparse_deep_prefix",
                 "pilot_prefix_source_mode": prefix_source_mode,
+                "pilot_memory_consumer_mode": memory_consumer_mode,
                 "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
                 "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
                 "pilot_support_encoder_mode": support_interface_mode,
@@ -1969,6 +2109,7 @@ def _prefix_stats(
                 **memory_long_stats,
                 **memory_long_geometry_stats,
                 **memory_short_stats,
+                **memory_token_stats,
                 **support_stats,
                 **writer_support_stats,
                 **writer_context_stats,
@@ -1976,6 +2117,13 @@ def _prefix_stats(
                 **reader_pre_stats,
                 **reader_stats,
                 **fuser_geometry_stats,
+                "cross_attn_gate_open_fraction": cross_attn_gate_open_fraction,
+                "memory_token_attention_mass_mean": cross_attn_attention_mass_mean,
+                "memory_token_attention_top_mass_mean": cross_attn_attention_top_mass_mean,
+                "cross_attn_gate_open_fraction_by_layer": {
+                    layer_key: float(payload.get("gate_open_fraction", 0.0))
+                    for layer_key, payload in cross_attn_by_layer.items()
+                },
                 "projected_memory_effective_rank": float(projected_memory_effective_rank),
             }
         ordered_layers = sorted(int(layer_index) for layer_index in layer_prefix_hidden_by_layer)
@@ -2001,6 +2149,7 @@ def _prefix_stats(
             "pilot_projector_token_source": projector_token_source,
             "pilot_injection_mode": "sparse_deep_prefix",
             "pilot_prefix_source_mode": prefix_source_mode,
+            "pilot_memory_consumer_mode": memory_consumer_mode,
             "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
             "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
             "pilot_support_encoder_mode": support_interface_mode,
@@ -2021,6 +2170,7 @@ def _prefix_stats(
             **memory_long_stats,
             **memory_long_geometry_stats,
             **memory_short_stats,
+            **memory_token_stats,
             **support_stats,
             **writer_support_stats,
             **writer_context_stats,
@@ -2028,6 +2178,13 @@ def _prefix_stats(
             **reader_pre_stats,
             **reader_stats,
             **fuser_geometry_stats,
+            "cross_attn_gate_open_fraction": cross_attn_gate_open_fraction,
+            "memory_token_attention_mass_mean": cross_attn_attention_mass_mean,
+            "memory_token_attention_top_mass_mean": cross_attn_attention_top_mass_mean,
+            "cross_attn_gate_open_fraction_by_layer": {
+                layer_key: float(payload.get("gate_open_fraction", 0.0))
+                for layer_key, payload in cross_attn_by_layer.items()
+            },
             "projected_memory_effective_rank": float(projected_memory_effective_rank),
         }
     if prefix_embeddings is None or prefix_embeddings.numel() == 0:
@@ -2036,6 +2193,7 @@ def _prefix_stats(
             "pilot_projector_token_source": projector_token_source,
             "pilot_injection_mode": "shallow_prefix",
             "pilot_prefix_source_mode": prefix_source_mode,
+            "pilot_memory_consumer_mode": memory_consumer_mode,
             "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
             "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
             "pilot_support_encoder_mode": support_interface_mode,
@@ -2056,6 +2214,7 @@ def _prefix_stats(
             **memory_long_stats,
             **memory_long_geometry_stats,
             **memory_short_stats,
+            **memory_token_stats,
             **support_stats,
             **writer_support_stats,
             **writer_context_stats,
@@ -2063,6 +2222,13 @@ def _prefix_stats(
             **reader_pre_stats,
             **reader_stats,
             **fuser_geometry_stats,
+            "cross_attn_gate_open_fraction": cross_attn_gate_open_fraction,
+            "memory_token_attention_mass_mean": cross_attn_attention_mass_mean,
+            "memory_token_attention_top_mass_mean": cross_attn_attention_top_mass_mean,
+            "cross_attn_gate_open_fraction_by_layer": {
+                layer_key: float(payload.get("gate_open_fraction", 0.0))
+                for layer_key, payload in cross_attn_by_layer.items()
+            },
             "projected_memory_effective_rank": float(projected_memory_effective_rank),
         }
     prefix_summary = _slot_norm_summary(prefix_embeddings)
@@ -2071,6 +2237,7 @@ def _prefix_stats(
         "pilot_projector_token_source": projector_token_source,
         "pilot_injection_mode": "shallow_prefix",
         "pilot_prefix_source_mode": prefix_source_mode,
+        "pilot_memory_consumer_mode": memory_consumer_mode,
         "pilot_deep_prefix_init_mode": deep_prefix_init_mode,
         "pilot_deep_prefix_projector_mode": deep_prefix_projector_mode,
         "pilot_support_encoder_mode": support_interface_mode,
@@ -2091,6 +2258,7 @@ def _prefix_stats(
         **memory_long_stats,
         **memory_long_geometry_stats,
         **memory_short_stats,
+        **memory_token_stats,
         **support_stats,
         **writer_support_stats,
         **writer_context_stats,
@@ -2098,6 +2266,13 @@ def _prefix_stats(
         **reader_pre_stats,
         **reader_stats,
         **fuser_geometry_stats,
+        "cross_attn_gate_open_fraction": cross_attn_gate_open_fraction,
+        "memory_token_attention_mass_mean": cross_attn_attention_mass_mean,
+        "memory_token_attention_top_mass_mean": cross_attn_attention_top_mass_mean,
+        "cross_attn_gate_open_fraction_by_layer": {
+            layer_key: float(payload.get("gate_open_fraction", 0.0))
+            for layer_key, payload in cross_attn_by_layer.items()
+        },
         "projected_memory_effective_rank": float(projected_memory_effective_rank),
     }
 
@@ -2242,6 +2417,11 @@ def _save_shared_injection_checkpoint(
                 if not hasattr(runtime.backbone, "receiver_lora_state_dict")
                 else runtime.backbone.receiver_lora_state_dict()
             ),
+            "reader_cross_attn_state": (
+                None
+                if not hasattr(runtime.backbone, "reader_cross_attn_state_dict")
+                else runtime.backbone.reader_cross_attn_state_dict()
+            ),
             "pilot_receiver_lora_enabled": bool(runtime.receiver_lora_enabled),
             "pilot_receiver_lora_target_layers": list(runtime.receiver_lora_target_layers),
             "pilot_receiver_lora_target_modules": list(runtime.receiver_lora_target_modules),
@@ -2249,6 +2429,16 @@ def _save_shared_injection_checkpoint(
             "pilot_receiver_lora_alpha": float(runtime.receiver_lora_alpha),
             "pilot_receiver_lora_dropout": float(runtime.receiver_lora_dropout),
             "pilot_receiver_lora_trainable_params": int(runtime.receiver_lora_trainable_params),
+            "pilot_memory_consumer_mode": str(runtime.memory_consumer_mode),
+            "pilot_memory_segment_mode": str(runtime.memory_segment_mode),
+            "pilot_writer_extract_layer": int(runtime.oracle_extract_layer),
+            "pilot_writer_slot_pool_window": int(runtime.oracle_slot_pool_window),
+            "pilot_writer_slot_cap": int(runtime.oracle_slot_cap),
+            "pilot_reader_cross_attn_layers": list(runtime.reader_cross_attn_layers),
+            "pilot_reader_cross_attn_heads": int(runtime.reader_cross_attn_heads),
+            "pilot_reader_cross_attn_ff_hidden_dim": int(runtime.reader_cross_attn_ff_hidden_dim),
+            "pilot_reader_cross_attn_gate_init": float(runtime.reader_cross_attn_gate_init),
+            "pilot_reader_cross_attn_trainable_params": int(runtime.reader_cross_attn_trainable_params),
             "pilot_support_encoder_max_items": (
                 None if runtime.support_encoder is None else int(runtime.support_encoder.max_items)
             ),
@@ -2329,8 +2519,39 @@ def _fever_candidate_texts(prompt_variant: str) -> tuple[list[str], list[str]]:
 
 
 def _resolve_prompt_text(example: dict[str, Any], *, prompt_variant: str) -> str:
+    benchmark_id = str(example.get("benchmark_id", "")).strip().lower()
     if prompt_variant == TASK_NATIVE_PROMPT_VARIANT:
         return str(example.get("segment", "")).strip()
+    if benchmark_id == "gsm8k":
+        question = str(example.get("question", "")).strip()
+        if not question:
+            question = str(example.get("segment", "")).strip()
+        if prompt_variant in {"gsm8k_nonthink_numeric", "q3_gsm8k_nonthink"}:
+            return (
+                f"Question: {question}\n"
+                "Give only the final numeric answer."
+            )
+        if prompt_variant in {"gsm8k_think_boxed", "q3_gsm8k_think_boxed"}:
+            return (
+                f"Question: {question}\n"
+                "Solve step by step. End with the final answer in \\boxed{}."
+            )
+        raise ValueError(f"Unsupported GSM8K prompt_variant={prompt_variant}.")
+    if benchmark_id == "triviaqa":
+        question = str(example.get("question", "")).strip()
+        if not question:
+            question = str(example.get("segment", "")).strip()
+        if prompt_variant in {"triviaqa_nonthink_concise", "q3_trivia_nonthink"}:
+            return (
+                f"Question: {question}\n"
+                "Answer with only the short answer."
+            )
+        if prompt_variant in {"triviaqa_think_concise", "q3_trivia_think"}:
+            return (
+                f"Question: {question}\n"
+                "Think carefully, then answer with only the short answer."
+            )
+        raise ValueError(f"Unsupported TriviaQA prompt_variant={prompt_variant}.")
     claim = str(example.get("claim", "")).strip()
     evidence = str(example.get("evidence", "")).strip()
     if prompt_variant == "inline_short_labels":
@@ -2605,7 +2826,15 @@ def _task_mode_for_evaluator_type(evaluator_type: str) -> str:
 def _candidate_payload(example: dict[str, Any], *, prompt_variant: str) -> tuple[list[str], list[str], int, str]:
     evaluator_type = str(example.get("evaluator_type", "dataset_label_classification"))
     task_mode = _task_mode_for_evaluator_type(evaluator_type)
-    if prompt_variant != TASK_NATIVE_PROMPT_VARIANT:
+    benchmark_id = str(example.get("benchmark_id", "")).strip().lower()
+    label_value = str(example.get("label", "")).strip()
+    fever_style_label_only = (
+        task_mode == "candidate_selection"
+        and prompt_variant in FEVER_PROMPT_VARIANTS
+        and label_value in FEVER_LABEL_ORDER
+        and not list(example.get("choices", []))
+    )
+    if benchmark_id == "fever" or fever_style_label_only:
         gold_label = str(example["label"])
         candidate_labels, candidate_texts = _fever_candidate_texts(prompt_variant)
         try:
@@ -2954,11 +3183,17 @@ class SharedInjectionPilotRuntime(nn.Module):
             cache_dir=backbone_cfg.get("cache_dir"),
             attn_implementation=backbone_cfg.get("attn_implementation"),
             max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
+            gradient_checkpointing=bool(backbone_cfg.get("gradient_checkpointing", False)),
         )
         writer_cfg = config["method"]["writer"]
         self.bridge_mode = _resolve_bridge_mode(config)
+        self.memory_consumer_mode = _resolve_memory_consumer_mode(config)
+        self.memory_segment_mode = _resolve_memory_segment_mode(config)
         self.writer_stimulus_mode = _resolve_writer_stimulus_mode(config)
         self.writer_context_tokens = _resolve_writer_context_tokens(config)
+        self.oracle_extract_layer = _resolve_oracle_extract_layer(config)
+        self.oracle_slot_pool_window = _resolve_oracle_slot_pool_window(config)
+        self.oracle_slot_cap = _resolve_oracle_slot_cap(config)
         self.backbone_prompt_mask_mode = _resolve_backbone_prompt_mask_mode(config)
         self.writer_context_prompt_mode = _resolve_writer_context_prompt_mode(config)
         support_encoder_mode = _resolve_support_encoder_mode(config)
@@ -3042,6 +3277,12 @@ class SharedInjectionPilotRuntime(nn.Module):
         self.receiver_lora_rank = _resolve_receiver_lora_rank(config)
         self.receiver_lora_alpha = _resolve_receiver_lora_alpha(config)
         self.receiver_lora_dropout = _resolve_receiver_lora_dropout(config)
+        self.reader_cross_attn_layers = _resolve_reader_cross_attn_layers(config)
+        self.reader_cross_attn_heads = _resolve_reader_cross_attn_heads(config)
+        self.reader_cross_attn_ff_hidden_dim = _resolve_reader_cross_attn_ff_hidden_dim(config)
+        if self.reader_cross_attn_ff_hidden_dim <= 0:
+            self.reader_cross_attn_ff_hidden_dim = max(1, 4 * int(self.backbone.hidden_size))
+        self.reader_cross_attn_gate_init = _resolve_reader_cross_attn_gate_init(config)
         self._validate_runtime_contract()
         if self.writer_adapter_enabled:
             if self.bridge_mode != "writer_direct":
@@ -3081,8 +3322,20 @@ class SharedInjectionPilotRuntime(nn.Module):
                 alpha=self.receiver_lora_alpha,
                 dropout=self.receiver_lora_dropout,
             )
+        if self.memory_consumer_mode == "reader_cross_attn":
+            if not hasattr(self.backbone, "enable_reader_cross_attention"):
+                raise RuntimeError("Configured reader cross-attention, but BackboneWrapper lacks support.")
+            self.backbone.enable_reader_cross_attention(
+                layer_indices=self.reader_cross_attn_layers,
+                num_heads=self.reader_cross_attn_heads,
+                ff_hidden_dim=self.reader_cross_attn_ff_hidden_dim,
+                gate_init=self.reader_cross_attn_gate_init,
+            )
         self.receiver_lora_trainable_params = int(
             getattr(self.backbone, "receiver_lora_parameter_count", lambda: 0)()
+        )
+        self.reader_cross_attn_trainable_params = int(
+            getattr(self.backbone, "reader_cross_attn_parameter_count", lambda: 0)()
         )
         self.source_stub_trainable_params = int(
             0 if self.source_stub is None else sum(parameter.numel() for parameter in self.source_stub.parameters())
@@ -3177,9 +3430,27 @@ class SharedInjectionPilotRuntime(nn.Module):
         set_receiver_lora_trainable = getattr(self.backbone, "set_receiver_lora_trainable", None)
         if callable(set_receiver_lora_trainable):
             set_receiver_lora_trainable(self.receiver_lora_enabled)
+        set_reader_cross_attn_trainable = getattr(self.backbone, "set_reader_cross_attn_trainable", None)
+        if callable(set_reader_cross_attn_trainable):
+            set_reader_cross_attn_trainable(self.memory_consumer_mode == "reader_cross_attn")
         self.to(self.backbone.device)
 
     def _validate_runtime_contract(self) -> None:
+        if self.memory_consumer_mode not in SEQUENCE_MEMORY_CONSUMER_MODES:
+            raise ValueError(
+                f"Unsupported pilot_memory_consumer_mode={self.memory_consumer_mode}."
+            )
+        if self.memory_consumer_mode == "reader_cross_attn":
+            if not self.reader_cross_attn_layers:
+                raise ValueError(
+                    "runtime.pilot_memory_consumer_mode=reader_cross_attn requires "
+                    "runtime.pilot_reader_cross_attn_layers."
+                )
+        if self.memory_consumer_mode != "legacy_prefix":
+            if self.prefix_source_mode == "source_stub":
+                raise ValueError(
+                    "runtime.pilot_prefix_source_mode=source_stub is not supported with sequence/cross-attn consumers."
+                )
         if self.bridge_mode == "writer_direct" and self.memory_path_variant not in {
             "single_level",
             "two_level",
@@ -3202,34 +3473,45 @@ class SharedInjectionPilotRuntime(nn.Module):
                 raise ValueError(
                     "oracle pilot_prefix_source_mode values currently require runtime.pilot_bridge_mode=writer_direct."
                 )
-            if self.injection_mode != "sparse_deep_prefix":
+            if self.memory_consumer_mode == "legacy_prefix" and self.injection_mode != "sparse_deep_prefix":
                 raise ValueError(
                     "oracle pilot_prefix_source_mode values require runtime.pilot_injection_mode=sparse_deep_prefix."
+                )
+        if self.prefix_source_mode in ORACLE_SLOT_SOURCE_MODES:
+            if self.bridge_mode != "writer_direct":
+                raise ValueError(
+                    "oracle hidden-state slot mode currently requires runtime.pilot_bridge_mode=writer_direct."
                 )
         if self.bridge_mode != "writer_direct" and self.receiver_lora_enabled:
             return
         if self.bridge_mode == "writer_direct" and self.receiver_lora_enabled:
-            if self.injection_mode != "sparse_deep_prefix":
+            if self.memory_consumer_mode == "legacy_prefix" and self.injection_mode != "sparse_deep_prefix":
                 raise ValueError(
                     "runtime.pilot_bridge_mode=writer_direct allows receiver micro-LoRA only when "
-                    "runtime.pilot_injection_mode=sparse_deep_prefix."
+                    "runtime.pilot_injection_mode=sparse_deep_prefix for the legacy prefix consumer."
                 )
             if not self.receiver_lora_target_layers:
                 raise ValueError(
                     "runtime.pilot_bridge_mode=writer_direct with receiver micro-LoRA requires at least one target layer."
                 )
-            if len(self.receiver_lora_target_layers) > 5:
+            if self.memory_consumer_mode == "legacy_prefix" and len(self.receiver_lora_target_layers) > 5:
                 raise ValueError(
                     "runtime.pilot_bridge_mode=writer_direct supports only tiny receiver micro-LoRA sets "
-                    "(at most 5 target layers)."
+                    "(at most 5 target layers) for the legacy prefix consumer."
                 )
-            if self.receiver_lora_rank <= 0 or self.receiver_lora_rank > 4:
+            if self.receiver_lora_rank <= 0 or (
+                self.memory_consumer_mode == "legacy_prefix" and self.receiver_lora_rank > 4
+            ):
                 raise ValueError(
-                    "runtime.pilot_bridge_mode=writer_direct supports receiver micro-LoRA rank in [1, 4]."
+                    "runtime.pilot_bridge_mode=writer_direct supports receiver micro-LoRA rank in [1, 4] "
+                    "for the legacy prefix consumer."
                 )
-            if self.receiver_lora_alpha <= 0.0 or self.receiver_lora_alpha > 8.0:
+            if self.receiver_lora_alpha <= 0.0 or (
+                self.memory_consumer_mode == "legacy_prefix" and self.receiver_lora_alpha > 8.0
+            ):
                 raise ValueError(
-                    "runtime.pilot_bridge_mode=writer_direct supports receiver micro-LoRA alpha in (0, 8]."
+                    "runtime.pilot_bridge_mode=writer_direct supports receiver micro-LoRA alpha in (0, 8] "
+                    "for the legacy prefix consumer."
                 )
 
     def orthogonalize_writer_slot_basis(self) -> None:
@@ -3644,6 +3926,64 @@ class SharedInjectionPilotRuntime(nn.Module):
                     receiver_lora_state,
                     checkpoint_path=str(checkpoint_path),
                 )
+        checkpoint_memory_consumer_mode = str(
+            checkpoint.get("pilot_memory_consumer_mode", self.memory_consumer_mode)
+        )
+        if checkpoint_memory_consumer_mode != self.memory_consumer_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_memory_consumer_mode="
+                f"{checkpoint_memory_consumer_mode}, expected {self.memory_consumer_mode}."
+            )
+        checkpoint_reader_cross_attn_layers = tuple(
+            int(layer_index) for layer_index in checkpoint.get("pilot_reader_cross_attn_layers", [])
+        )
+        checkpoint_reader_cross_attn_enabled = bool(
+            checkpoint_reader_cross_attn_layers or checkpoint.get("reader_cross_attn_state") is not None
+        )
+        runtime_reader_cross_attn_enabled = bool(self.memory_consumer_mode == "reader_cross_attn")
+        if checkpoint_reader_cross_attn_enabled != runtime_reader_cross_attn_enabled:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses reader cross-attention enabled="
+                f"{checkpoint_reader_cross_attn_enabled}, expected {runtime_reader_cross_attn_enabled}."
+            )
+        if runtime_reader_cross_attn_enabled:
+            if checkpoint_reader_cross_attn_layers != self.reader_cross_attn_layers:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_reader_cross_attn_layers="
+                    f"{list(checkpoint_reader_cross_attn_layers)}, expected {list(self.reader_cross_attn_layers)}."
+                )
+            checkpoint_reader_cross_attn_heads = int(
+                checkpoint.get("pilot_reader_cross_attn_heads", self.reader_cross_attn_heads)
+            )
+            checkpoint_reader_cross_attn_ff_hidden_dim = int(
+                checkpoint.get(
+                    "pilot_reader_cross_attn_ff_hidden_dim",
+                    self.reader_cross_attn_ff_hidden_dim,
+                )
+            )
+            if checkpoint_reader_cross_attn_heads != int(self.reader_cross_attn_heads):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_reader_cross_attn_heads="
+                    f"{checkpoint_reader_cross_attn_heads}, expected {self.reader_cross_attn_heads}."
+                )
+            if checkpoint_reader_cross_attn_ff_hidden_dim != int(self.reader_cross_attn_ff_hidden_dim):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_reader_cross_attn_ff_hidden_dim="
+                    f"{checkpoint_reader_cross_attn_ff_hidden_dim}, expected {self.reader_cross_attn_ff_hidden_dim}."
+                )
+            reader_cross_attn_state = checkpoint.get("reader_cross_attn_state")
+            if reader_cross_attn_state is None:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} is missing reader_cross_attn_state."
+                )
+            if not isinstance(reader_cross_attn_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} has invalid reader_cross_attn_state."
+                )
+            self.backbone.validate_reader_cross_attn_state_dict(
+                reader_cross_attn_state,
+                checkpoint_path=str(checkpoint_path),
+            )
 
     def warm_start_from_injection_checkpoint(self, checkpoint_path: str | Path) -> dict[str, Any]:
         checkpoint_path = Path(checkpoint_path).resolve()
@@ -3669,6 +4009,11 @@ class SharedInjectionPilotRuntime(nn.Module):
         if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
             self.backbone.load_receiver_lora_state_dict(
                 checkpoint["receiver_lora_state"],
+                checkpoint_path=str(checkpoint_path),
+            )
+        if self.memory_consumer_mode == "reader_cross_attn" and checkpoint.get("reader_cross_attn_state") is not None:
+            self.backbone.load_reader_cross_attn_state_dict(
+                checkpoint["reader_cross_attn_state"],
                 checkpoint_path=str(checkpoint_path),
             )
         if (
@@ -3701,6 +4046,11 @@ class SharedInjectionPilotRuntime(nn.Module):
         if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
             self.backbone.load_receiver_lora_state_dict(
                 checkpoint["receiver_lora_state"],
+                checkpoint_path=str(checkpoint_path),
+            )
+        if self.memory_consumer_mode == "reader_cross_attn" and checkpoint.get("reader_cross_attn_state") is not None:
+            self.backbone.load_reader_cross_attn_state_dict(
+                checkpoint["reader_cross_attn_state"],
                 checkpoint_path=str(checkpoint_path),
             )
         if self.memory_path_variant == "two_level":
@@ -3765,6 +4115,11 @@ class SharedInjectionPilotRuntime(nn.Module):
         setter = getattr(self.backbone, "set_receiver_lora_trainable", None)
         if callable(setter):
             setter(enabled and self.receiver_lora_enabled)
+
+    def set_reader_cross_attn_trainable(self, enabled: bool) -> None:
+        setter = getattr(self.backbone, "set_reader_cross_attn_trainable", None)
+        if callable(setter):
+            setter(enabled and self.memory_consumer_mode == "reader_cross_attn")
 
     def reconstruction_parameters(self) -> list[nn.Parameter]:
         if self.reconstruction_head is None:
@@ -4006,6 +4361,40 @@ class SharedInjectionPilotRuntime(nn.Module):
             for layer_index in self.deep_prefix_layers
         }
 
+    def _oracle_hidden_state_source_text(
+        self,
+        *,
+        support_text_block: str,
+        prompt_text: str | None,
+    ) -> str:
+        if str(support_text_block).strip():
+            return str(support_text_block)
+        if prompt_text is not None and str(prompt_text).strip():
+            return str(prompt_text)
+        return "<empty>"
+
+    def _oracle_hidden_state_tokens(
+        self,
+        *,
+        source_text: str,
+    ) -> torch.Tensor:
+        extractor = getattr(self.backbone, "extract_chunk_pooled_hidden_state_slots", None)
+        if callable(extractor):
+            with torch.no_grad():
+                tokens, _ = extractor(
+                    [source_text],
+                    layer_index=None if self.oracle_extract_layer < 0 else self.oracle_extract_layer,
+                    pool_window=self.oracle_slot_pool_window,
+                    slot_cap=self.oracle_slot_cap,
+                )
+            return tokens.detach().to(device=self.backbone.device, dtype=torch.float32)
+        fallback_hidden = self._oracle_memory_long(source_text=source_text)
+        if int(fallback_hidden.shape[1]) >= int(self.oracle_slot_cap):
+            return fallback_hidden[:, : int(self.oracle_slot_cap), :].clone()
+        repeats = math.ceil(int(self.oracle_slot_cap) / max(1, int(fallback_hidden.shape[1])))
+        expanded = fallback_hidden.repeat(1, repeats, 1)
+        return expanded[:, : int(self.oracle_slot_cap), :].clone()
+
     def _two_level_memory_short(
         self,
         *,
@@ -4041,6 +4430,8 @@ class SharedInjectionPilotRuntime(nn.Module):
         writer_context_states = None
         writer_context_mask = None
         writer_diagnostics: dict[str, Any] | None = None
+        memory_tokens = None
+        reader_cross_attn_diagnostics: dict[str, Any] | None = None
         if self.writer_memory_control == "zero":
             memory_long = torch.zeros(
                 1,
@@ -4096,6 +4487,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 deep_prefix_projector_mode=self.deep_prefix_projector_mode,
                 support_interface_mode=self.support_encoder_mode,
                 context_support_balance_mode=self.context_support_balance_mode,
+                memory_consumer_mode=self.memory_consumer_mode,
             )
             prefix_stats = self._augment_prefix_stats_with_projection(
                 prefix_stats=prefix_stats,
@@ -4105,6 +4497,7 @@ class SharedInjectionPilotRuntime(nn.Module):
                 prefix_embeddings=None,
                 layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
                 prefix_stats=prefix_stats,
+                memory_tokens=None,
                 memory_slots=memory_long,
                 support_item_states=support_item_states,
                 writer_support_states=writer_support_states,
@@ -4120,7 +4513,22 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_conditioned_queries=None,
                 reader_value_projected_slots=None,
                 reader_readouts=None,
+                reader_cross_attn_diagnostics=None,
             )
+        elif self.prefix_source_mode in ORACLE_SLOT_SOURCE_MODES:
+            if prompt_text is not None:
+                writer_context_states, writer_context_mask = self._prompt_context_states(prompt_text)
+            if support_rows:
+                support_item_states, writer_support_states = self._writer_support_states(
+                    support_text_block,
+                    support_rows=support_rows,
+                )
+            source_text = self._oracle_hidden_state_source_text(
+                support_text_block=support_text_block,
+                prompt_text=prompt_text,
+            )
+            memory_long = self._oracle_hidden_state_tokens(source_text=source_text)
+            memory_tokens = memory_long.clone()
         else:
             support_item_states, writer_support_states = self._writer_support_states(
                 support_text_block,
@@ -4205,6 +4613,57 @@ class SharedInjectionPilotRuntime(nn.Module):
             projector_source = memory_long if self.projector_token_source == "writer_slots" else memory_short
             if projector_source is None:
                 raise RuntimeError("two_level projector source resolved to None.")
+        if self.memory_consumer_mode != "legacy_prefix":
+            if memory_tokens is None:
+                memory_tokens = projector_source.detach().clone()
+            prefix_stats = _prefix_stats(
+                memory_tokens=memory_tokens,
+                memory_slots=memory_long,
+                memory_long=memory_long,
+                memory_short=memory_short,
+                support_item_states=support_item_states,
+                writer_support_states=writer_support_states,
+                writer_context_states=writer_context_states,
+                reader_attention=reader_attention,
+                reader_base_queries=reader_base_queries,
+                reader_conditioned_queries=reader_conditioned_queries,
+                reader_attention_logits=reader_attention_logits,
+                reader_value_projected_slots=reader_value_projected_slots,
+                reader_readouts=reader_readouts,
+                writer_diagnostics=writer_diagnostics,
+                fuser=self.fuser,
+                memory_path_variant=self.memory_path_variant,
+                projector_token_source=self.projector_token_source,
+                prefix_source_mode=self.prefix_source_mode,
+                deep_prefix_init_mode=self.deep_prefix_init_mode,
+                deep_prefix_projector_mode=self.deep_prefix_projector_mode,
+                support_interface_mode=self.support_encoder_mode,
+                context_support_balance_mode=self.context_support_balance_mode,
+                memory_consumer_mode=self.memory_consumer_mode,
+                reader_cross_attn_diagnostics=reader_cross_attn_diagnostics,
+            )
+            return PrefixInjectionArtifacts(
+                prefix_embeddings=None,
+                layer_prefix_hidden_by_layer=None,
+                prefix_stats=prefix_stats,
+                writer_diagnostics=writer_diagnostics,
+                memory_tokens=memory_tokens,
+                memory_slots=memory_long,
+                support_item_states=support_item_states,
+                writer_support_states=writer_support_states,
+                writer_context_states=writer_context_states,
+                writer_context_mask=writer_context_mask,
+                memory_long=memory_long,
+                memory_short=memory_short,
+                reader_attention=reader_attention,
+                reader_gates=reader_gates,
+                reader_queries=None if self.reader is None else self.reader.queries.detach(),
+                reader_context=reader_context,
+                reader_conditioned_queries=reader_conditioned_queries,
+                reader_value_projected_slots=reader_value_projected_slots,
+                reader_readouts=reader_readouts,
+                reader_cross_attn_diagnostics=reader_cross_attn_diagnostics,
+            )
         if self.injection_mode == "shallow_prefix":
             prefix_embeddings = self.prefix_projector(projector_source)
             prefix_stats = _prefix_stats(
@@ -4230,11 +4689,13 @@ class SharedInjectionPilotRuntime(nn.Module):
                 deep_prefix_projector_mode=self.deep_prefix_projector_mode,
                 support_interface_mode=self.support_encoder_mode,
                 context_support_balance_mode=self.context_support_balance_mode,
+                memory_consumer_mode=self.memory_consumer_mode,
             )
             return PrefixInjectionArtifacts(
                 prefix_embeddings=prefix_embeddings,
                 layer_prefix_hidden_by_layer=None,
                 prefix_stats=prefix_stats,
+                memory_tokens=None,
                 memory_slots=memory_long,
                 support_item_states=support_item_states,
                 writer_support_states=writer_support_states,
@@ -4250,12 +4711,21 @@ class SharedInjectionPilotRuntime(nn.Module):
                 reader_conditioned_queries=reader_conditioned_queries,
                 reader_value_projected_slots=reader_value_projected_slots,
                 reader_readouts=reader_readouts,
+                reader_cross_attn_diagnostics=None,
             )
         self._maybe_initialize_prefix_source(
             support_text_block=support_text_block,
             prompt_text=prompt_text,
         )
-        layer_prefix_hidden_by_layer = self.prefix_projector(projector_source)
+        if self.prefix_source_mode in ORACLE_SLOT_SOURCE_MODES:
+            if memory_tokens is None:
+                raise RuntimeError("oracle_hidden_state_slots requires memory_tokens before legacy prefix projection.")
+            layer_prefix_hidden_by_layer = {
+                int(layer_index): memory_tokens.clone()
+                for layer_index in self.deep_prefix_layers
+            }
+        else:
+            layer_prefix_hidden_by_layer = self.prefix_projector(projector_source)
         prefix_stats = _prefix_stats(
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
             memory_slots=memory_long,
@@ -4279,6 +4749,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             deep_prefix_projector_mode=self.deep_prefix_projector_mode,
             support_interface_mode=self.support_encoder_mode,
             context_support_balance_mode=self.context_support_balance_mode,
+            memory_consumer_mode=self.memory_consumer_mode,
         )
         prefix_stats = self._augment_prefix_stats_with_projection(
             prefix_stats=prefix_stats,
@@ -4288,6 +4759,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             prefix_embeddings=None,
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
             prefix_stats=prefix_stats,
+            memory_tokens=memory_tokens,
             memory_slots=memory_long,
             support_item_states=support_item_states,
             writer_support_states=writer_support_states,
@@ -4303,6 +4775,7 @@ class SharedInjectionPilotRuntime(nn.Module):
             reader_conditioned_queries=reader_conditioned_queries,
             reader_value_projected_slots=reader_value_projected_slots,
             reader_readouts=reader_readouts,
+            reader_cross_attn_diagnostics=None,
         )
 
     def score_example(
@@ -4310,6 +4783,7 @@ class SharedInjectionPilotRuntime(nn.Module):
         example_cache: SharedInjectionExampleCache,
         *,
         support_text_block: str,
+        memory_tokens: torch.Tensor | None,
         prefix_embeddings: torch.Tensor | None,
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
         prompt_text_override: str | None = None,
@@ -4319,6 +4793,14 @@ class SharedInjectionPilotRuntime(nn.Module):
             str(prompt_text_override)
             if prompt_text_override is not None
             else example_cache.prompt_text
+        )
+        active_memory_tokens = (
+            None if self.memory_consumer_mode == "legacy_prefix" else memory_tokens
+        )
+        active_memory_consumer_mode = (
+            self.memory_segment_mode
+            if self.memory_consumer_mode == "reader_lora_sequence"
+            else self.memory_consumer_mode
         )
         if self.arm == "teacher_text":
             prompt = _serialize_teacher_prompt(prompt_text, support_text_block)
@@ -4330,6 +4812,8 @@ class SharedInjectionPilotRuntime(nn.Module):
         return self.backbone.score_continuations(
             prompt_text,
             example_cache.candidate_texts,
+            memory_tokens=active_memory_tokens,
+            memory_consumer_mode=active_memory_consumer_mode,
             prefix_embeddings=prefix_embeddings,
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
             return_diagnostics=return_diagnostics,
@@ -4340,14 +4824,25 @@ class SharedInjectionPilotRuntime(nn.Module):
         *,
         prompt_text: str,
         support_text_block: str,
+        memory_tokens: torch.Tensor | None,
         prefix_embeddings: torch.Tensor | None,
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
     ) -> str:
+        active_memory_tokens = (
+            None if self.memory_consumer_mode == "legacy_prefix" else memory_tokens
+        )
+        active_memory_consumer_mode = (
+            self.memory_segment_mode
+            if self.memory_consumer_mode == "reader_lora_sequence"
+            else self.memory_consumer_mode
+        )
         if self.arm == "teacher_text":
             prompt = _serialize_teacher_prompt(prompt_text, support_text_block)
             return self.backbone.generate([prompt])[0]
         return self.backbone.generate(
             [prompt_text],
+            memory_tokens=active_memory_tokens,
+            memory_consumer_mode=active_memory_consumer_mode,
             prefix_embeddings=prefix_embeddings,
             layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
         )[0]
@@ -5236,6 +5731,7 @@ def _live_train_trace_row(event: dict[str, Any]) -> dict[str, Any]:
         "grad_norm_writer_adapter": float(event.get("grad_norm_writer_adapter", 0.0)),
         "grad_norm_projector": float(event.get("grad_norm_projector", 0.0)),
         "grad_norm_receiver_lora": float(event.get("grad_norm_receiver_lora", 0.0)),
+        "grad_norm_reader_cross_attn": float(event.get("grad_norm_reader_cross_attn", 0.0)),
         "grad_probe_writer_task_only_norm": float(
             event.get("grad_probe_writer_task_only_norm", 0.0)
         ),
@@ -5254,6 +5750,9 @@ def _live_train_trace_row(event: dict[str, Any]) -> dict[str, Any]:
         "was_grad_clipped_projector": bool(event.get("was_grad_clipped_projector", False)),
         "was_grad_clipped_receiver_lora": bool(
             event.get("was_grad_clipped_receiver_lora", False)
+        ),
+        "was_grad_clipped_reader_cross_attn": bool(
+            event.get("was_grad_clipped_reader_cross_attn", False)
         ),
         "prefix_attention_mass_mean": float(event.get("prefix_attention_mass_mean", 0.0)),
         "prefix_attention_nontrivial_layer_count": int(
@@ -5363,6 +5862,32 @@ def _prefix_attention_diagnostic_fields(
             "prefix_to_content_attention_ratio_mean_by_layer": {},
             "gold_prefix_attention_mass_by_layer": {},
             "competitor_prefix_attention_mass_by_layer": {},
+            "cross_attn_gate_open_fraction": 0.0,
+        }
+    if str(diagnostics.get("memory_consumer_mode", "")) == "reader_cross_attn":
+        mean_by_layer = {
+            str(layer_index): float(value)
+            for layer_index, value in dict(
+                diagnostics.get("memory_token_attention_mass_mean_by_layer", {})
+            ).items()
+        }
+        mean_mass = float(diagnostics.get("memory_token_attention_mass_mean", 0.0))
+        return {
+            "diagnostic_layers": [int(layer_index) for layer_index in mean_by_layer],
+            "prefix_attention_mass_mean": mean_mass,
+            "prefix_to_content_attention_ratio_mean": float(mean_mass / max(1e-8, 1.0 - mean_mass)),
+            "gold_prefix_attention_mass": mean_mass,
+            "competitor_prefix_attention_mass": mean_mass,
+            "prefix_attention_mass_mean_by_layer": mean_by_layer,
+            "prefix_to_content_attention_ratio_mean_by_layer": {
+                layer_index: float(value / max(1e-8, 1.0 - value))
+                for layer_index, value in mean_by_layer.items()
+            },
+            "gold_prefix_attention_mass_by_layer": dict(mean_by_layer),
+            "competitor_prefix_attention_mass_by_layer": dict(mean_by_layer),
+            "cross_attn_gate_open_fraction": float(
+                diagnostics.get("cross_attn_gate_open_fraction", 0.0)
+            ),
         }
     masses = [float(value) for value in diagnostics.get("prefix_attention_mass_by_candidate", [])]
     layer_masses_raw = diagnostics.get("prefix_attention_mass_by_candidate_by_layer", {})
@@ -5419,12 +5944,14 @@ def _aggregate_prefix_attention_metrics(rows: list[dict[str, Any]]) -> dict[str,
             "gold_prefix_attention_mass_mean_by_layer": {},
             "competitor_prefix_attention_mass_mean_by_layer": {},
             "prefix_attention_nontrivial_layer_count": 0,
+            "cross_attn_gate_open_fraction": 0.0,
         }
     metric_keys = [
         "prefix_attention_mass_mean",
         "prefix_to_content_attention_ratio_mean",
         "gold_prefix_attention_mass",
         "competitor_prefix_attention_mass",
+        "cross_attn_gate_open_fraction",
     ]
     aggregated = {
         key: float(
@@ -5583,6 +6110,7 @@ def _evaluate_examples(
                 profiler.add_tokens(runtime.backbone.count_tokens(candidate_text))
         active_prefix_embeddings = prefix_embeddings
         active_layer_prefix_hidden_by_layer = layer_prefix_hidden_by_layer
+        active_memory_tokens = None
         active_prefix_stats = prefix_stats
         if arm == "injected" and (
             runtime.memory_path_variant == "two_level" or runtime.bridge_mode == "writer_direct"
@@ -5594,17 +6122,31 @@ def _evaluate_examples(
             )
             active_prefix_embeddings = prefix_artifacts.prefix_embeddings
             active_layer_prefix_hidden_by_layer = prefix_artifacts.layer_prefix_hidden_by_layer
+            active_memory_tokens = prefix_artifacts.memory_tokens
             active_prefix_stats = prefix_artifacts.prefix_stats
             example_prefix_stats.append(active_prefix_stats)
         score_output = runtime.score_example(
             example_cache,
             support_text_block=teacher_support_text_block,
+            memory_tokens=active_memory_tokens,
             prefix_embeddings=active_prefix_embeddings,
             layer_prefix_hidden_by_layer=active_layer_prefix_hidden_by_layer,
             return_diagnostics=bool(
                 arm == "injected"
-                and runtime.injection_mode == "sparse_deep_prefix"
-                and active_layer_prefix_hidden_by_layer is not None
+                and (
+                    (
+                        runtime.injection_mode == "sparse_deep_prefix"
+                        and active_layer_prefix_hidden_by_layer is not None
+                    )
+                    or (
+                        runtime.memory_consumer_mode == "reader_lora_sequence"
+                        and active_memory_tokens is not None
+                    )
+                    or (
+                        runtime.memory_consumer_mode == "reader_cross_attn"
+                        and active_memory_tokens is not None
+                    )
+                )
             ),
         )
         diagnostics = None
@@ -5624,6 +6166,7 @@ def _evaluate_examples(
             generated_text = runtime.generate_text(
                 prompt_text=example_cache.prompt_text,
                 support_text_block=teacher_support_text_block,
+                memory_tokens=active_memory_tokens,
                 prefix_embeddings=active_prefix_embeddings,
                 layer_prefix_hidden_by_layer=active_layer_prefix_hidden_by_layer,
             )
@@ -5755,6 +6298,7 @@ def run_shared_injection_pilot(
     projector_learning_rate = float(config["runtime"].get("pilot_projector_learning_rate", 2e-3))
     source_stub_learning_rate = _resolve_source_stub_learning_rate(config)
     receiver_lora_learning_rate = _resolve_receiver_lora_learning_rate(config)
+    reader_cross_attn_learning_rate = _resolve_reader_cross_attn_learning_rate(config)
     writer_weight_decay = float(config["runtime"].get("pilot_writer_weight_decay", 0.0))
     support_encoder_weight_decay = _resolve_support_encoder_weight_decay(config)
     if support_encoder_weight_decay is None:
@@ -5763,6 +6307,11 @@ def run_shared_injection_pilot(
     projector_weight_decay = float(config["runtime"].get("pilot_projector_weight_decay", 0.0))
     source_stub_weight_decay = _resolve_source_stub_weight_decay(config)
     receiver_lora_weight_decay = _resolve_receiver_lora_weight_decay(config)
+    reader_cross_attn_weight_decay = _resolve_reader_cross_attn_weight_decay(config)
+    if reader_cross_attn_learning_rate is None:
+        reader_cross_attn_learning_rate = writer_learning_rate
+    if reader_cross_attn_weight_decay is None:
+        reader_cross_attn_weight_decay = writer_weight_decay
     if aux_loss_mode in {
         "task_only",
         "contrastive",
@@ -6182,6 +6731,18 @@ def run_shared_injection_pilot(
                     "weight_decay": receiver_lora_weight_decay,
                 }
             )
+        reader_cross_attn_parameters = list(
+            getattr(runtime.backbone, "reader_cross_attn_parameters", lambda: [])()
+        )
+        if reader_cross_attn_parameters:
+            optimizer_groups.append(
+                {
+                    "name": "reader_cross_attn",
+                    "params": reader_cross_attn_parameters,
+                    "lr": float(reader_cross_attn_learning_rate),
+                    "weight_decay": float(reader_cross_attn_weight_decay),
+                }
+            )
         optimizer = torch.optim.AdamW(optimizer_groups)
         optimizer_base_lrs = [float(group["lr"]) for group in optimizer.param_groups]
         for step in range(train_steps):
@@ -6240,6 +6801,7 @@ def run_shared_injection_pilot(
             runtime.set_fuser_trainable(not fuser_frozen)
             runtime.set_prefix_projector_trainable(not projector_frozen)
             runtime.set_receiver_lora_trainable(receiver_lora_trainable)
+            runtime.set_reader_cross_attn_trainable(not reader_frozen)
             runtime.set_reconstruction_trainable(not writer_base_frozen)
             optimizer_lr_by_group = _apply_learning_rate_schedule(
                 optimizer,
@@ -6353,12 +6915,23 @@ def run_shared_injection_pilot(
                 score_output = runtime.score_example(
                     train_example,
                     support_text_block=teacher_support_text_block,
+                    memory_tokens=prefix_artifacts.memory_tokens,
                     prefix_embeddings=prefix_artifacts.prefix_embeddings,
                     layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
                     prompt_text_override=active_backbone_prompt_text,
                     return_diagnostics=bool(
-                        runtime.injection_mode == "sparse_deep_prefix"
-                        and prefix_artifacts.layer_prefix_hidden_by_layer is not None
+                        (
+                            runtime.injection_mode == "sparse_deep_prefix"
+                            and prefix_artifacts.layer_prefix_hidden_by_layer is not None
+                        )
+                        or (
+                            runtime.memory_consumer_mode == "reader_lora_sequence"
+                            and prefix_artifacts.memory_tokens is not None
+                        )
+                        or (
+                            runtime.memory_consumer_mode == "reader_cross_attn"
+                            and prefix_artifacts.memory_tokens is not None
+                        )
                     ),
                 )
                 train_diagnostics = None
@@ -6765,6 +7338,15 @@ def run_shared_injection_pilot(
                                 )()
                                 if parameter.requires_grad
                             ],
+                            "reader_cross_attn": [
+                                parameter
+                                for parameter in getattr(
+                                    runtime.backbone,
+                                    "reader_cross_attn_parameters",
+                                    lambda: [],
+                                )()
+                                if parameter.requires_grad
+                            ],
                             "source_stub": [
                                 parameter
                                 for parameter in runtime.source_stub_parameters()
@@ -6960,6 +7542,9 @@ def run_shared_injection_pilot(
             receiver_lora_grad_norm = _parameters_grad_norm(
                 list(getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])())
             )
+            reader_cross_attn_grad_norm = _parameters_grad_norm(
+                list(getattr(runtime.backbone, "reader_cross_attn_parameters", lambda: [])())
+            )
             source_to_projector_grad_ratio = _safe_grad_ratio(
                 source_stub_grad_norm,
                 prefix_projector_grad_norm,
@@ -6978,6 +7563,10 @@ def run_shared_injection_pilot(
             )
             receiver_lora_to_reader_grad_ratio = _safe_grad_ratio(
                 receiver_lora_grad_norm,
+                reader_grad_norm,
+            )
+            reader_cross_attn_to_reader_grad_ratio = _safe_grad_ratio(
+                reader_cross_attn_grad_norm,
                 reader_grad_norm,
             )
             writer_group_parameters = [
@@ -6999,6 +7588,11 @@ def run_shared_injection_pilot(
                 for parameter in getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])()
                 if parameter.requires_grad
             ]
+            reader_cross_attn_group_parameters = [
+                parameter
+                for parameter in getattr(runtime.backbone, "reader_cross_attn_parameters", lambda: [])()
+                if parameter.requires_grad
+            ]
             source_stub_group_parameters = [
                 parameter for parameter in source_stub_parameters if parameter.requires_grad
             ]
@@ -7015,6 +7609,7 @@ def run_shared_injection_pilot(
             writer_group_summary = _parameter_group_norm_summary(writer_group_parameters)
             projector_group_summary = _parameter_group_norm_summary(projector_group_parameters)
             receiver_lora_group_summary = _parameter_group_norm_summary(receiver_lora_group_parameters)
+            reader_cross_attn_group_summary = _parameter_group_norm_summary(reader_cross_attn_group_parameters)
             source_stub_group_summary = _parameter_group_norm_summary(source_stub_group_parameters)
             reader_group_summary = _parameter_group_norm_summary(reader_group_parameters)
             fuser_group_summary = _parameter_group_norm_summary(fuser_group_parameters)
@@ -7041,6 +7636,7 @@ def run_shared_injection_pilot(
             was_grad_clipped_writer = False
             was_grad_clipped_projector = False
             was_grad_clipped_receiver_lora = False
+            was_grad_clipped_reader_cross_attn = False
             was_grad_clipped_source_stub = False
             was_grad_clipped_reader = False
             was_grad_clipped_fuser = False
@@ -7056,6 +7652,10 @@ def run_shared_injection_pilot(
                 _, was_grad_clipped_receiver_lora = _clip_parameter_group(
                     receiver_lora_group_parameters,
                     max_norm=receiver_lora_clip_limit,
+                )
+                _, was_grad_clipped_reader_cross_attn = _clip_parameter_group(
+                    reader_cross_attn_group_parameters,
+                    max_norm=writer_clip_limit,
                 )
                 _, was_grad_clipped_source_stub = _clip_parameter_group(
                     source_stub_group_parameters,
@@ -7073,6 +7673,7 @@ def run_shared_injection_pilot(
                     was_grad_clipped_writer
                     or was_grad_clipped_projector
                     or was_grad_clipped_receiver_lora
+                    or was_grad_clipped_reader_cross_attn
                     or was_grad_clipped_source_stub
                     or was_grad_clipped_reader
                     or was_grad_clipped_fuser
@@ -7088,6 +7689,9 @@ def run_shared_injection_pilot(
                 was_grad_clipped_receiver_lora = bool(
                     was_grad_clipped and receiver_lora_group_parameters
                 )
+                was_grad_clipped_reader_cross_attn = bool(
+                    was_grad_clipped and reader_cross_attn_group_parameters
+                )
                 was_grad_clipped_source_stub = bool(was_grad_clipped and source_stub_group_parameters)
                 was_grad_clipped_reader = bool(was_grad_clipped and reader_group_parameters)
                 was_grad_clipped_fuser = bool(was_grad_clipped and fuser_group_parameters)
@@ -7098,6 +7702,7 @@ def run_shared_injection_pilot(
             )
             projector_group_lr = float(optimizer_lr_by_group.get("prefix_projector", 0.0))
             receiver_lora_group_lr = float(optimizer_lr_by_group.get("receiver_lora", 0.0))
+            reader_cross_attn_group_lr = float(optimizer_lr_by_group.get("reader_cross_attn", 0.0))
             writer_group_update_to_param_norm_ratio = (
                 writer_group_lr * writer_group_summary["grad_norm_pre_clip"]
             ) / max(writer_group_summary["param_norm"], 1e-8)
@@ -7107,6 +7712,9 @@ def run_shared_injection_pilot(
             receiver_lora_group_update_to_param_norm_ratio = (
                 receiver_lora_group_lr * receiver_lora_group_summary["grad_norm_pre_clip"]
             ) / max(receiver_lora_group_summary["param_norm"], 1e-8)
+            reader_cross_attn_group_update_to_param_norm_ratio = (
+                reader_cross_attn_group_lr * reader_cross_attn_group_summary["grad_norm_pre_clip"]
+            ) / max(reader_cross_attn_group_summary["param_norm"], 1e-8)
             optimizer.step()
             if contrastive_loss_weight > 0.0 and contrastive_queue_size > 0 and contrastive_queue_batch:
                 contrastive_negative_queue.extend(contrastive_queue_batch)
@@ -7432,10 +8040,12 @@ def run_shared_injection_pilot(
                     "grad_norm_writer": writer_grad_norm,
                     "grad_norm_writer_adapter": writer_adapter_grad_norm,
                     "grad_norm_receiver_lora": receiver_lora_grad_norm,
+                    "grad_norm_reader_cross_attn": reader_cross_attn_grad_norm,
                     "reader_to_support_grad_ratio": reader_to_support_grad_ratio,
                     "fuser_to_support_grad_ratio": fuser_to_support_grad_ratio,
                     "source_to_projector_grad_ratio": source_to_projector_grad_ratio,
                     "receiver_lora_to_reader_grad_ratio": receiver_lora_to_reader_grad_ratio,
+                    "reader_cross_attn_to_reader_grad_ratio": reader_cross_attn_to_reader_grad_ratio,
                     "writer_to_projector_grad_ratio": writer_to_projector_grad_ratio,
                     "gradient_probe_enabled": bool(gradient_probe_enabled),
                     "gradient_probe_step_active": bool(probe_step_active),
@@ -7458,6 +8068,13 @@ def run_shared_injection_pilot(
                         and any(
                             parameter.requires_grad
                             for parameter in getattr(runtime.backbone, "receiver_lora_parameters", lambda: [])()
+                        )
+                    ),
+                    "reader_cross_attn_trainable": bool(
+                        runtime.memory_consumer_mode == "reader_cross_attn"
+                        and any(
+                            parameter.requires_grad
+                            for parameter in getattr(runtime.backbone, "reader_cross_attn_parameters", lambda: [])()
                         )
                     ),
                     "writer_trainable_params": _trainable_parameter_count(runtime.writer),
@@ -7484,6 +8101,9 @@ def run_shared_injection_pilot(
                     "receiver_lora_group_grad_norm_pre_clip": float(
                         receiver_lora_group_summary["grad_norm_pre_clip"]
                     ),
+                    "reader_cross_attn_group_grad_norm_pre_clip": float(
+                        reader_cross_attn_group_summary["grad_norm_pre_clip"]
+                    ),
                     "source_stub_group_grad_norm_pre_clip": float(
                         source_stub_group_summary["grad_norm_pre_clip"]
                     ),
@@ -7498,6 +8118,9 @@ def run_shared_injection_pilot(
                     "receiver_lora_group_param_norm": float(
                         receiver_lora_group_summary["param_norm"]
                     ),
+                    "reader_cross_attn_group_param_norm": float(
+                        reader_cross_attn_group_summary["param_norm"]
+                    ),
                     "writer_group_update_to_param_norm_ratio": float(
                         writer_group_update_to_param_norm_ratio
                     ),
@@ -7507,6 +8130,9 @@ def run_shared_injection_pilot(
                     "receiver_lora_group_update_to_param_norm_ratio": float(
                         receiver_lora_group_update_to_param_norm_ratio
                     ),
+                    "reader_cross_attn_group_update_to_param_norm_ratio": float(
+                        reader_cross_attn_group_update_to_param_norm_ratio
+                    ),
                     "writer_grad_clip_norm": float(writer_clip_limit),
                     "projector_grad_clip_norm": float(projector_clip_limit),
                     "receiver_lora_grad_clip_norm": float(receiver_lora_clip_limit),
@@ -7515,6 +8141,7 @@ def run_shared_injection_pilot(
                     "was_grad_clipped_writer": was_grad_clipped_writer,
                     "was_grad_clipped_projector": was_grad_clipped_projector,
                     "was_grad_clipped_receiver_lora": was_grad_clipped_receiver_lora,
+                    "was_grad_clipped_reader_cross_attn": was_grad_clipped_reader_cross_attn,
                     "was_grad_clipped_source_stub": was_grad_clipped_source_stub,
                     "was_grad_clipped_reader": was_grad_clipped_reader,
                     "was_grad_clipped_fuser": was_grad_clipped_fuser,
@@ -7628,6 +8255,7 @@ def run_shared_injection_pilot(
         runtime.set_fuser_trainable(True)
         runtime.set_prefix_projector_trainable(True)
         runtime.set_receiver_lora_trainable(True)
+        runtime.set_reader_cross_attn_trainable(True)
         runtime.set_reconstruction_trainable(True)
 
     prefix_artifacts = PrefixInjectionArtifacts(
@@ -8127,6 +8755,16 @@ def run_shared_injection_pilot(
         "pilot_receiver_lora_alpha": float(runtime.receiver_lora_alpha),
         "pilot_receiver_lora_dropout": float(runtime.receiver_lora_dropout),
         "pilot_receiver_lora_trainable_params": int(runtime.receiver_lora_trainable_params),
+        "pilot_memory_consumer_mode": str(runtime.memory_consumer_mode),
+        "pilot_memory_segment_mode": str(runtime.memory_segment_mode),
+        "pilot_writer_extract_layer": int(runtime.oracle_extract_layer),
+        "pilot_writer_slot_pool_window": int(runtime.oracle_slot_pool_window),
+        "pilot_writer_slot_cap": int(runtime.oracle_slot_cap),
+        "pilot_reader_cross_attn_layers": list(runtime.reader_cross_attn_layers),
+        "pilot_reader_cross_attn_heads": int(runtime.reader_cross_attn_heads),
+        "pilot_reader_cross_attn_ff_hidden_dim": int(runtime.reader_cross_attn_ff_hidden_dim),
+        "pilot_reader_cross_attn_gate_init": float(runtime.reader_cross_attn_gate_init),
+        "pilot_reader_cross_attn_trainable_params": int(runtime.reader_cross_attn_trainable_params),
         "pilot_alignment_aux_mode": alignment_aux_mode,
         "pilot_alignment_aux_weight": alignment_aux_weight_max,
         "pilot_alignment_aux_weight_max": alignment_aux_weight_max,
@@ -8195,6 +8833,7 @@ def run_shared_injection_pilot(
         "prefix_attention_nontrivial_layer_count": int(
             class_metrics.get("prefix_attention_nontrivial_layer_count", 0)
         ),
+        "cross_attn_gate_open_fraction": float(class_metrics.get("cross_attn_gate_open_fraction", 0.0)),
         "dominant_label_fraction": float(class_metrics["dominant_label_fraction"]),
         "label_recall_by_class": class_metrics["label_recall_by_class"],
         "best_adapt_step": 0,
@@ -8215,11 +8854,13 @@ def run_shared_injection_pilot(
         ),
         "owner_override_note": bool(config["runtime"].get("owner_override_note", True)),
         "pilot_receiver_lora_learning_rate": receiver_lora_learning_rate,
+        "pilot_reader_cross_attn_learning_rate": float(reader_cross_attn_learning_rate),
         "pilot_writer_weight_decay": writer_weight_decay,
         "pilot_support_encoder_weight_decay": support_encoder_weight_decay,
         "pilot_source_stub_weight_decay": source_stub_weight_decay,
         "pilot_projector_weight_decay": projector_weight_decay,
         "pilot_receiver_lora_weight_decay": receiver_lora_weight_decay,
+        "pilot_reader_cross_attn_weight_decay": float(reader_cross_attn_weight_decay),
         "pilot_lr_schedule": lr_schedule,
         "pilot_lr_warmup_steps": lr_warmup_steps,
         "pilot_projector_warmup_steps": projector_warmup_steps,

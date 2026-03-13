@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
 import hashlib
+import math
 import os
 from typing import Any, Iterable
 
@@ -127,6 +128,108 @@ class MicroLoRALinear(nn.Module):
 ReceiverMicroLoRALinear = MicroLoRALinear
 
 
+class ReaderCrossAttentionAdapter(nn.Module):
+    def __init__(
+        self,
+        *,
+        hidden_size: int,
+        num_heads: int,
+        ff_hidden_dim: int,
+        gate_init: float,
+    ) -> None:
+        super().__init__()
+        if hidden_size <= 0:
+            raise ValueError("ReaderCrossAttentionAdapter requires positive hidden_size.")
+        if num_heads <= 0 or hidden_size % num_heads != 0:
+            raise ValueError(
+                f"ReaderCrossAttentionAdapter requires hidden_size divisible by num_heads, got "
+                f"hidden_size={hidden_size}, num_heads={num_heads}."
+            )
+        self.hidden_size = int(hidden_size)
+        self.num_heads = int(num_heads)
+        self.head_dim = int(hidden_size // num_heads)
+        self.scale = float(1.0 / math.sqrt(self.head_dim))
+        self.query_norm = nn.LayerNorm(self.hidden_size)
+        self.memory_norm = nn.LayerNorm(self.hidden_size)
+        self.q_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.k_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.v_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.out_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.ffn = nn.Sequential(
+            nn.LayerNorm(self.hidden_size),
+            nn.Linear(self.hidden_size, int(ff_hidden_dim)),
+            nn.GELU(),
+            nn.Linear(int(ff_hidden_dim), self.hidden_size),
+        )
+        self.gate = nn.Parameter(torch.tensor(float(gate_init), dtype=torch.float32))
+        self._last_diagnostics = {
+            "gate_open_fraction": 0.0,
+            "memory_token_attention_mass_mean": 0.0,
+            "memory_token_attention_entropy_mean": 0.0,
+            "memory_token_attention_top_mass_mean": 0.0,
+        }
+
+    def _split_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch_size, token_count, _ = tensor.shape
+        return tensor.view(batch_size, token_count, self.num_heads, self.head_dim).transpose(1, 2)
+
+    def _merge_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch_size, _, token_count, _ = tensor.shape
+        return tensor.transpose(1, 2).reshape(batch_size, token_count, self.hidden_size)
+
+    def forward(self, hidden_states: torch.Tensor, memory_tokens: torch.Tensor) -> torch.Tensor:
+        if hidden_states.ndim != 3:
+            raise ValueError("hidden_states must have shape [batch, tokens, hidden_size].")
+        if memory_tokens.ndim != 3:
+            raise ValueError("memory_tokens must have shape [batch, memory_tokens, hidden_size].")
+        if hidden_states.shape[-1] != self.hidden_size or memory_tokens.shape[-1] != self.hidden_size:
+            raise ValueError(
+                f"ReaderCrossAttentionAdapter expected hidden size {self.hidden_size}, got "
+                f"{hidden_states.shape[-1]} and {memory_tokens.shape[-1]}."
+            )
+        batch_size = int(hidden_states.shape[0])
+        if memory_tokens.shape[0] == 1 and batch_size > 1:
+            memory_tokens = memory_tokens.expand(batch_size, -1, -1)
+        if memory_tokens.shape[0] != batch_size:
+            raise ValueError(
+                "memory_tokens batch dimension must be 1 or match hidden_states batch dimension."
+            )
+        query_states = self._split_heads(self.q_proj(self.query_norm(hidden_states)))
+        normalized_memory = self.memory_norm(memory_tokens)
+        key_states = self._split_heads(self.k_proj(normalized_memory))
+        value_states = self._split_heads(self.v_proj(normalized_memory))
+        attention_logits = torch.matmul(query_states, key_states.transpose(-1, -2)) * self.scale
+        attention = torch.softmax(attention_logits.to(dtype=torch.float32), dim=-1).to(dtype=query_states.dtype)
+        attended = torch.matmul(attention, value_states)
+        delta = self.out_proj(self._merge_heads(attended))
+        delta = delta + self.ffn(delta)
+        gate_value = torch.sigmoid(self.gate.to(dtype=delta.dtype))
+        if attention.numel() > 0:
+            attention_fp32 = attention.detach().to(dtype=torch.float32)
+            top_mass = attention_fp32.max(dim=-1).values
+            entropy = -torch.sum(
+                attention_fp32.clamp_min(1e-8) * torch.log(attention_fp32.clamp_min(1e-8)),
+                dim=-1,
+            )
+            self._last_diagnostics = {
+                "gate_open_fraction": float(gate_value.detach().to(dtype=torch.float32).item()),
+                "memory_token_attention_mass_mean": float(attention_fp32.mean().item()),
+                "memory_token_attention_entropy_mean": float(entropy.mean().item()),
+                "memory_token_attention_top_mass_mean": float(top_mass.mean().item()),
+            }
+        else:
+            self._last_diagnostics = {
+                "gate_open_fraction": float(gate_value.detach().to(dtype=torch.float32).item()),
+                "memory_token_attention_mass_mean": 0.0,
+                "memory_token_attention_entropy_mean": 0.0,
+                "memory_token_attention_top_mass_mean": 0.0,
+            }
+        return hidden_states + (gate_value * delta)
+
+    def diagnostics(self) -> dict[str, float]:
+        return dict(self._last_diagnostics)
+
+
 class BackboneWrapper(nn.Module):
     def __init__(
         self,
@@ -141,6 +244,7 @@ class BackboneWrapper(nn.Module):
         cache_dir: str | None = None,
         attn_implementation: str | None = None,
         max_new_tokens: int = 32,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         validate_backbone_name(name)
@@ -153,6 +257,7 @@ class BackboneWrapper(nn.Module):
         self.cache_dir = cache_dir or os.environ.get("HF_HOME") or "/root/autodl-tmp/hf-cache"
         self.attn_implementation = attn_implementation
         self.max_new_tokens = int(max_new_tokens)
+        self.gradient_checkpointing = bool(gradient_checkpointing)
         self.tokenizer = None
         self.model = None
         self._receiver_lora_targets: dict[str, MicroLoRALinear] = {}
@@ -164,6 +269,16 @@ class BackboneWrapper(nn.Module):
             "alpha": 0.0,
             "dropout": 0.0,
         }
+        self._reader_cross_attn_targets = nn.ModuleDict()
+        self._reader_cross_attn_config: dict[str, Any] = {
+            "enabled": False,
+            "target_layers": [],
+            "num_heads": 0,
+            "ff_hidden_dim": 0,
+            "gate_init": 0.0,
+        }
+        self._active_reader_cross_attn_memory: torch.Tensor | None = None
+        self._reader_cross_attn_last_diagnostics: dict[str, dict[str, float]] = {}
         if load_mode == "stub":
             if hidden_size is None:
                 raise ValueError("Stub backbone requires hidden_size.")
@@ -220,6 +335,8 @@ class BackboneWrapper(nn.Module):
             self.model_id,
             **model_kwargs,
         )
+        if self.gradient_checkpointing and hasattr(self.model, "gradient_checkpointing_enable"):
+            self.model.gradient_checkpointing_enable()
         self.model.to(self.device)
         self.model.eval()
         self.hidden_size = int(self.model.config.hidden_size)
@@ -516,6 +633,126 @@ class BackboneWrapper(nn.Module):
         lengths = mask.sum(dim=1).clamp_min(1.0)
         return masked_hidden.sum(dim=1) / lengths
 
+    def _normalize_memory_tokens(
+        self,
+        memory_tokens: torch.Tensor,
+        *,
+        batch_size: int,
+    ) -> torch.Tensor:
+        if memory_tokens.ndim != 3:
+            raise ValueError("memory_tokens must have shape [batch, memory_tokens, hidden_size].")
+        if memory_tokens.shape[0] == 1 and batch_size > 1:
+            memory_tokens = memory_tokens.expand(batch_size, -1, -1)
+        if memory_tokens.shape[0] != batch_size:
+            raise ValueError(
+                "memory_tokens batch dimension must be 1 or match the number of candidate sequences."
+            )
+        if memory_tokens.shape[-1] != self.hidden_size:
+            raise ValueError(
+                f"memory_tokens hidden size must match backbone hidden size {self.hidden_size}, "
+                f"got {memory_tokens.shape[-1]}."
+            )
+        return memory_tokens.to(device=self.device, dtype=self._resolve_torch_dtype())
+
+    def _chunk_pool_hidden_states(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        pool_window: int,
+        slot_cap: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if hidden_states.ndim != 3 or attention_mask.ndim != 2:
+            raise ValueError("hidden_states must be [batch, tokens, hidden_size] and attention_mask [batch, tokens].")
+        window = max(1, int(pool_window))
+        max_slots = max(1, int(slot_cap))
+        batch_size, _, hidden_size = hidden_states.shape
+        pooled = torch.zeros(
+            batch_size,
+            max_slots,
+            hidden_size,
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        pooled_mask = torch.zeros(
+            batch_size,
+            max_slots,
+            dtype=torch.bool,
+            device=hidden_states.device,
+        )
+        lengths = attention_mask.to(dtype=torch.long, device=hidden_states.device).sum(dim=1)
+        for row_index in range(batch_size):
+            valid_tokens = int(lengths[row_index].item())
+            if valid_tokens <= 0:
+                pooled[row_index, 0, :] = hidden_states[row_index, 0, :]
+                pooled_mask[row_index, 0] = True
+                continue
+            token_states = hidden_states[row_index, :valid_tokens, :]
+            chunk_count = max(1, math.ceil(valid_tokens / window))
+            if chunk_count > max_slots:
+                start = valid_tokens - (max_slots * window)
+                start = max(0, start)
+                token_states = token_states[start:, :]
+                chunk_count = max_slots
+            for chunk_index in range(chunk_count):
+                chunk_start = chunk_index * window
+                chunk_end = min(token_states.shape[0], chunk_start + window)
+                if chunk_end <= chunk_start:
+                    break
+                pooled[row_index, chunk_index, :] = token_states[chunk_start:chunk_end, :].mean(dim=0)
+                pooled_mask[row_index, chunk_index] = True
+        return pooled, pooled_mask
+
+    def extract_chunk_pooled_hidden_state_slots(
+        self,
+        texts: Iterable[str],
+        *,
+        layer_index: int | None = None,
+        pool_window: int = 16,
+        slot_cap: int = 16,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        text_list = list(texts)
+        if self.load_mode == "hf_causal_lm":
+            encoded = self._prepare_hf_inputs(text_list)
+            with torch.inference_mode():
+                outputs = self.model(
+                    **encoded,
+                    output_hidden_states=True,
+                    use_cache=False,
+                )
+            hidden_state_stack = outputs.hidden_states
+            if layer_index is None:
+                hidden_states = hidden_state_stack[-1].to(dtype=torch.float32)
+            else:
+                max_layer_index = len(hidden_state_stack) - 2
+                if layer_index < 0 or layer_index > max_layer_index:
+                    raise ValueError(
+                        f"Requested layer {layer_index}, but backbone exposes layers [0, {max_layer_index}]."
+                    )
+                hidden_states = hidden_state_stack[layer_index + 1].to(dtype=torch.float32)
+            return self._chunk_pool_hidden_states(
+                hidden_states,
+                encoded["attention_mask"],
+                pool_window=pool_window,
+                slot_cap=slot_cap,
+            )
+        encoded = self.encode_texts(text_list)
+        lengths = [max(1, len(self._tokenize(text))) for text in text_list]
+        attention_mask = torch.zeros(
+            len(text_list),
+            encoded.shape[1],
+            dtype=torch.bool,
+            device=encoded.device,
+        )
+        for row_index, length in enumerate(lengths):
+            attention_mask[row_index, : min(length, encoded.shape[1])] = True
+        return self._chunk_pool_hidden_states(
+            encoded.to(dtype=torch.float32),
+            attention_mask,
+            pool_window=pool_window,
+            slot_cap=slot_cap,
+        )
+
     def _prepare_hf_inputs(self, texts: list[str]) -> dict[str, torch.Tensor]:
         if self.tokenizer is None:
             raise RuntimeError("Real backbone tokenizer is not initialized.")
@@ -533,10 +770,18 @@ class BackboneWrapper(nn.Module):
         texts: list[str],
         prefix_embeddings: torch.Tensor | None,
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+        *,
+        memory_tokens: torch.Tensor | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if prefix_embeddings is not None and layer_prefix_hidden_by_layer is not None:
             raise ValueError(
                 "prefix_embeddings and layer_prefix_hidden_by_layer are mutually exclusive."
+            )
+        if memory_tokens is not None and (
+            prefix_embeddings is not None or layer_prefix_hidden_by_layer is not None
+        ):
+            raise ValueError(
+                "memory_tokens is mutually exclusive with prefix_embeddings and layer_prefix_hidden_by_layer."
             )
         encoded = self._prepare_hf_inputs(texts)
         metadata = {
@@ -547,10 +792,33 @@ class BackboneWrapper(nn.Module):
             "attention_query_offset": 0,
             "diagnostic_layers": [],
         }
-        if prefix_embeddings is None and layer_prefix_hidden_by_layer is None:
+        if prefix_embeddings is None and layer_prefix_hidden_by_layer is None and memory_tokens is None:
             return encoded, metadata
         if self.model is None:
             raise RuntimeError("Real backbone model is not initialized.")
+        if memory_tokens is not None:
+            batch_size = encoded["input_ids"].shape[0]
+            normalized_memory = self._normalize_memory_tokens(memory_tokens, batch_size=batch_size)
+            input_embeddings = self.model.get_input_embeddings()(encoded["input_ids"])
+            model_kwargs = dict(encoded)
+            model_kwargs.pop("input_ids")
+            memory_mask = torch.ones(
+                batch_size,
+                normalized_memory.shape[1],
+                dtype=encoded["attention_mask"].dtype,
+                device=self.device,
+            )
+            model_kwargs["inputs_embeds"] = torch.cat([normalized_memory, input_embeddings], dim=1)
+            model_kwargs["attention_mask"] = torch.cat([memory_mask, encoded["attention_mask"]], dim=1)
+            metadata.update(
+                {
+                    "prefix_length": int(normalized_memory.shape[1]),
+                    "token_logit_slice_start": int(normalized_memory.shape[1]),
+                    "attention_query_offset": int(normalized_memory.shape[1]),
+                    "diagnostic_layers": [max(0, int(getattr(self.model.config, "num_hidden_layers", 1)) - 1)],
+                }
+            )
+            return model_kwargs, metadata
         if prefix_embeddings is not None:
             if prefix_embeddings.ndim != 3:
                 raise ValueError("prefix_embeddings must have shape [batch, prefix_tokens, hidden_size].")
@@ -754,6 +1022,210 @@ class BackboneWrapper(nn.Module):
                 checkpoint_path=checkpoint_path,
             )
 
+    def enable_reader_cross_attention(
+        self,
+        *,
+        layer_indices: Iterable[int],
+        num_heads: int,
+        ff_hidden_dim: int,
+        gate_init: float,
+    ) -> None:
+        if self.load_mode != "hf_causal_lm":
+            raise ValueError("Reader cross-attention requires backbone.load_mode='hf_causal_lm'.")
+        normalized_layers = tuple(sorted({int(layer_index) for layer_index in layer_indices}))
+        if not normalized_layers:
+            raise ValueError("Reader cross-attention requires at least one target layer.")
+        decoder_layers = self._decoder_layers()
+        for layer_index in normalized_layers:
+            if layer_index < 0 or layer_index >= len(decoder_layers):
+                raise ValueError(
+                    f"Reader cross-attention layer index {layer_index} is out of range for "
+                    f"{len(decoder_layers)} decoder layers."
+                )
+            adapter_key = f"layer_{layer_index}"
+            if adapter_key not in self._reader_cross_attn_targets:
+                adapter = ReaderCrossAttentionAdapter(
+                    hidden_size=self.hidden_size,
+                    num_heads=int(num_heads),
+                    ff_hidden_dim=int(ff_hidden_dim),
+                    gate_init=float(gate_init),
+                )
+                adapter.to(device=self.device, dtype=self._resolve_torch_dtype())
+                adapter.train(bool(self.model.training))
+                self._reader_cross_attn_targets[adapter_key] = adapter
+        self._reader_cross_attn_config = {
+            "enabled": True,
+            "target_layers": list(normalized_layers),
+            "num_heads": int(num_heads),
+            "ff_hidden_dim": int(ff_hidden_dim),
+            "gate_init": float(gate_init),
+        }
+
+    def reader_cross_attention_enabled(self) -> bool:
+        return bool(self._reader_cross_attn_targets)
+
+    def reader_cross_attn_parameters(self) -> list[nn.Parameter]:
+        parameters: list[nn.Parameter] = []
+        for adapter_key in sorted(self._reader_cross_attn_targets):
+            parameters.extend(self._reader_cross_attn_targets[adapter_key].parameters())
+        return parameters
+
+    def set_reader_cross_attn_trainable(self, enabled: bool) -> None:
+        for parameter in self.reader_cross_attn_parameters():
+            parameter.requires_grad_(enabled)
+
+    def reader_cross_attn_parameter_count(self) -> int:
+        return int(sum(parameter.numel() for parameter in self.reader_cross_attn_parameters()))
+
+    def reader_cross_attn_metadata(self) -> dict[str, Any]:
+        metadata = dict(self._reader_cross_attn_config)
+        metadata["target_paths"] = sorted(self._reader_cross_attn_targets)
+        metadata["trainable_params"] = self.reader_cross_attn_parameter_count()
+        return metadata
+
+    def reader_cross_attn_state_dict(self) -> dict[str, dict[str, torch.Tensor]] | None:
+        if not self.reader_cross_attention_enabled():
+            return None
+        return {
+            adapter_key: {
+                state_key: value.detach().cpu()
+                for state_key, value in adapter.state_dict().items()
+            }
+            for adapter_key, adapter in sorted(self._reader_cross_attn_targets.items())
+        }
+
+    def validate_reader_cross_attn_state_dict(
+        self,
+        state_dict: dict[str, dict[str, torch.Tensor]],
+        *,
+        checkpoint_path: str,
+    ) -> None:
+        if not self.reader_cross_attention_enabled():
+            if state_dict:
+                raise ValueError(
+                    f"Reader cross-attention checkpoint {checkpoint_path} includes adapter weights, "
+                    "but the current backbone has reader cross-attention disabled."
+                )
+            return
+        expected_paths = set(self._reader_cross_attn_targets)
+        actual_paths = set(state_dict)
+        missing = sorted(expected_paths - actual_paths)
+        unexpected = sorted(actual_paths - expected_paths)
+        if missing:
+            raise ValueError(
+                f"Reader cross-attention checkpoint {checkpoint_path} is missing targets: {missing}."
+            )
+        if unexpected:
+            raise ValueError(
+                f"Reader cross-attention checkpoint {checkpoint_path} includes unexpected targets: {unexpected}."
+            )
+        for adapter_key, adapter in self._reader_cross_attn_targets.items():
+            expected_state = adapter.state_dict()
+            candidate_state = state_dict[adapter_key]
+            for state_key, expected_value in expected_state.items():
+                if state_key not in candidate_state:
+                    raise ValueError(
+                        f"Reader cross-attention checkpoint {checkpoint_path} is missing "
+                        f"'{adapter_key}.{state_key}'."
+                    )
+                actual_value = candidate_state[state_key]
+                if tuple(actual_value.shape) != tuple(expected_value.shape):
+                    raise ValueError(
+                        f"Reader cross-attention checkpoint {checkpoint_path} has incompatible "
+                        f"'{adapter_key}.{state_key}': expected {tuple(expected_value.shape)}, "
+                        f"got {tuple(actual_value.shape)}."
+                    )
+
+    def load_reader_cross_attn_state_dict(
+        self,
+        state_dict: dict[str, dict[str, torch.Tensor]],
+        *,
+        checkpoint_path: str,
+    ) -> None:
+        self.validate_reader_cross_attn_state_dict(
+            state_dict,
+            checkpoint_path=checkpoint_path,
+        )
+        for adapter_key, adapter in self._reader_cross_attn_targets.items():
+            normalized_state = {
+                state_key: value.to(
+                    device=next(adapter.parameters()).device,
+                    dtype=next(adapter.parameters()).dtype if state_key != "gate" else adapter.gate.dtype,
+                )
+                for state_key, value in state_dict[adapter_key].items()
+            }
+            adapter.load_state_dict(normalized_state)
+
+    @contextmanager
+    def _activate_reader_cross_attention(self, memory_tokens: torch.Tensor | None):
+        if not self.reader_cross_attention_enabled() or memory_tokens is None:
+            yield
+            return
+        handles: list[Any] = []
+        decoder_layers = self._decoder_layers()
+        self._active_reader_cross_attn_memory = memory_tokens.to(
+            device=self.device,
+            dtype=self._resolve_torch_dtype(),
+        )
+        self._reader_cross_attn_last_diagnostics = {}
+
+        def make_hook(*, adapter_key: str, adapter: ReaderCrossAttentionAdapter):
+            def hook(_module: nn.Module, _inputs: tuple[Any, ...], output: Any) -> Any:
+                hidden_states = output[0] if isinstance(output, tuple) else output
+                updated_hidden = adapter(hidden_states, self._active_reader_cross_attn_memory)
+                self._reader_cross_attn_last_diagnostics[adapter_key] = adapter.diagnostics()
+                if isinstance(output, tuple):
+                    return (updated_hidden, *output[1:])
+                return updated_hidden
+
+            return hook
+
+        try:
+            for adapter_key, adapter in sorted(self._reader_cross_attn_targets.items()):
+                layer_index = int(adapter_key.split("_", 1)[1])
+                handles.append(
+                    decoder_layers[layer_index].register_forward_hook(
+                        make_hook(adapter_key=adapter_key, adapter=adapter)
+                    )
+                )
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+            self._active_reader_cross_attn_memory = None
+
+    def reader_cross_attn_diagnostics(self) -> dict[str, dict[str, float]]:
+        by_layer = {
+            layer_key.removeprefix("layer_"): dict(payload)
+            for layer_key, payload in self._reader_cross_attn_last_diagnostics.items()
+        }
+        if not by_layer:
+            return {
+                "by_layer": {},
+                "cross_attn_gate_open_fraction": 0.0,
+                "memory_token_attention_mass_mean": 0.0,
+                "memory_token_attention_top_mass_mean": 0.0,
+            }
+        return {
+            "by_layer": by_layer,
+            "cross_attn_gate_open_fraction": float(
+                sum(payload.get("gate_open_fraction", 0.0) for payload in by_layer.values())
+                / max(1, len(by_layer))
+            ),
+            "memory_token_attention_mass_mean": float(
+                sum(payload.get("memory_token_attention_mass_mean", 0.0) for payload in by_layer.values())
+                / max(1, len(by_layer))
+            ),
+            "memory_token_attention_entropy_mean": float(
+                sum(payload.get("memory_token_attention_entropy_mean", 0.0) for payload in by_layer.values())
+                / max(1, len(by_layer))
+            ),
+            "memory_token_attention_top_mass_mean": float(
+                sum(payload.get("memory_token_attention_top_mass_mean", 0.0) for payload in by_layer.values())
+                / max(1, len(by_layer))
+            ),
+        }
+
     def _expand_layer_prefix_hidden(
         self,
         *,
@@ -933,6 +1405,8 @@ class BackboneWrapper(nn.Module):
         prompt: str,
         candidate_texts: list[str],
         *,
+        memory_tokens: torch.Tensor | None = None,
+        memory_consumer_mode: str = "prepend_block",
         prefix_embeddings: torch.Tensor | None = None,
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
         return_diagnostics: bool = False,
@@ -943,16 +1417,29 @@ class BackboneWrapper(nn.Module):
             raise RuntimeError("Real backbone is not initialized.")
         prompt_with_sep = prompt if prompt.endswith((" ", "\n", "\t")) else f"{prompt} "
         full_texts = [f"{prompt_with_sep}{candidate_text}" for candidate_text in candidate_texts]
-        model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
-            full_texts,
-            prefix_embeddings,
-            layer_prefix_hidden_by_layer,
-        )
+        if memory_tokens is not None and memory_consumer_mode not in {"prepend_block", "reader_cross_attn"}:
+            raise ValueError(
+                f"Unsupported memory_consumer_mode={memory_consumer_mode}. "
+                "Expected one of prepend_block, reader_cross_attn."
+            )
+        if memory_tokens is not None and memory_consumer_mode == "reader_cross_attn":
+            model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
+                full_texts,
+                None,
+                None,
+            )
+        else:
+            model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
+                full_texts,
+                prefix_embeddings,
+                layer_prefix_hidden_by_layer,
+                memory_tokens=memory_tokens,
+            )
         prefix_length = int(metadata["prefix_length"])
         prompt_length = len(self.tokenizer(prompt_with_sep, add_special_tokens=True)["input_ids"])
         model_context = (
             torch.inference_mode
-            if prefix_embeddings is None and layer_prefix_hidden_by_layer is None
+            if prefix_embeddings is None and layer_prefix_hidden_by_layer is None and memory_tokens is None
             else nullcontext
         )
         model_kwargs = dict(model_kwargs)
@@ -964,8 +1451,11 @@ class BackboneWrapper(nn.Module):
         if return_diagnostics:
             attention_context = self._temporary_attention_implementation("eager")
         with attention_context:
-            with model_context():
-                outputs = self.model(**model_kwargs)
+            with self._activate_reader_cross_attention(
+                memory_tokens if memory_consumer_mode == "reader_cross_attn" else None
+            ):
+                with model_context():
+                    outputs = self.model(**model_kwargs)
         logits = outputs.logits
         token_logit_slice_start = int(metadata["token_logit_slice_start"])
         log_probs = torch.log_softmax(
@@ -1020,7 +1510,33 @@ class BackboneWrapper(nn.Module):
             "prompt_length": int(prompt_length),
             "prefix_attention_mass_by_candidate_by_layer": attention_by_layer,
             "diagnostic_layers": diagnostic_layers,
+            "memory_consumer_mode": str(memory_consumer_mode),
         }
+        if memory_tokens is not None and memory_consumer_mode == "reader_cross_attn":
+            reader_cross_attn_by_layer = self.reader_cross_attn_diagnostics()
+            by_layer = reader_cross_attn_by_layer.get("by_layer", {})
+            top_mass_by_layer = {
+                str(layer_key): float(payload.get("memory_token_attention_top_mass_mean", 0.0))
+                for layer_key, payload in by_layer.items()
+            }
+            gate_values = [
+                float(payload.get("gate_open_fraction", 0.0))
+                for payload in by_layer.values()
+            ]
+            diagnostics["by_layer"] = by_layer
+            diagnostics["cross_attn_gate_open_fraction"] = float(
+                reader_cross_attn_by_layer.get("cross_attn_gate_open_fraction", 0.0)
+            )
+            if diagnostics["cross_attn_gate_open_fraction"] == 0.0 and gate_values:
+                diagnostics["cross_attn_gate_open_fraction"] = float(sum(gate_values) / len(gate_values))
+            diagnostics["memory_token_attention_mass_mean"] = float(
+                reader_cross_attn_by_layer.get("memory_token_attention_top_mass_mean", 0.0)
+            )
+            if diagnostics["memory_token_attention_mass_mean"] == 0.0 and top_mass_by_layer:
+                diagnostics["memory_token_attention_mass_mean"] = float(
+                    sum(top_mass_by_layer.values()) / len(top_mass_by_layer)
+                )
+            diagnostics["memory_token_attention_mass_mean_by_layer"] = top_mass_by_layer
         return score_tensor, diagnostics
 
     def generate(
@@ -1028,6 +1544,7 @@ class BackboneWrapper(nn.Module):
         prompts: Iterable[str],
         memory_tokens: torch.Tensor | None = None,
         *,
+        memory_consumer_mode: str = "prepend_block",
         prefix_embeddings: torch.Tensor | None = None,
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None = None,
     ) -> list[str]:
@@ -1039,13 +1556,23 @@ class BackboneWrapper(nn.Module):
                 raise ValueError("memory_tokens and prefix_embeddings are mutually exclusive.")
             if layer_prefix_hidden_by_layer is not None and memory_tokens is not None:
                 raise ValueError("memory_tokens and layer_prefix_hidden_by_layer are mutually exclusive.")
+            if memory_tokens is not None and memory_consumer_mode not in {"prepend_block", "reader_cross_attn"}:
+                raise ValueError(
+                    f"Unsupported memory_consumer_mode={memory_consumer_mode}. "
+                    "Expected one of prepend_block, reader_cross_attn."
+                )
             model_kwargs: dict[str, Any]
             prompt_attention_mask: torch.Tensor
-            if prefix_embeddings is not None or layer_prefix_hidden_by_layer is not None:
+            if memory_tokens is not None and memory_consumer_mode == "reader_cross_attn":
+                encoded = self._prepare_hf_inputs(prompt_list)
+                model_kwargs = dict(encoded)
+                prompt_attention_mask = encoded["attention_mask"]
+            elif prefix_embeddings is not None or layer_prefix_hidden_by_layer is not None or memory_tokens is not None:
                 model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
                     prompt_list,
                     prefix_embeddings,
                     layer_prefix_hidden_by_layer,
+                    memory_tokens=memory_tokens,
                 )
                 prompt_attention_mask = metadata["score_attention_mask"]
                 if "input_ids" not in model_kwargs:
@@ -1054,14 +1581,17 @@ class BackboneWrapper(nn.Module):
                 encoded = self._prepare_hf_inputs(prompt_list)
                 model_kwargs = dict(encoded)
                 prompt_attention_mask = encoded["attention_mask"]
-            with torch.inference_mode():
-                generated = self.model.generate(
-                    **model_kwargs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                )
+            with self._activate_reader_cross_attention(
+                memory_tokens if memory_consumer_mode == "reader_cross_attn" else None
+            ):
+                with torch.inference_mode():
+                    generated = self.model.generate(
+                        **model_kwargs,
+                        max_new_tokens=self.max_new_tokens,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                    )
             completions = []
             prompt_lengths = prompt_attention_mask.sum(dim=1).tolist()
             for row_index, prompt_length in enumerate(prompt_lengths):
