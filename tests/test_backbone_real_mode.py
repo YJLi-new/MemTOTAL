@@ -17,6 +17,10 @@ class _FakeTokenizer:
     unk_token = "<unk>"
     pad_token = "<pad>"
 
+    def __init__(self):
+        self.last_chat_kwargs = None
+        self.last_chat_messages = None
+
     def __call__(self, texts, *, padding=False, truncation=False, return_tensors=None, add_special_tokens=True):
         if isinstance(texts, str):
             input_ids = [self._encode(texts, add_special_tokens=add_special_tokens)]
@@ -38,6 +42,14 @@ class _FakeTokenizer:
         if isinstance(token_ids, torch.Tensor):
             token_ids = token_ids.tolist()
         return " ".join(str(token_id) for token_id in token_ids if token_id != self.pad_token_id)
+
+    def apply_chat_template(self, conversation, **kwargs):
+        self.last_chat_messages = conversation
+        self.last_chat_kwargs = dict(kwargs)
+        content = str(conversation[0]["content"])
+        if kwargs.get("enable_thinking") is False:
+            return f"<chat-no-think>{content}</chat-no-think>"
+        return f"<chat>{content}</chat>"
 
     def _encode(self, text: str, *, add_special_tokens: bool) -> list[int]:
         base = [max(3, (ord(char) % 17) + 3) for char in text][:12]
@@ -260,6 +272,30 @@ class BackboneRealModeTest(unittest.TestCase):
         self.assertEqual(sorted(calibration["layer_hidden_anchor_by_layer"]), [0, 1])
         self.assertEqual(sorted(calibration["layer_key_l2_by_layer"]), ["0", "1"])
         self.assertEqual(sorted(calibration["layer_value_l2_by_layer"]), ["0", "1"])
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_real_mode_can_apply_chat_template_for_prompt_scoring_and_generation(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen3-8B",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+            use_chat_template=True,
+            chat_template_enable_thinking=False,
+        )
+        scores = backbone.score_continuations("Prompt", ["good ending"])
+        self.assertEqual(list(scores.shape), [1])
+        tokenizer = backbone.tokenizer
+        assert tokenizer is not None
+        self.assertEqual(tokenizer.last_chat_messages, [{"role": "user", "content": "Prompt good ending"}])
+        self.assertEqual(tokenizer.last_chat_kwargs["enable_thinking"], False)
+        generations = backbone.generate(["Prompt"])
+        self.assertEqual(len(generations), 1)
+        self.assertEqual(tokenizer.last_chat_messages, [{"role": "user", "content": "Prompt"}])
 
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())

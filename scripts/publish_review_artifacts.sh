@@ -209,6 +209,9 @@ sync_first_available "runs/review/planv7-v7-6-multiseed-confirmation-qwen25" \
   "/root/autodl-tmp/runs/verify/planv7-v7-6-multiseed-confirmation-qwen25" \
   "/tmp/memtotal-runs/planv7-v7-6-multiseed-confirmation-qwen25"
 sync_first_available "runs/review/planv8-v8-0-qwen3-baselines-oracles" \
+  "runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1" \
+  "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1" \
+  "/tmp/memtotal-runs/planv8-v8-0-qwen3-baselines-oracles-r1" \
   "runs/verify/planv8-v8-0-qwen3-baselines-oracles" \
   "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles" \
   "/tmp/memtotal-runs/planv8-v8-0-qwen3-baselines-oracles"
@@ -358,6 +361,9 @@ sync_first_available "results/generated/review/planv7-v7-6-multiseed-confirmatio
   "/root/autodl-tmp/results/generated/planv7-v7-6-multiseed-confirmation-qwen25" \
   "/tmp/memtotal-results/planv7-v7-6-multiseed-confirmation-qwen25"
 sync_first_available "results/generated/review/planv8-v8-0-qwen3-baselines-oracles" \
+  "results/generated/planv8-v8-0-qwen3-baselines-oracles-r1" \
+  "/root/autodl-tmp/results/generated/planv8-v8-0-qwen3-baselines-oracles-r1" \
+  "/tmp/memtotal-results/planv8-v8-0-qwen3-baselines-oracles-r1" \
   "results/generated/planv8-v8-0-qwen3-baselines-oracles" \
   "/root/autodl-tmp/results/generated/planv8-v8-0-qwen3-baselines-oracles" \
   "/tmp/memtotal-results/planv8-v8-0-qwen3-baselines-oracles"

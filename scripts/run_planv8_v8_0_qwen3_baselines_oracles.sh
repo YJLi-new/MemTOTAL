@@ -113,6 +113,7 @@ config.setdefault("method", {})
 config.setdefault("runtime", {})
 config.setdefault("task", {})
 config.setdefault("method", {}).setdefault("receiver_lora", {})
+config.setdefault("task", {}).setdefault("evaluator", {})
 
 use_qwen25 = arm_id.startswith("o0_")
 config["backbone"]["name"] = "Qwen2.5-1.5B-Instruct" if use_qwen25 else "Qwen3-8B"
@@ -120,6 +121,14 @@ config["backbone"]["model_id"] = qwen25_model_dir if use_qwen25 else qwen3_model
 config["backbone"]["dtype"] = "bfloat16"
 config["backbone"]["cache_dir"] = "/root/autodl-tmp/hf-cache"
 config["backbone"]["gradient_checkpointing"] = bool(arm_id.startswith("o4_"))
+config["backbone"]["max_new_tokens"] = 32
+if not use_qwen25:
+    config["backbone"]["use_chat_template"] = True
+    config["backbone"]["chat_template_enable_thinking"] = False
+    if task_name == "gsm8k":
+        config["backbone"]["max_new_tokens"] = 192
+    elif task_name == "triviaqa":
+        config["backbone"]["max_new_tokens"] = 64
 
 config["task"]["support_dataset_path"] = support_path
 config["task"]["train_dataset_path"] = train_path
@@ -128,6 +137,8 @@ config["task"]["dataset_path"] = eval_path
 config["task"]["support_lookup_dataset_paths"] = []
 config["task"]["train_support_episode_bank_path"] = ""
 config["task"]["pilot_split"] = "eval"
+if task_name == "gsm8k":
+    config["task"]["evaluator"]["normalizer"] = "gsm8k_final_answer"
 
 config["experiment"]["name"] = f"{Path().resolve().name}_{arm_id}"
 config["experiment"]["stage"] = "V8-0"

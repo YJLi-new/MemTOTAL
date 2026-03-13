@@ -245,6 +245,8 @@ class BackboneWrapper(nn.Module):
         attn_implementation: str | None = None,
         max_new_tokens: int = 32,
         gradient_checkpointing: bool = False,
+        use_chat_template: bool = False,
+        chat_template_enable_thinking: bool | None = None,
     ) -> None:
         super().__init__()
         validate_backbone_name(name)
@@ -258,6 +260,12 @@ class BackboneWrapper(nn.Module):
         self.attn_implementation = attn_implementation
         self.max_new_tokens = int(max_new_tokens)
         self.gradient_checkpointing = bool(gradient_checkpointing)
+        self.use_chat_template = bool(use_chat_template)
+        self.chat_template_enable_thinking = (
+            None
+            if chat_template_enable_thinking is None
+            else bool(chat_template_enable_thinking)
+        )
         self.tokenizer = None
         self.model = None
         self._receiver_lora_targets: dict[str, MicroLoRALinear] = {}
@@ -753,11 +761,41 @@ class BackboneWrapper(nn.Module):
             slot_cap=slot_cap,
         )
 
-    def _prepare_hf_inputs(self, texts: list[str]) -> dict[str, torch.Tensor]:
+    def _format_chat_prompts(self, texts: list[str]) -> list[str]:
+        if not self.use_chat_template or self.tokenizer is None:
+            return texts
+        apply_chat_template = getattr(self.tokenizer, "apply_chat_template", None)
+        if not callable(apply_chat_template):
+            return texts
+        formatted: list[str] = []
+        for text in texts:
+            template_kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            if self.chat_template_enable_thinking is not None:
+                template_kwargs["enable_thinking"] = bool(self.chat_template_enable_thinking)
+            formatted.append(
+                str(
+                    apply_chat_template(
+                        [{"role": "user", "content": str(text)}],
+                        **template_kwargs,
+                    )
+                )
+            )
+        return formatted
+
+    def _prepare_hf_inputs(
+        self,
+        texts: list[str],
+        *,
+        apply_chat_template: bool = False,
+    ) -> dict[str, torch.Tensor]:
         if self.tokenizer is None:
             raise RuntimeError("Real backbone tokenizer is not initialized.")
+        active_texts = self._format_chat_prompts(texts) if apply_chat_template else texts
         encoded = self.tokenizer(
-            texts,
+            active_texts,
             padding=True,
             truncation=True,
             return_tensors="pt",
@@ -772,6 +810,7 @@ class BackboneWrapper(nn.Module):
         layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
         *,
         memory_tokens: torch.Tensor | None = None,
+        apply_chat_template: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if prefix_embeddings is not None and layer_prefix_hidden_by_layer is not None:
             raise ValueError(
@@ -783,7 +822,7 @@ class BackboneWrapper(nn.Module):
             raise ValueError(
                 "memory_tokens is mutually exclusive with prefix_embeddings and layer_prefix_hidden_by_layer."
             )
-        encoded = self._prepare_hf_inputs(texts)
+        encoded = self._prepare_hf_inputs(texts, apply_chat_template=apply_chat_template)
         metadata = {
             "prefix_length": 0,
             "score_input_ids": encoded["input_ids"],
@@ -1427,6 +1466,7 @@ class BackboneWrapper(nn.Module):
                 full_texts,
                 None,
                 None,
+                apply_chat_template=self.use_chat_template,
             )
         else:
             model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
@@ -1434,6 +1474,7 @@ class BackboneWrapper(nn.Module):
                 prefix_embeddings,
                 layer_prefix_hidden_by_layer,
                 memory_tokens=memory_tokens,
+                apply_chat_template=self.use_chat_template,
             )
         prefix_length = int(metadata["prefix_length"])
         prompt_length = len(self.tokenizer(prompt_with_sep, add_special_tokens=True)["input_ids"])
@@ -1564,7 +1605,7 @@ class BackboneWrapper(nn.Module):
             model_kwargs: dict[str, Any]
             prompt_attention_mask: torch.Tensor
             if memory_tokens is not None and memory_consumer_mode == "reader_cross_attn":
-                encoded = self._prepare_hf_inputs(prompt_list)
+                encoded = self._prepare_hf_inputs(prompt_list, apply_chat_template=self.use_chat_template)
                 model_kwargs = dict(encoded)
                 prompt_attention_mask = encoded["attention_mask"]
             elif prefix_embeddings is not None or layer_prefix_hidden_by_layer is not None or memory_tokens is not None:
@@ -1573,12 +1614,13 @@ class BackboneWrapper(nn.Module):
                     prefix_embeddings,
                     layer_prefix_hidden_by_layer,
                     memory_tokens=memory_tokens,
+                    apply_chat_template=self.use_chat_template,
                 )
                 prompt_attention_mask = metadata["score_attention_mask"]
                 if "input_ids" not in model_kwargs:
                     model_kwargs["input_ids"] = metadata["score_input_ids"]
             else:
-                encoded = self._prepare_hf_inputs(prompt_list)
+                encoded = self._prepare_hf_inputs(prompt_list, apply_chat_template=self.use_chat_template)
                 model_kwargs = dict(encoded)
                 prompt_attention_mask = encoded["attention_mask"]
             with self._activate_reader_cross_attention(

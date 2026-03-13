@@ -156,6 +156,19 @@ class TaskRegistryTest(unittest.TestCase):
         )
         self.assertTrue(multiple_choice_score["correct"])
 
+    def test_task_evaluator_can_normalize_gsm8k_final_answer(self) -> None:
+        config = load_config(ROOT / "configs/exp/benchmark_gsm8k_qwen25_smoke.yaml")
+        config["task"].setdefault("evaluator", {})
+        config["task"]["evaluator"]["normalizer"] = "gsm8k_final_answer"
+        dataset = load_task_dataset(config)
+        evaluator = build_task_evaluator(config)
+        score = evaluator.evaluate_prediction(
+            {"text": "We compute the sum carefully. Final answer: 12"},
+            dataset[0],
+        )
+        self.assertTrue(score["correct"])
+        self.assertEqual(score["normalized_prediction"], "12")
+
     def test_load_task_dataset_builds_segmented_narrativeqa_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

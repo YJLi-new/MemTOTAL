@@ -82,11 +82,58 @@ def _arm_payload(arm_id: str, run_root: Path) -> dict[str, Any]:
     arm_dir = run_root / arm_id
     metrics = _load_json(arm_dir / "metrics.json")
     train_events = _load_train_events(arm_dir / "train_events.json")
-    task_name = str(metrics.get("benchmark_id", "")).strip().lower()
+    prefix_stats = metrics.get("prefix_artifact_stats", {})
+    if not isinstance(prefix_stats, dict):
+        prefix_stats = {}
+    task_name = str(metrics.get("benchmark_id") or metrics.get("task_name") or "").strip().lower()
+    if task_name.endswith("_real_smoke"):
+        task_name = task_name.removesuffix("_real_smoke")
     prompt_variant = str(
         metrics.get("prompt_variant")
         or metrics.get("pilot_prompt_variant")
         or ""
+    )
+    interface_family_label = str(
+        metrics.get("memory_consumer_mode")
+        or metrics.get("pilot_memory_consumer_mode")
+        or prefix_stats.get("pilot_memory_consumer_mode")
+        or "legacy_prefix"
+    )
+    writer_family_label = str(
+        metrics.get("prefix_source_mode")
+        or metrics.get("pilot_prefix_source_mode")
+        or prefix_stats.get("pilot_prefix_source_mode")
+        or ""
+    )
+    memory_tokens_count = int(
+        metrics.get("memory_tokens_count")
+        or prefix_stats.get("memory_tokens_count")
+        or 0
+    )
+    cross_attn_gate_open_fraction = _safe_float(
+        metrics.get("cross_attn_gate_open_fraction", prefix_stats.get("cross_attn_gate_open_fraction", 0.0))
+    )
+    memory_token_attention_mass_mean = _safe_float(
+        metrics.get(
+            "memory_token_attention_mass_mean",
+            prefix_stats.get(
+                "memory_token_attention_mass_mean",
+                prefix_stats.get("memory_token_attention_top_mass_mean", 0.0),
+            ),
+        )
+    )
+    prefix_attention_mass_mean_by_layer = metrics.get("prefix_attention_mass_mean_by_layer", {})
+    if not isinstance(prefix_attention_mass_mean_by_layer, dict):
+        prefix_attention_mass_mean_by_layer = {}
+    prefix_attention_nontrivial_layer_count = int(
+        metrics.get(
+            "prefix_attention_nontrivial_layer_count",
+            sum(
+                1
+                for value in prefix_attention_mass_mean_by_layer.values()
+                if _safe_float(value) > 1e-3
+            ),
+        )
     )
     reader_cross_attn_grad_norms = [
         _safe_float(event.get("grad_norm_reader_cross_attn", 0.0))
@@ -99,12 +146,13 @@ def _arm_payload(arm_id: str, run_root: Path) -> dict[str, Any]:
         "macro_f1": _macro_f1(metrics),
         "backbone": str(metrics.get("backbone", "")),
         "prompt_variant": prompt_variant,
-        "writer_family_label": str(metrics.get("prefix_source_mode", "")),
-        "interface_family_label": str(metrics.get("memory_consumer_mode", "legacy_prefix")),
+        "writer_family_label": writer_family_label,
+        "interface_family_label": interface_family_label,
         "train_steps": int(metrics.get("pilot_train_steps", 0)),
-        "memory_tokens_count": int(metrics.get("memory_tokens_count", 0)),
-        "cross_attn_gate_open_fraction": _safe_float(metrics.get("cross_attn_gate_open_fraction", 0.0)),
-        "memory_token_attention_mass_mean": _safe_float(metrics.get("memory_token_attention_mass_mean", 0.0)),
+        "memory_tokens_count": memory_tokens_count,
+        "cross_attn_gate_open_fraction": cross_attn_gate_open_fraction,
+        "memory_token_attention_mass_mean": memory_token_attention_mass_mean,
+        "prefix_attention_nontrivial_layer_count": prefix_attention_nontrivial_layer_count,
         "reader_cross_attn_grad_norm_median": _median(reader_cross_attn_grad_norms),
         "reader_cross_attn_grad_norm_nonzero_steps": int(
             sum(1 for value in reader_cross_attn_grad_norms if value > 0.0)
@@ -114,8 +162,8 @@ def _arm_payload(arm_id: str, run_root: Path) -> dict[str, Any]:
             [
                 _task_score(metrics),
                 _macro_f1(metrics),
-                _safe_float(metrics.get("cross_attn_gate_open_fraction", 0.0)),
-                _safe_float(metrics.get("memory_token_attention_mass_mean", 0.0)),
+                cross_attn_gate_open_fraction,
+                memory_token_attention_mass_mean,
             ]
         ),
     }
@@ -191,7 +239,9 @@ def build_summary(
     }
 
     ri1_passed_basic_smoke = all(
-        payload["all_finite"] and payload["memory_tokens_count"] > 0
+        payload["all_finite"]
+        and payload["memory_tokens_count"] > 0
+        and payload["prefix_attention_nontrivial_layer_count"] > 0
         for payload in ri1_smoke.values()
     )
     ri2_passed_basic_smoke = all(

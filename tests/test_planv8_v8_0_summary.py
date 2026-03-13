@@ -30,9 +30,18 @@ class PlanV8V80SummaryTest(unittest.TestCase):
             "pilot_prompt_variant": prompt_variant,
             "best_adapt_task_score": float(task_score),
             "best_adapt_macro_f1": float(macro_f1),
-            "memory_tokens_count": int(memory_tokens_count),
+            "pilot_prefix_source_mode": "oracle_hidden_state_slots" if arm_id.startswith("o") else "",
+            "pilot_memory_consumer_mode": (
+                "reader_cross_attn"
+                if arm_id.startswith("o4_")
+                else ("reader_lora_sequence" if arm_id.startswith(("o2_", "o3_")) else "legacy_prefix")
+            ),
             "cross_attn_gate_open_fraction": float(cross_attn_gate_open_fraction),
-            "memory_token_attention_mass_mean": float(memory_token_attention_mass_mean),
+            "prefix_attention_nontrivial_layer_count": 1 if memory_tokens_count > 0 else 0,
+            "prefix_artifact_stats": {
+                "memory_tokens_count": int(memory_tokens_count),
+                "memory_token_attention_mass_mean": float(memory_token_attention_mass_mean),
+            },
         }
         (arm_dir / "metrics.json").write_text(json.dumps(metrics) + "\n")
         payload = {"events": train_events or []}

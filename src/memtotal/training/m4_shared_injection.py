@@ -3184,6 +3184,8 @@ class SharedInjectionPilotRuntime(nn.Module):
             attn_implementation=backbone_cfg.get("attn_implementation"),
             max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
             gradient_checkpointing=bool(backbone_cfg.get("gradient_checkpointing", False)),
+            use_chat_template=bool(backbone_cfg.get("use_chat_template", False)),
+            chat_template_enable_thinking=backbone_cfg.get("chat_template_enable_thinking"),
         )
         writer_cfg = config["method"]["writer"]
         self.bridge_mode = _resolve_bridge_mode(config)

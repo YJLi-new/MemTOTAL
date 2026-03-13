@@ -28,11 +28,52 @@ def _normalize_action(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
+def _extract_boxed_answer(text: str) -> str:
+    matches = list(re.finditer(r"\\boxed\{", text))
+    if not matches:
+        return ""
+    start = matches[-1].end()
+    depth = 1
+    collected: list[str] = []
+    for char in text[start:]:
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        collected.append(char)
+    return "".join(collected).strip()
+
+
+def _normalize_gsm8k_final_answer(text: str) -> str:
+    raw = text.strip()
+    if not raw:
+        return ""
+    boxed = _extract_boxed_answer(raw)
+    candidate = boxed or raw
+    answer_match = re.findall(
+        r"(?:final answer|answer)(?:\s+is)?\s*[:=]?\s*([^\n]+)",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if answer_match:
+        candidate = answer_match[-1].strip()
+    numeric_matches = re.findall(r"-?\d+(?:,\d{3})*(?:\.\d+)?", candidate)
+    if not numeric_matches:
+        numeric_matches = re.findall(r"-?\d+(?:,\d{3})*(?:\.\d+)?", raw)
+    if numeric_matches:
+        return numeric_matches[-1].replace(",", "")
+    return _normalize_text(candidate)
+
+
 def _apply_normalizer(text: str, normalizer: str) -> str:
     if normalizer == "code":
         return _normalize_code(text)
     if normalizer == "action":
         return _normalize_action(text)
+    if normalizer == "gsm8k_final_answer":
+        return _normalize_gsm8k_final_answer(text)
     return _normalize_text(text)
 
 
