@@ -6,31 +6,31 @@
   "gsm8k": {
     "arm_scores": {
       "b0_q3_gsm8k_nonthink": {
-        "macro_f1": 0.0,
+        "macro_f1": 0.671875,
         "prompt_variant": "q3_gsm8k_nonthink",
-        "task_score": 0.0
+        "task_score": 0.671875
       },
       "b1_q3_gsm8k_think_boxed": {
-        "macro_f1": 0.0,
+        "macro_f1": 0.265625,
         "prompt_variant": "q3_gsm8k_think_boxed",
-        "task_score": 0.0
+        "task_score": 0.265625
       }
     },
-    "selected_arm_id": "b1_q3_gsm8k_think_boxed",
-    "selected_prompt_variant": "q3_gsm8k_think_boxed",
+    "selected_arm_id": "b0_q3_gsm8k_nonthink",
+    "selected_prompt_variant": "q3_gsm8k_nonthink",
     "task_name": "gsm8k"
   },
   "triviaqa": {
     "arm_scores": {
       "b2_q3_trivia_nonthink": {
-        "macro_f1": 0.0,
+        "macro_f1": 0.1875,
         "prompt_variant": "q3_trivia_nonthink",
-        "task_score": 0.0
+        "task_score": 0.1875
       },
       "b3_q3_trivia_think": {
-        "macro_f1": 0.0,
+        "macro_f1": 0.1875,
         "prompt_variant": "q3_trivia_think",
-        "task_score": 0.0
+        "task_score": 0.1875
       }
     },
     "selected_arm_id": "b3_q3_trivia_think",

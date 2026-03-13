@@ -8,11 +8,14 @@
   },
   "backbone": {
     "cache_dir": "/root/autodl-tmp/hf-cache",
+    "chat_template_enable_thinking": false,
     "dtype": "bfloat16",
     "gradient_checkpointing": false,
     "load_mode": "hf_causal_lm",
+    "max_new_tokens": 32,
     "model_id": "/root/autodl-tmp/models/Qwen3-8B",
-    "name": "Qwen3-8B"
+    "name": "Qwen3-8B",
+    "use_chat_template": true
   },
   "experiment": {
     "method_variant": "b4_q3_fever_nonthink",
@@ -135,7 +138,7 @@
   },
   "task": {
     "benchmark_id": "fever",
-    "dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/eval.jsonl",
+    "dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/fever/eval.jsonl",
     "domain": "qa",
     "evaluator": {
       "type": "multiple_choice"
@@ -145,10 +148,10 @@
     "pilot_split": "eval",
     "smoke_subset": "hf_real_smoke4",
     "split": "eval",
-    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/support.jsonl",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/fever/support.jsonl",
     "support_lookup_dataset_paths": [],
-    "train_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/train.jsonl",
-    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/fever/support.jsonl",
+    "train_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/fever/train.jsonl",
+    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/fever/support.jsonl",
     "train_support_episode_bank_path": ""
   }
 }

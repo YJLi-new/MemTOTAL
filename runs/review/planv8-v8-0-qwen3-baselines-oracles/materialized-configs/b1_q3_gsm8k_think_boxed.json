@@ -8,11 +8,14 @@
   },
   "backbone": {
     "cache_dir": "/root/autodl-tmp/hf-cache",
+    "chat_template_enable_thinking": false,
     "dtype": "bfloat16",
     "gradient_checkpointing": false,
     "load_mode": "hf_causal_lm",
+    "max_new_tokens": 192,
     "model_id": "/root/autodl-tmp/models/Qwen3-8B",
-    "name": "Qwen3-8B"
+    "name": "Qwen3-8B",
+    "use_chat_template": true
   },
   "experiment": {
     "method_variant": "b1_q3_gsm8k_think_boxed",
@@ -135,9 +138,10 @@
   },
   "task": {
     "benchmark_id": "gsm8k",
-    "dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/gsm8k/eval.jsonl",
+    "dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/gsm8k/eval.jsonl",
     "domain": "math",
     "evaluator": {
+      "normalizer": "gsm8k_final_answer",
       "type": "exact_match"
     },
     "metric_name": "exact_match",
@@ -145,10 +149,10 @@
     "pilot_split": "eval",
     "smoke_subset": "hf_real_smoke4",
     "split": "eval",
-    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/gsm8k/support.jsonl",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/gsm8k/support.jsonl",
     "support_lookup_dataset_paths": [],
-    "train_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/gsm8k/train.jsonl",
-    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-datasets/gsm8k/support.jsonl",
+    "train_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/gsm8k/train.jsonl",
+    "train_support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-datasets/gsm8k/support.jsonl",
     "train_support_episode_bank_path": ""
   }
 }

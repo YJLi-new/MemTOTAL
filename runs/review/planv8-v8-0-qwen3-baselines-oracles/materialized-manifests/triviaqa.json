@@ -8,7 +8,7 @@
   "display_name": "TriviaQA",
   "homepage": null,
   "license_note": "Hugging Face metadata currently does not expose a structured license field; verify upstream dataset card before redistribution.",
-  "materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles/materialized-sources/triviaqa/eval-real-smoke136.jsonl",
+  "materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles-r1/materialized-sources/triviaqa/eval-real-smoke136.jsonl",
   "max_examples": 136,
   "notes": "Validation split is used for local smoke because it is labeled and lightweight; official test split remains available for later protocol alignment.",
   "num_rows": 136,

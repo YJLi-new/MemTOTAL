@@ -1,2 +1,2 @@
 event_name,device,examples,token_count,wall_time_sec,tokens_per_sec,peak_device_memory_bytes,peak_device_memory_mib,peak_rss_kb
-train,cuda,64,7251,77.133738,94.005557,17701213184,16881.192383,4890400
+train,cuda,64,14477,326.50249,44.339631,17719445504,16898.580078,4885276
