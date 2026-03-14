@@ -50,7 +50,7 @@ fi
 
 if ! tmux has-session -t "${WATCH_SESSION}" 2>/dev/null; then
   tmux new-session -d -s "${WATCH_SESSION}" \
-    "bash -lc 'while tmux has-session -t ${RUN_SESSION} 2>/dev/null; do ts=\$(date -u +%Y-%m-%dT%H:%M:%SZ); metrics_count=\$(find ${V82_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); gpu_line=\$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | sed \"s/,/\\//\" || true); echo \"\${ts} metrics=\${metrics_count} gpu_mib=\${gpu_line:-unknown}\"; sleep 300; done' > ${V82_RUN_ROOT}/watch.log 2>&1"
+    "bash -lc 'while tmux has-session -t ${RUN_SESSION} 2>/dev/null; do ts=\$(date -u +%Y-%m-%dT%H:%M:%SZ); progress=\$(python ${ROOT_DIR}/scripts/planv8_watch_progress.py --run_root ${V82_RUN_ROOT} 2>/dev/null || echo \"{}\"); gpu_line=\$(nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | sed \"s/,/\\//\" || true); echo \"\${ts} progress=\${progress} gpu_mib=\${gpu_line:-unknown}\"; sleep 120; done' > ${V82_RUN_ROOT}/watch.log 2>&1"
 fi
 
 if ! tmux has-session -t "${POST_SESSION}" 2>/dev/null; then
