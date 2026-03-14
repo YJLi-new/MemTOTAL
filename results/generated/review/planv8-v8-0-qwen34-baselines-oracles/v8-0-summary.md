@@ -1,8 +1,8 @@
 # PLANv8 V8-0 Summary (Qwen3-4B)
 
-- `comparison_conclusion = repair_qwen34_interface_before_v8_1`
-- `recommended_next_step = repair_v8_0_interface_path`
-- `ri1_passed_basic_smoke = False`
+- `comparison_conclusion = qwen34_calibrated_interfaces_alive_open_v8_1`
+- `recommended_next_step = open_v8_1_reader_interface_scout`
+- `ri1_passed_basic_smoke = True`
 - `ri2_passed_basic_smoke = True`
 - `legacy_prefix_oracle_reproduced_or_bounded = True`
 
@@ -19,6 +19,6 @@
 
 ## Reader Activation
 
-- `o4_q34_xattn_oracle_smoke_gsm8k`: gate=`0.500000`, attention_mass=`0.000000`, grad_median=`69.858963`
-- `o4_q34_xattn_oracle_smoke_triviaqa`: gate=`0.500000`, attention_mass=`0.000000`, grad_median=`180.566032`
+- `o4_q34_xattn_oracle_smoke_gsm8k`: gate=`0.500000`, attention_mass=`0.000000`, grad_median=`77.220471`
+- `o4_q34_xattn_oracle_smoke_triviaqa`: gate=`0.500000`, attention_mass=`0.000000`, grad_median=`156.864682`
 

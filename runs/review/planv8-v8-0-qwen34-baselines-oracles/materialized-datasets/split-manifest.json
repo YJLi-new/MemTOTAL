@@ -67,7 +67,7 @@
             "219704",
             "44397"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/fever/eval.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/fever/eval.jsonl",
           "rows": 48
         },
         "support": {
@@ -81,7 +81,7 @@
             "126173",
             "96401"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/fever/support.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/fever/support.jsonl",
           "rows": 8
         },
         "train": {
@@ -135,7 +135,7 @@
             "61233",
             "223218"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/fever/train.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/fever/train.jsonl",
           "rows": 48
         }
       },
@@ -143,7 +143,7 @@
       "support_source_rows": 8
     },
     "gsm8k": {
-      "source_materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-sources/gsm8k/eval-real-smoke136.jsonl",
+      "source_materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-sources/gsm8k/eval-real-smoke136.jsonl",
       "source_rows": 136,
       "split_plan": {
         "eval_examples": 64,
@@ -219,7 +219,7 @@
             "gsm8k-121",
             "gsm8k-129"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/gsm8k/eval.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/gsm8k/eval.jsonl",
           "rows": 64
         },
         "support": {
@@ -233,7 +233,7 @@
             "gsm8k-40",
             "gsm8k-76"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/gsm8k/support.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/gsm8k/support.jsonl",
           "rows": 8
         },
         "train": {
@@ -303,13 +303,13 @@
             "gsm8k-127",
             "gsm8k-46"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/gsm8k/train.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/gsm8k/train.jsonl",
           "rows": 64
         }
       }
     },
     "triviaqa": {
-      "source_materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-sources/triviaqa/eval-real-smoke136.jsonl",
+      "source_materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-sources/triviaqa/eval-real-smoke136.jsonl",
       "source_rows": 136,
       "split_plan": {
         "eval_examples": 64,
@@ -385,7 +385,7 @@
             "tc_1070",
             "tc_288"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/triviaqa/eval.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/triviaqa/eval.jsonl",
           "rows": 64
         },
         "support": {
@@ -399,7 +399,7 @@
             "tc_304",
             "tc_723"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/triviaqa/support.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/triviaqa/support.jsonl",
           "rows": 8
         },
         "train": {
@@ -469,7 +469,7 @@
             "tc_1007",
             "tc_881"
           ],
-          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles/materialized-datasets/triviaqa/train.jsonl",
+          "path": "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1/materialized-datasets/triviaqa/train.jsonl",
           "rows": 64
         }
       }
