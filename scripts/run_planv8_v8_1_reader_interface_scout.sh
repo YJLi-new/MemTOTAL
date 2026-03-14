@@ -4,12 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+PRIMARY_BACKBONE_NAME="${PLANV8_PRIMARY_BACKBONE_NAME:-Qwen3-8B}"
+PRIMARY_BACKBONE_KEY="${PLANV8_PRIMARY_BACKBONE_KEY:-qwen3}"
+PRIMARY_MODEL_ID="${PLANV8_PRIMARY_MODEL_ID:-Qwen/Qwen3-8B}"
+PRIMARY_PREP_SCRIPT="${PLANV8_PRIMARY_PREP_SCRIPT:-scripts/prepare_local_qwen3_model.sh}"
+PRIMARY_MODEL_DIR_DEFAULT="${PLANV8_PRIMARY_MODEL_DIR:-/root/autodl-tmp/models/Qwen3-8B}"
+
 BASE_SEED="${1:-61109}"
 RUN_ROOT="${2:-/root/autodl-tmp/runs/verify/planv8-v8-1-reader-interface-scout}"
 RESULT_ROOT="${3:-/root/autodl-tmp/results/generated/planv8-v8-1-reader-interface-scout}"
-QWEN3_MODEL_DIR="${4:-/root/autodl-tmp/models/Qwen3-8B}"
-SELECTED_PROMPTS_PATH="${5:-results/generated/review/planv8-v8-0-qwen3-baselines-oracles/selected-prompt-modes.json}"
-V80_SUMMARY_PATH="${6:-results/generated/review/planv8-v8-0-qwen3-baselines-oracles/v8-0-summary.json}"
+PRIMARY_MODEL_DIR="${4:-${PRIMARY_MODEL_DIR_DEFAULT}}"
+SELECTED_PROMPTS_PATH="${5:-results/generated/review/planv8-v8-0-${PRIMARY_BACKBONE_KEY}-baselines-oracles/selected-prompt-modes.json}"
+V80_SUMMARY_PATH="${6:-results/generated/review/planv8-v8-0-${PRIMARY_BACKBONE_KEY}-baselines-oracles/v8-0-summary.json}"
 
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
@@ -68,9 +74,9 @@ python -m memtotal.tasks.writer_jointpeft_data \
   --benchmarks "gsm8k,triviaqa,fever" \
   --split_plan_json "${SPLIT_PLAN_JSON}"
 
-bash scripts/prepare_local_qwen3_model.sh \
-  "Qwen/Qwen3-8B" \
-  "${QWEN3_MODEL_DIR}" \
+bash "${PRIMARY_PREP_SCRIPT}" \
+  "${PRIMARY_MODEL_ID}" \
+  "${PRIMARY_MODEL_DIR}" \
   "${HF_HOME}"
 
 PROMPT_EXPORTS="$(
@@ -149,7 +155,7 @@ materialize_config() {
   local support_path="$5"
   local train_path="$6"
   local eval_path="$7"
-  python - "${task_name}" "${arm_id}" "${prompt_variant}" "${output_config}" "${support_path}" "${train_path}" "${eval_path}" "${QWEN3_MODEL_DIR}" <<'PY'
+  python - "${task_name}" "${arm_id}" "${prompt_variant}" "${output_config}" "${support_path}" "${train_path}" "${eval_path}" "${PRIMARY_MODEL_DIR}" "${PRIMARY_BACKBONE_NAME}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -163,7 +169,8 @@ output_config = Path(sys.argv[4])
 support_path = str(Path(sys.argv[5]).resolve())
 train_path = str(Path(sys.argv[6]).resolve())
 eval_path = str(Path(sys.argv[7]).resolve())
-qwen3_model_dir = str(Path(sys.argv[8]).resolve())
+primary_model_dir = str(Path(sys.argv[8]).resolve())
+primary_backbone_name = sys.argv[9]
 
 template_path = Path(f"configs/exp/writer_circuit_g2_writer_direct_{task_name}_template.yaml")
 config = load_config(template_path)
@@ -267,8 +274,8 @@ arm_specs = {
     },
 }
 
-config["backbone"]["name"] = "Qwen3-8B"
-config["backbone"]["model_id"] = qwen3_model_dir
+config["backbone"]["name"] = primary_backbone_name
+config["backbone"]["model_id"] = primary_model_dir
 config["backbone"]["dtype"] = "bfloat16"
 config["backbone"]["cache_dir"] = "/root/autodl-tmp/hf-cache"
 config["backbone"]["use_chat_template"] = True
