@@ -645,11 +645,12 @@ def _resolve_trainable_variant(config: dict[str, Any]) -> str:
         "writer_adapter_only",
         "reader_only",
         "receiver_then_joint",
+        "writer_then_joint",
     }:
         raise ValueError(
             f"Unsupported runtime.pilot_trainable_variant={variant}. "
             "Expected one of full, projector_only, writer_adapter_only, reader_only, "
-            "receiver_then_joint."
+            "receiver_then_joint, writer_then_joint."
         )
     return variant
 
@@ -783,6 +784,16 @@ def _resolve_opd_hint_mode(config: dict[str, Any], benchmark_id: str) -> str:
 def _resolve_init_checkpoint_path(config: dict[str, Any]) -> str:
     path = str(config["runtime"].get("pilot_init_checkpoint_path", "")).strip()
     return path
+
+
+def _resolve_init_checkpoint_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_init_checkpoint_mode", "full")).strip().lower()
+    if mode not in {"full", "consumer_only"}:
+        raise ValueError(
+            f"Unsupported runtime.pilot_init_checkpoint_mode={mode}. "
+            "Expected one of full, consumer_only."
+        )
+    return mode
 
 
 def _resolve_choice_ce_weight(config: dict[str, Any]) -> float:
@@ -4131,6 +4142,213 @@ class SharedInjectionPilotRuntime(nn.Module):
             self.fuser.load_state_dict(checkpoint["fuser_state"])
         return checkpoint
 
+    def _validate_consumer_only_injection_checkpoint(
+        self,
+        checkpoint: dict[str, Any],
+        *,
+        checkpoint_path: Path,
+    ) -> None:
+        checkpoint_hidden_size = int(checkpoint.get("backbone_hidden_size", self.backbone.hidden_size))
+        if checkpoint_hidden_size != int(self.backbone.hidden_size):
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses hidden_size={checkpoint_hidden_size}, "
+                f"expected {self.backbone.hidden_size}."
+            )
+        checkpoint_memory_path_variant = str(
+            checkpoint.get(
+                "pilot_memory_path_variant",
+                "two_level" if checkpoint.get("reader_state") is not None else "single_level",
+            )
+        )
+        if checkpoint_memory_path_variant != self.memory_path_variant:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_memory_path_variant="
+                f"{checkpoint_memory_path_variant}, expected {self.memory_path_variant}."
+            )
+        checkpoint_injection_mode = str(
+            checkpoint.get(
+                "pilot_injection_mode",
+                _infer_injection_mode_from_projector_state(checkpoint.get("prefix_projector_state", {})),
+            )
+        )
+        if checkpoint_injection_mode != self.injection_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_injection_mode="
+                f"{checkpoint_injection_mode}, expected {self.injection_mode}."
+            )
+        checkpoint_memory_consumer_mode = str(
+            checkpoint.get("pilot_memory_consumer_mode", self.memory_consumer_mode)
+        )
+        if checkpoint_memory_consumer_mode != self.memory_consumer_mode:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_memory_consumer_mode="
+                f"{checkpoint_memory_consumer_mode}, expected {self.memory_consumer_mode}."
+            )
+        checkpoint_layers = tuple(int(layer) for layer in checkpoint.get("pilot_deep_prefix_layers", []))
+        if self.injection_mode == "sparse_deep_prefix" and checkpoint_layers != self.deep_prefix_layers:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_deep_prefix_layers="
+                f"{list(checkpoint_layers)}, expected {list(self.deep_prefix_layers)}."
+            )
+        checkpoint_receiver_lora_enabled = bool(
+            checkpoint.get("pilot_receiver_lora_enabled", checkpoint.get("receiver_lora_state") is not None)
+        )
+        if checkpoint_receiver_lora_enabled != self.receiver_lora_enabled:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_enabled="
+                f"{checkpoint_receiver_lora_enabled}, expected {self.receiver_lora_enabled}."
+            )
+        if self.receiver_lora_enabled and checkpoint_receiver_lora_enabled:
+            checkpoint_receiver_lora_layers = tuple(
+                int(layer_index) for layer_index in checkpoint.get("pilot_receiver_lora_target_layers", [])
+            )
+            checkpoint_receiver_lora_modules = tuple(
+                str(module_name)
+                for module_name in checkpoint.get("pilot_receiver_lora_target_modules", [])
+            )
+            if checkpoint_receiver_lora_layers != self.receiver_lora_target_layers:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_target_layers="
+                    f"{list(checkpoint_receiver_lora_layers)}, expected {list(self.receiver_lora_target_layers)}."
+                )
+            if checkpoint_receiver_lora_modules != self.receiver_lora_target_modules:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_target_modules="
+                    f"{list(checkpoint_receiver_lora_modules)}, expected {list(self.receiver_lora_target_modules)}."
+                )
+            checkpoint_receiver_lora_rank = int(
+                checkpoint.get("pilot_receiver_lora_rank", self.receiver_lora_rank)
+            )
+            checkpoint_receiver_lora_alpha = float(
+                checkpoint.get("pilot_receiver_lora_alpha", self.receiver_lora_alpha)
+            )
+            checkpoint_receiver_lora_dropout = float(
+                checkpoint.get("pilot_receiver_lora_dropout", self.receiver_lora_dropout)
+            )
+            if checkpoint_receiver_lora_rank != int(self.receiver_lora_rank):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_rank="
+                    f"{checkpoint_receiver_lora_rank}, expected {self.receiver_lora_rank}."
+                )
+            if abs(checkpoint_receiver_lora_alpha - float(self.receiver_lora_alpha)) > 1e-8:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_alpha="
+                    f"{checkpoint_receiver_lora_alpha}, expected {self.receiver_lora_alpha}."
+                )
+            if abs(checkpoint_receiver_lora_dropout - float(self.receiver_lora_dropout)) > 1e-8:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_receiver_lora_dropout="
+                    f"{checkpoint_receiver_lora_dropout}, expected {self.receiver_lora_dropout}."
+                )
+            receiver_lora_state = checkpoint.get("receiver_lora_state")
+            if receiver_lora_state is None:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} is missing receiver_lora_state."
+                )
+            if not isinstance(receiver_lora_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} has invalid receiver_lora_state."
+                )
+            self.backbone.validate_receiver_lora_state_dict(
+                receiver_lora_state,
+                checkpoint_path=str(checkpoint_path),
+            )
+        checkpoint_reader_cross_attn_layers = tuple(
+            int(layer_index) for layer_index in checkpoint.get("pilot_reader_cross_attn_layers", [])
+        )
+        checkpoint_reader_cross_attn_enabled = bool(
+            checkpoint_reader_cross_attn_layers or checkpoint.get("reader_cross_attn_state") is not None
+        )
+        runtime_reader_cross_attn_enabled = bool(self.memory_consumer_mode == "reader_cross_attn")
+        if checkpoint_reader_cross_attn_enabled != runtime_reader_cross_attn_enabled:
+            raise ValueError(
+                f"Warm-start checkpoint {checkpoint_path} uses reader cross-attention enabled="
+                f"{checkpoint_reader_cross_attn_enabled}, expected {runtime_reader_cross_attn_enabled}."
+            )
+        if runtime_reader_cross_attn_enabled:
+            if checkpoint_reader_cross_attn_layers != self.reader_cross_attn_layers:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_reader_cross_attn_layers="
+                    f"{list(checkpoint_reader_cross_attn_layers)}, expected {list(self.reader_cross_attn_layers)}."
+                )
+            checkpoint_reader_cross_attn_heads = int(
+                checkpoint.get("pilot_reader_cross_attn_heads", self.reader_cross_attn_heads)
+            )
+            checkpoint_reader_cross_attn_ff_hidden_dim = int(
+                checkpoint.get(
+                    "pilot_reader_cross_attn_ff_hidden_dim",
+                    self.reader_cross_attn_ff_hidden_dim,
+                )
+            )
+            if checkpoint_reader_cross_attn_heads != int(self.reader_cross_attn_heads):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_reader_cross_attn_heads="
+                    f"{checkpoint_reader_cross_attn_heads}, expected {self.reader_cross_attn_heads}."
+                )
+            if checkpoint_reader_cross_attn_ff_hidden_dim != int(self.reader_cross_attn_ff_hidden_dim):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} uses pilot_reader_cross_attn_ff_hidden_dim="
+                    f"{checkpoint_reader_cross_attn_ff_hidden_dim}, expected {self.reader_cross_attn_ff_hidden_dim}."
+                )
+            reader_cross_attn_state = checkpoint.get("reader_cross_attn_state")
+            if reader_cross_attn_state is None:
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} is missing reader_cross_attn_state."
+                )
+            if not isinstance(reader_cross_attn_state, dict):
+                raise ValueError(
+                    f"Warm-start checkpoint {checkpoint_path} has invalid reader_cross_attn_state."
+                )
+            self.backbone.validate_reader_cross_attn_state_dict(
+                reader_cross_attn_state,
+                checkpoint_path=str(checkpoint_path),
+            )
+        if self.memory_path_variant == "two_level":
+            reader_state = checkpoint.get("reader_state")
+            fuser_state = checkpoint.get("fuser_state")
+            if not isinstance(reader_state, dict):
+                raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing reader_state.")
+            if not isinstance(fuser_state, dict):
+                raise ValueError(f"Warm-start checkpoint {checkpoint_path} is missing fuser_state.")
+            if self.reader is None or self.fuser is None:
+                raise RuntimeError("two_level runtime requires reader and fuser modules.")
+            _validate_module_state_shapes(
+                module_name="reader",
+                expected_state=self.reader.state_dict(),
+                checkpoint_state=reader_state,
+                checkpoint_path=checkpoint_path,
+            )
+            _validate_module_state_shapes(
+                module_name="fuser",
+                expected_state=self.fuser.state_dict(),
+                checkpoint_state=fuser_state,
+                checkpoint_path=checkpoint_path,
+            )
+
+    def warm_start_consumer_from_injection_checkpoint(self, checkpoint_path: str | Path) -> dict[str, Any]:
+        checkpoint_path = Path(checkpoint_path).resolve()
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        self._validate_consumer_only_injection_checkpoint(
+            checkpoint,
+            checkpoint_path=checkpoint_path,
+        )
+        if self.receiver_lora_enabled and checkpoint.get("receiver_lora_state") is not None:
+            self.backbone.load_receiver_lora_state_dict(
+                checkpoint["receiver_lora_state"],
+                checkpoint_path=str(checkpoint_path),
+            )
+        if self.memory_consumer_mode == "reader_cross_attn" and checkpoint.get("reader_cross_attn_state") is not None:
+            self.backbone.load_reader_cross_attn_state_dict(
+                checkpoint["reader_cross_attn_state"],
+                checkpoint_path=str(checkpoint_path),
+            )
+        if self.memory_path_variant == "two_level":
+            if self.reader is None or self.fuser is None:
+                raise RuntimeError("two_level runtime requires reader and fuser modules.")
+            self.reader.load_state_dict(checkpoint["reader_state"])
+            self.fuser.load_state_dict(checkpoint["fuser_state"])
+        return checkpoint
+
     def load_injection_checkpoint(self, checkpoint_path: str | Path) -> dict[str, Any]:
         checkpoint_path = Path(checkpoint_path).resolve()
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -6564,6 +6782,7 @@ def run_shared_injection_pilot(
     opd_hint_mode_triviaqa = _resolve_opd_hint_mode(config, "triviaqa")
     opd_hint_mode_fever = _resolve_opd_hint_mode(config, "fever")
     init_checkpoint_path = _resolve_init_checkpoint_path(config)
+    init_checkpoint_mode = _resolve_init_checkpoint_mode(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
     train_support_mode = _resolve_train_support_mode(config)
@@ -6695,9 +6914,10 @@ def run_shared_injection_pilot(
         raise ValueError(
             "runtime.pilot_alignment_aux_mode=opd_* currently requires runtime.pilot_opd_scope=reader_only."
         )
-    if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and trainable_variant != "reader_only":
+    if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and trainable_variant not in {"reader_only", "writer_then_joint"}:
         raise ValueError(
-            "runtime.pilot_alignment_aux_mode=opd_* currently requires runtime.pilot_trainable_variant=reader_only."
+            "runtime.pilot_alignment_aux_mode=opd_* currently requires runtime.pilot_trainable_variant "
+            "in {reader_only, writer_then_joint}."
         )
     if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and not opd_teacher_force_gold:
         raise ValueError(
@@ -6834,7 +7054,10 @@ def run_shared_injection_pilot(
         if bridge_mode != "writer_direct":
             runtime.load_writer(resume)
         if init_checkpoint_path:
-            runtime.warm_start_from_injection_checkpoint(init_checkpoint_path)
+            if init_checkpoint_mode == "consumer_only":
+                runtime.warm_start_consumer_from_injection_checkpoint(init_checkpoint_path)
+            else:
+                runtime.warm_start_from_injection_checkpoint(init_checkpoint_path)
         if injection_checkpoint_path:
             runtime.load_injection_checkpoint(injection_checkpoint_path)
         if orthogonalize_writer_slot_basis:
@@ -7105,16 +7328,21 @@ def run_shared_injection_pilot(
                 bootstrap_steps=reader_fuser_bootstrap_steps,
             )
             projector_warmup_active = bool(
-                trainable_variant not in {"receiver_then_joint", "reader_only"}
+                trainable_variant not in {"receiver_then_joint", "reader_only", "writer_then_joint"}
                 and step < projector_warmup_steps
             )
             receiver_only_stage_active = bool(
                 trainable_variant == "receiver_then_joint" and current_step <= stage_a_steps
             )
+            writer_only_stage_active = bool(
+                trainable_variant == "writer_then_joint" and current_step <= stage_a_steps
+            )
             if receiver_only_stage_active:
                 train_phase = "stage_a_receiver_only"
+            elif writer_only_stage_active:
+                train_phase = "stage_a_writer_only"
             elif (
-                trainable_variant == "receiver_then_joint"
+                trainable_variant in {"receiver_then_joint", "writer_then_joint"}
                 and current_step <= (stage_a_steps + stage_b_steps)
             ):
                 train_phase = "stage_b_joint"
@@ -7164,6 +7392,10 @@ def run_shared_injection_pilot(
                 reader_frozen = True
                 fuser_frozen = True
                 reconstruction_frozen = True
+            if writer_only_stage_active:
+                reader_frozen = True
+                fuser_frozen = True
+                receiver_lora_trainable = False
             runtime.set_writer_base_trainable(not writer_base_frozen)
             runtime.set_writer_adapter_trainable(not writer_adapter_frozen)
             runtime.set_source_stub_trainable(not source_stub_frozen)
@@ -9256,6 +9488,7 @@ def run_shared_injection_pilot(
         "pilot_alignment_aux_advantage_center": alignment_aux_advantage_center,
         "pilot_alignment_aux_advantage_scale": alignment_aux_advantage_scale,
         "pilot_init_checkpoint_path": "" if not init_checkpoint_path else str(Path(init_checkpoint_path).resolve()),
+        "pilot_init_checkpoint_mode": str(init_checkpoint_mode),
         "pilot_deep_prefix_layers": list(deep_prefix_layers),
         "pilot_deep_prefix_rank": deep_prefix_rank,
         "pilot_deep_prefix_projector_mode": runtime.deep_prefix_projector_mode,
