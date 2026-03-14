@@ -64,3 +64,9 @@ bash -n \
 
 - 2026-03-14 UTC: Confirmed that swapping the backbone from `Qwen3-8B` to `Qwen3-4B` reopens the governed restart point at `V8-0`.
 - 2026-03-14 UTC: Confirmed the official `Qwen3-4B` model card keeps the same `36`-layer depth, so the existing `V8-0` middle-band oracle layer placement remains consistent.
+- 2026-03-14 UTC: Hardened qwen34 local staging after the first live run stalled on `model-00002-of-00003.safetensors`:
+  - `prepare_local_qwen3_model.sh` now keeps small-file `hf_hub_download()` retries but resolves signed shard URLs explicitly and downloads large weights with resumable `wget -c`
+  - the relaunched `planv8_v80_q34` session resumed forward progress immediately from the partial local shard set under `/root/autodl-tmp/models/Qwen3-4B`
+- 2026-03-14 UTC: Added an idempotent chain-arm helper, [`scripts/arm_planv8_qwen34_chain.sh`](/root/mydir/MemTOTAL/scripts/arm_planv8_qwen34_chain.sh), so the qwen34 unattended stack can be re-armed without reconstructing ad hoc tmux commands:
+  - restores the `V8-0` runner, watcher, local shard watcher, post-publish tail, `V8-1` queue, and chain superwatch if any session drops
+  - upgrades the live shard watcher to report the real staged files in `/root/autodl-tmp/models/Qwen3-4B` instead of the stale Hugging Face cache artifact path
