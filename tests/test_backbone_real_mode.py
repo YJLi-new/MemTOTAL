@@ -196,6 +196,15 @@ class _FakeModel(torch.nn.Module):
 
 
 class BackboneRealModeTest(unittest.TestCase):
+    def test_stub_mode_default_model_id_supports_qwen34(self) -> None:
+        backbone = BackboneWrapper(
+            name="Qwen3-4B",
+            load_mode="stub",
+            hidden_size=8,
+            seed=123,
+        )
+        self.assertEqual(backbone.model_id, "Qwen/Qwen3-4B")
+
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
     def test_real_mode_supports_summarize_score_and_generate(self, _mock_model, _mock_tokenizer):

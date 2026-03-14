@@ -82,7 +82,7 @@ def _download_with_retries(filename: str, *, max_attempts: int = 8) -> None:
                 break
             sleep_seconds = min(60, 2 ** attempt)
             print(
-                f"retrying qwen3 file download for {filename} "
+                f"retrying model file download for {filename} "
                 f"(attempt {attempt}/{max_attempts}) after error: {exc!r}"
             )
             time.sleep(sleep_seconds)
@@ -91,15 +91,15 @@ def _download_with_retries(filename: str, *, max_attempts: int = 8) -> None:
 
 if config_path.exists():
     if single_file_path.exists():
-        print(f"local qwen3 model already present: {local_dir}")
+        print(f"local model already present: {local_dir}")
         raise SystemExit(0)
     if index_path.exists():
         missing = _missing_indexed_weights(index_path, local_dir)
         if not missing:
-            print(f"local qwen3 model already present: {local_dir}")
+            print(f"local model already present: {local_dir}")
             raise SystemExit(0)
         print(
-            f"partial qwen3 model detected under {local_dir}; "
+            f"partial model detected under {local_dir}; "
             f"resuming {len(missing)} missing shard(s): {missing[:5]}"
         )
 
@@ -131,8 +131,8 @@ if index_path.exists():
         missing_after_download = _missing_indexed_weights(index_path, local_dir)
         if missing_after_download:
             raise SystemExit(
-                f"missing sharded qwen3 weights under {local_dir}: {missing_after_download[:5]}"
+                f"missing sharded model weights under {local_dir}: {missing_after_download[:5]}"
             )
 
-print(f"local qwen3 model ready: {local_dir}")
+print(f"local model ready: {local_dir}")
 PY

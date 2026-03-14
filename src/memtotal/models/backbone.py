@@ -301,6 +301,7 @@ class BackboneWrapper(nn.Module):
     def _default_model_id(self, name: str) -> str:
         defaults = {
             "Qwen2.5-1.5B-Instruct": "Qwen/Qwen2.5-1.5B-Instruct",
+            "Qwen3-4B": "Qwen/Qwen3-4B",
             "Qwen3-8B": "Qwen/Qwen3-8B",
         }
         return defaults[name]

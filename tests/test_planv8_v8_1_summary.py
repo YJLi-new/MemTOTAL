@@ -170,6 +170,34 @@ class PlanV8V81SummaryTest(unittest.TestCase):
             self.assertEqual(summary["recommended_next_step"], "open_v8_2_reader_sweep_last_chance")
             self.assertFalse(summary["best_arm_acceptance_qualified"])
 
+    def test_build_summary_reads_generic_v80_primary_baseline_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result_root = Path(temp_dir) / "results"
+            result_root.mkdir(parents=True, exist_ok=True)
+            self._write_control_and_flat_arms(result_root)
+
+            v80_summary_path = Path(temp_dir) / "v8-0-summary.json"
+            v80_summary_path.write_text(
+                json.dumps(
+                    {
+                        "selected_primary_baseline_scores": {
+                            "gsm8k": 0.60,
+                            "triviaqa": 0.20,
+                            "fever": 0.58,
+                        }
+                    }
+                )
+                + "\n"
+            )
+
+            summary = build_summary(
+                result_root=result_root,
+                v80_summary_path=v80_summary_path,
+            )
+
+            self.assertEqual(summary["v80_selected_baseline_scores"]["gsm8k"], 0.60)
+            self.assertTrue(summary["control_matches_v80_selected_baseline_by_task"]["triviaqa"])
+
 
 if __name__ == "__main__":
     unittest.main()

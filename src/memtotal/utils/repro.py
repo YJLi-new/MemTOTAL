@@ -12,6 +12,7 @@ import yaml
 
 SUPPORTED_BACKBONES = (
     "Qwen2.5-1.5B-Instruct",
+    "Qwen3-4B",
     "Qwen3-8B",
 )
 

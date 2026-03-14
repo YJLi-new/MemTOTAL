@@ -9,25 +9,31 @@ from statistics import median
 from typing import Any
 
 PRIMARY_TASKS = ("gsm8k", "triviaqa")
-BASELINE_ARM_IDS = (
-    "b0_q3_gsm8k_nonthink",
-    "b1_q3_gsm8k_think_boxed",
-    "b2_q3_trivia_nonthink",
-    "b3_q3_trivia_think",
-    "b4_q3_fever_nonthink",
-)
-ORACLE_ARM_IDS = (
-    "o0_q25_prefix_replay_gsm8k",
-    "o0_q25_prefix_replay_triviaqa",
-    "o1_q3_prefix_oracle_mid4_gsm8k",
-    "o1_q3_prefix_oracle_mid4_triviaqa",
-    "o2_q3_seq_oracle16_gsm8k",
-    "o2_q3_seq_oracle16_triviaqa",
-    "o3_q3_seq_oracle32_gsm8k",
-    "o3_q3_seq_oracle32_triviaqa",
-    "o4_q3_xattn_oracle_smoke_gsm8k",
-    "o4_q3_xattn_oracle_smoke_triviaqa",
-)
+
+
+def _baseline_arm_ids(primary_arm_prefix: str) -> tuple[str, ...]:
+    return (
+        f"b0_{primary_arm_prefix}_gsm8k_nonthink",
+        f"b1_{primary_arm_prefix}_gsm8k_think_boxed",
+        f"b2_{primary_arm_prefix}_trivia_nonthink",
+        f"b3_{primary_arm_prefix}_trivia_think",
+        f"b4_{primary_arm_prefix}_fever_nonthink",
+    )
+
+
+def _oracle_arm_ids(primary_arm_prefix: str) -> tuple[str, ...]:
+    return (
+        "o0_q25_prefix_replay_gsm8k",
+        "o0_q25_prefix_replay_triviaqa",
+        f"o1_{primary_arm_prefix}_prefix_oracle_mid4_gsm8k",
+        f"o1_{primary_arm_prefix}_prefix_oracle_mid4_triviaqa",
+        f"o2_{primary_arm_prefix}_seq_oracle16_gsm8k",
+        f"o2_{primary_arm_prefix}_seq_oracle16_triviaqa",
+        f"o3_{primary_arm_prefix}_seq_oracle32_gsm8k",
+        f"o3_{primary_arm_prefix}_seq_oracle32_triviaqa",
+        f"o4_{primary_arm_prefix}_xattn_oracle_smoke_gsm8k",
+        f"o4_{primary_arm_prefix}_xattn_oracle_smoke_triviaqa",
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -193,21 +199,48 @@ def build_summary(
     run_root: Path,
     qwen25_reference_summary: Path | None,
     selected_prompt_modes_path: Path | None,
+    primary_backbone_key: str = "qwen3",
+    primary_backbone_label: str = "Qwen3-8B",
+    primary_arm_prefix: str = "q3",
 ) -> dict[str, Any]:
-    baseline_arms = {arm_id: _arm_payload(arm_id, run_root) for arm_id in BASELINE_ARM_IDS}
-    oracle_arms = {arm_id: _arm_payload(arm_id, run_root) for arm_id in ORACLE_ARM_IDS}
+    baseline_arm_ids = _baseline_arm_ids(primary_arm_prefix)
+    oracle_arm_ids = _oracle_arm_ids(primary_arm_prefix)
+    baseline_arms = {arm_id: _arm_payload(arm_id, run_root) for arm_id in baseline_arm_ids}
+    oracle_arms = {arm_id: _arm_payload(arm_id, run_root) for arm_id in oracle_arm_ids}
     selected_prompt_modes = _load_selected_prompts(selected_prompt_modes_path)
+
+    gsm8k_default_arm = f"b0_{primary_arm_prefix}_gsm8k_nonthink"
+    triviaqa_default_arm = f"b2_{primary_arm_prefix}_trivia_nonthink"
+    fever_default_arm = f"b4_{primary_arm_prefix}_fever_nonthink"
+    legacy_gsm8k_arm = f"o1_{primary_arm_prefix}_prefix_oracle_mid4_gsm8k"
+    legacy_triviaqa_arm = f"o1_{primary_arm_prefix}_prefix_oracle_mid4_triviaqa"
+    ri1_gsm8k_arm = f"o2_{primary_arm_prefix}_seq_oracle16_gsm8k"
+    ri1_triviaqa_arm = f"o2_{primary_arm_prefix}_seq_oracle16_triviaqa"
+    ri1_wide_gsm8k_arm = f"o3_{primary_arm_prefix}_seq_oracle32_gsm8k"
+    ri1_wide_triviaqa_arm = f"o3_{primary_arm_prefix}_seq_oracle32_triviaqa"
+    ri2_gsm8k_arm = f"o4_{primary_arm_prefix}_xattn_oracle_smoke_gsm8k"
+    ri2_triviaqa_arm = f"o4_{primary_arm_prefix}_xattn_oracle_smoke_triviaqa"
 
     gsm8k_selected = selected_prompt_modes.get("gsm8k", {})
     triviaqa_selected = selected_prompt_modes.get("triviaqa", {})
     selected_baseline_by_task = {
-        "gsm8k": str(gsm8k_selected.get("selected_arm_id", "b0_q3_gsm8k_nonthink")),
-        "triviaqa": str(triviaqa_selected.get("selected_arm_id", "b2_q3_trivia_nonthink")),
-        "fever": "b4_q3_fever_nonthink",
+        "gsm8k": str(gsm8k_selected.get("selected_arm_id", gsm8k_default_arm)),
+        "triviaqa": str(triviaqa_selected.get("selected_arm_id", triviaqa_default_arm)),
+        "fever": fever_default_arm,
     }
     selected_prompt_modes_by_task = {
-        "gsm8k": str(gsm8k_selected.get("selected_prompt_variant", baseline_arms["b0_q3_gsm8k_nonthink"]["prompt_variant"])),
-        "triviaqa": str(triviaqa_selected.get("selected_prompt_variant", baseline_arms["b2_q3_trivia_nonthink"]["prompt_variant"])),
+        "gsm8k": str(
+            gsm8k_selected.get(
+                "selected_prompt_variant",
+                baseline_arms[gsm8k_default_arm]["prompt_variant"],
+            )
+        ),
+        "triviaqa": str(
+            triviaqa_selected.get(
+                "selected_prompt_variant",
+                baseline_arms[triviaqa_default_arm]["prompt_variant"],
+            )
+        ),
         "fever": "answer_slot_labels",
     }
 
@@ -223,19 +256,19 @@ def build_summary(
     }
     qwen25_reference_scores = _load_qwen25_reference(qwen25_reference_summary)
 
-    legacy_prefix_qwen3 = {
-        "gsm8k": oracle_arms["o1_q3_prefix_oracle_mid4_gsm8k"]["task_score"],
-        "triviaqa": oracle_arms["o1_q3_prefix_oracle_mid4_triviaqa"]["task_score"],
+    legacy_prefix_primary = {
+        "gsm8k": oracle_arms[legacy_gsm8k_arm]["task_score"],
+        "triviaqa": oracle_arms[legacy_triviaqa_arm]["task_score"],
     }
     ri1_smoke = {
-        "o2_q3_seq_oracle16_gsm8k": oracle_arms["o2_q3_seq_oracle16_gsm8k"],
-        "o2_q3_seq_oracle16_triviaqa": oracle_arms["o2_q3_seq_oracle16_triviaqa"],
-        "o3_q3_seq_oracle32_gsm8k": oracle_arms["o3_q3_seq_oracle32_gsm8k"],
-        "o3_q3_seq_oracle32_triviaqa": oracle_arms["o3_q3_seq_oracle32_triviaqa"],
+        ri1_gsm8k_arm: oracle_arms[ri1_gsm8k_arm],
+        ri1_triviaqa_arm: oracle_arms[ri1_triviaqa_arm],
+        ri1_wide_gsm8k_arm: oracle_arms[ri1_wide_gsm8k_arm],
+        ri1_wide_triviaqa_arm: oracle_arms[ri1_wide_triviaqa_arm],
     }
     ri2_smoke = {
-        "o4_q3_xattn_oracle_smoke_gsm8k": oracle_arms["o4_q3_xattn_oracle_smoke_gsm8k"],
-        "o4_q3_xattn_oracle_smoke_triviaqa": oracle_arms["o4_q3_xattn_oracle_smoke_triviaqa"],
+        ri2_gsm8k_arm: oracle_arms[ri2_gsm8k_arm],
+        ri2_triviaqa_arm: oracle_arms[ri2_triviaqa_arm],
     }
 
     ri1_passed_basic_smoke = all(
@@ -250,40 +283,43 @@ def build_summary(
         and payload["reader_cross_attn_grad_norm_nonzero_steps"] > 0
         for payload in ri2_smoke.values()
     )
-    qwen3_primary_beats_q25_replay_on_any_task = any(
+    primary_beats_q25_replay_on_any_task = any(
         selected_baseline_scores[task_name] > qwen25_replay_scores[task_name]
         for task_name in PRIMARY_TASKS
     )
-    qwen3_primary_beats_historical_q25_on_any_task = any(
+    primary_beats_historical_q25_on_any_task = any(
         selected_baseline_scores[task_name] > qwen25_reference_scores.get(task_name, 0.0)
         for task_name in PRIMARY_TASKS
     ) if qwen25_reference_scores else False
     legacy_prefix_oracle_reproduced_or_bounded = all(
-        legacy_prefix_qwen3[task_name] <= (selected_baseline_scores[task_name] + 1e-6)
+        legacy_prefix_primary[task_name] <= (selected_baseline_scores[task_name] + 1e-6)
         for task_name in PRIMARY_TASKS
     )
 
     if not ri1_passed_basic_smoke or not ri2_passed_basic_smoke:
-        comparison_conclusion = "repair_qwen3_interface_before_v8_1"
+        comparison_conclusion = f"repair_{primary_backbone_key}_interface_before_v8_1"
         recommended_next_step = "repair_v8_0_interface_path"
-    elif not qwen3_primary_beats_q25_replay_on_any_task and not qwen3_primary_beats_historical_q25_on_any_task:
-        comparison_conclusion = "qwen3_baseline_under_calibrated_repair_before_v8_1"
-        recommended_next_step = "repair_qwen3_prompt_or_harness"
+    elif not primary_beats_q25_replay_on_any_task and not primary_beats_historical_q25_on_any_task:
+        comparison_conclusion = f"{primary_backbone_key}_baseline_under_calibrated_repair_before_v8_1"
+        recommended_next_step = f"repair_{primary_backbone_key}_prompt_or_harness"
     else:
-        comparison_conclusion = "qwen3_calibrated_interfaces_alive_open_v8_1"
+        comparison_conclusion = f"{primary_backbone_key}_calibrated_interfaces_alive_open_v8_1"
         recommended_next_step = "open_v8_1_reader_interface_scout"
 
-    return {
+    summary = {
         "phase": "V8-0",
+        "primary_backbone_key": primary_backbone_key,
+        "primary_backbone_label": primary_backbone_label,
+        "primary_arm_prefix": primary_arm_prefix,
         "comparison_conclusion": comparison_conclusion,
         "recommended_next_step": recommended_next_step,
         "selected_baseline_arms_by_task": selected_baseline_by_task,
         "selected_prompt_modes_by_task": selected_prompt_modes_by_task,
-        "selected_qwen3_baseline_scores": selected_baseline_scores,
+        "selected_primary_baseline_scores": selected_baseline_scores,
         "qwen25_replay_scores": qwen25_replay_scores,
         "historical_qwen25_reference_scores": qwen25_reference_scores,
-        "qwen3_primary_beats_q25_replay_on_any_task": qwen3_primary_beats_q25_replay_on_any_task,
-        "qwen3_primary_beats_historical_q25_on_any_task": qwen3_primary_beats_historical_q25_on_any_task,
+        "primary_beats_q25_replay_on_any_task": primary_beats_q25_replay_on_any_task,
+        "primary_beats_historical_q25_on_any_task": primary_beats_historical_q25_on_any_task,
         "legacy_prefix_oracle_reproduced_or_bounded": legacy_prefix_oracle_reproduced_or_bounded,
         "ri1_passed_basic_smoke": ri1_passed_basic_smoke,
         "ri2_passed_basic_smoke": ri2_passed_basic_smoke,
@@ -301,11 +337,20 @@ def build_summary(
         "baseline_arms": baseline_arms,
         "oracle_arms": oracle_arms,
     }
+    summary[f"selected_{primary_backbone_key}_baseline_scores"] = selected_baseline_scores
+    summary[f"{primary_backbone_key}_primary_beats_q25_replay_on_any_task"] = (
+        primary_beats_q25_replay_on_any_task
+    )
+    summary[f"{primary_backbone_key}_primary_beats_historical_q25_on_any_task"] = (
+        primary_beats_historical_q25_on_any_task
+    )
+    return summary
 
 
 def _render_markdown(summary: dict[str, Any]) -> str:
+    primary_label = str(summary.get("primary_backbone_label", "Primary"))
     lines = [
-        "# PLANv8 V8-0 Summary",
+        f"# PLANv8 V8-0 Summary ({primary_label})",
         "",
         f"- `comparison_conclusion = {summary['comparison_conclusion']}`",
         f"- `recommended_next_step = {summary['recommended_next_step']}`",
@@ -326,9 +371,9 @@ def _render_markdown(summary: dict[str, Any]) -> str:
             "",
             "## Primary Baselines",
             "",
-            f"- `gsm8k`: qwen3=`{summary['selected_qwen3_baseline_scores']['gsm8k']:.6f}`, "
+            f"- `gsm8k`: {primary_label}=`{summary['selected_primary_baseline_scores']['gsm8k']:.6f}`, "
             f"qwen2.5 replay=`{summary['qwen25_replay_scores']['gsm8k']:.6f}`",
-            f"- `triviaqa`: qwen3=`{summary['selected_qwen3_baseline_scores']['triviaqa']:.6f}`, "
+            f"- `triviaqa`: {primary_label}=`{summary['selected_primary_baseline_scores']['triviaqa']:.6f}`, "
             f"qwen2.5 replay=`{summary['qwen25_replay_scores']['triviaqa']:.6f}`",
             "",
             "## Reader Activation",
@@ -346,11 +391,14 @@ def _render_markdown(summary: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize PLANv8 V8-0 Qwen3 baseline/oracle runs.")
+    parser = argparse.ArgumentParser(description="Summarize PLANv8 V8-0 baseline/oracle runs.")
     parser.add_argument("--run-root", required=True)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--qwen25-reference-summary", default="")
     parser.add_argument("--selected-prompt-modes", default="")
+    parser.add_argument("--primary-backbone-key", default="qwen3")
+    parser.add_argument("--primary-backbone-label", default="Qwen3-8B")
+    parser.add_argument("--primary-arm-prefix", default="q3")
     args = parser.parse_args()
 
     run_root = Path(args.run_root).resolve()
@@ -365,6 +413,9 @@ def main() -> int:
         selected_prompt_modes_path=Path(args.selected_prompt_modes).resolve()
         if str(args.selected_prompt_modes).strip()
         else None,
+        primary_backbone_key=str(args.primary_backbone_key).strip(),
+        primary_backbone_label=str(args.primary_backbone_label).strip(),
+        primary_arm_prefix=str(args.primary_arm_prefix).strip(),
     )
     summary_path = output_root / "v8-0-summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

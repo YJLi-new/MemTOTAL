@@ -193,6 +193,18 @@ def _v80_reference(v80_summary_path: Path | None) -> dict[str, Any]:
     return _load_json(v80_summary_path)
 
 
+def _selected_primary_baseline_scores(v80_reference: dict[str, Any]) -> dict[str, float]:
+    for key in (
+        "selected_primary_baseline_scores",
+        "selected_qwen3_baseline_scores",
+        "selected_qwen34_baseline_scores",
+    ):
+        payload = v80_reference.get(key, {})
+        if isinstance(payload, dict) and payload:
+            return dict(payload)
+    return {}
+
+
 def _arm_task_payload(result_root: Path, arm_id: str, task_name: str) -> dict[str, Any]:
     task_root = result_root / arm_id / task_name
     metrics = _load_json(task_root / "metrics.json")
@@ -443,7 +455,7 @@ def build_summary(
         comparison_conclusion = "reader_interface_flat_open_v8_2_last_chance"
         recommended_next_step = "open_v8_2_reader_sweep_last_chance"
 
-    v80_selected_baseline_scores = dict(v80_reference.get("selected_qwen3_baseline_scores", {}))
+    v80_selected_baseline_scores = _selected_primary_baseline_scores(v80_reference)
     control_match_v80 = {
         task_name: (
             abs(float(control_by_task[task_name]["task_score"]) - _safe_float(v80_selected_baseline_scores.get(task_name)))
