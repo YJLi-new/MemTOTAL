@@ -123,16 +123,85 @@ if not index_path.exists() and not single_file_path.exists():
         f"missing model.safetensors or model.safetensors.index.json after snapshot download: {local_dir}"
     )
 
-if index_path.exists():
-    missing = _missing_indexed_weights(index_path, local_dir)
-    for filename in missing:
-        _download_with_retries(filename)
-    if missing:
-        missing_after_download = _missing_indexed_weights(index_path, local_dir)
-        if missing_after_download:
-            raise SystemExit(
-                f"missing sharded model weights under {local_dir}: {missing_after_download[:5]}"
-            )
+PY
 
+resolve_redirect_url() {
+  local filename="$1"
+  python - <<'PY' "${MODEL_ID}" "${filename}"
+import sys
+
+import requests
+from huggingface_hub import hf_hub_url
+
+model_id = sys.argv[1]
+filename = sys.argv[2]
+url = hf_hub_url(model_id, filename)
+response = requests.get(url, allow_redirects=False, timeout=60)
+response.raise_for_status()
+print(response.headers.get("location", url))
+PY
+}
+
+download_large_file_with_retries() {
+  local filename="$1"
+  local target_path="${LOCAL_DIR}/${filename}"
+  local attempt
+  for attempt in $(seq 1 8); do
+    find "${LOCAL_DIR}/.cache/huggingface/download" -maxdepth 1 -name '*.lock' -delete 2>/dev/null || true
+    if url="$(resolve_redirect_url "${filename}")" && wget -c -O "${target_path}" "${url}"; then
+      return 0
+    fi
+    sleep_seconds=$((attempt < 6 ? 2 ** attempt : 60))
+    echo "retrying large shard download for ${filename} (attempt ${attempt}/8)" >&2
+    sleep "${sleep_seconds}"
+  done
+  echo "failed to download large shard ${filename} after 8 attempts" >&2
+  return 1
+}
+
+mapfile -t missing_shards < <(
+  python - <<'PY' "${LOCAL_DIR}"
+import json
+import sys
+from pathlib import Path
+
+local_dir = Path(sys.argv[1])
+index_path = local_dir / "model.safetensors.index.json"
+if not index_path.exists():
+    raise SystemExit(0)
+payload = json.loads(index_path.read_text())
+weight_map = payload.get("weight_map", {})
+for filename in sorted({name for name in weight_map.values() if not (local_dir / name).exists()}):
+    print(filename)
+PY
+)
+
+for filename in "${missing_shards[@]}"; do
+  download_large_file_with_retries "${filename}"
+done
+
+python - <<'PY' "${LOCAL_DIR}"
+import json
+import sys
+from pathlib import Path
+
+local_dir = Path(sys.argv[1])
+config_path = local_dir / "config.json"
+index_path = local_dir / "model.safetensors.index.json"
+single_file_path = local_dir / "model.safetensors"
+
+if not config_path.exists():
+    raise SystemExit(f"missing config.json after local staging: {local_dir}")
+if single_file_path.exists():
+    print(f"local model ready: {local_dir}")
+    raise SystemExit(0)
+if not index_path.exists():
+    raise SystemExit(f"missing model.safetensors or model.safetensors.index.json after local staging: {local_dir}")
+
+payload = json.loads(index_path.read_text())
+weight_map = payload.get("weight_map", {})
+missing = sorted({name for name in weight_map.values() if not (local_dir / name).exists()})
+if missing:
+    raise SystemExit(f"missing sharded model weights under {local_dir}: {missing[:5]}")
 print(f"local model ready: {local_dir}")
 PY
