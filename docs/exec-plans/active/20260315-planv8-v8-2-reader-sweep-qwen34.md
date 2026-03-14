@@ -49,9 +49,15 @@ The runner implements the governed `V8-2` arm matrix:
 
 The qwen34 harness applies that matrix to the interface family selected by `V8-1`:
 
-- `ri0_legacy_prefix`: sweep deep-prefix layer band, deep-prefix rank, receiver-LoRA layer band/rank, and learning rate
+- `ri0_legacy_prefix`: sweep deep-prefix layer band, deep-prefix rank, and learning rate while keeping the receiver micro-LoRA pinned to the legal tiny base selected by `V8-1`
 - `ri1_prepend_block`: sweep reader-LoRA layer band, rank, and learning rate
 - `ri2_cross_attn`: sweep adapter layer band plus an FF-hidden proxy dimension that tracks the governed rank values
+
+## Repair Note
+
+The first qwen34 launch exposed a real contract mismatch for the `ri0_legacy_prefix` branch: `writer_direct + legacy_prefix` only permits tiny receiver micro-LoRA sets, so blindly sweeping `mid8`/`mid12` receiver-LoRA targets at ranks `16-64` is invalid.
+
+The repaired harness therefore keeps the receiver micro-LoRA fixed to the legal tiny `V8-1` base arm and applies the governed `V8-2` layer-band/rank sweep to the deep-prefix projector path instead.
 
 ## Planned Artifacts
 
