@@ -25,6 +25,10 @@ V82_QUEUE_SESSION="${18:-planv8_q34_queue_v82}"
 V82_RUN_ROOT="${19:-/root/autodl-tmp/runs/verify/planv8-v8-2-reader-sweep-qwen34}"
 V82_RESULT_ROOT="${20:-/root/autodl-tmp/results/generated/planv8-v8-2-reader-sweep-qwen34}"
 V82_RUN_SESSION="${21:-planv8_v82_q34}"
+V83_QUEUE_SESSION="${22:-planv8_q34_queue_v83}"
+V83_RUN_ROOT="${23:-/root/autodl-tmp/runs/verify/planv8-v8-3-reader-opd-qwen34}"
+V83_RESULT_ROOT="${24:-/root/autodl-tmp/results/generated/planv8-v8-3-reader-opd-qwen34}"
+V83_RUN_SESSION="${25:-planv8_v83_q34}"
 
 mkdir -p \
   "${V80_RUN_ROOT}" \
@@ -32,7 +36,9 @@ mkdir -p \
   "${V81_RUN_ROOT}" \
   "${V81_RESULT_ROOT}" \
   "${V82_RUN_ROOT}" \
-  "${V82_RESULT_ROOT}"
+  "${V82_RESULT_ROOT}" \
+  "${V83_RUN_ROOT}" \
+  "${V83_RESULT_ROOT}"
 
 if ! tmux has-session -t "${V80_RUN_SESSION}" 2>/dev/null; then
   tmux new-session -d -s "${V80_RUN_SESSION}" \
@@ -96,7 +102,19 @@ if ! tmux has-session -t "${V82_QUEUE_SESSION}" 2>/dev/null; then
        ${QWEN34_MODEL_DIR}"
 fi
 
+if ! tmux has-session -t "${V83_QUEUE_SESSION}" 2>/dev/null; then
+  tmux new-session -d -s "${V83_QUEUE_SESSION}" \
+    "cd ${ROOT_DIR} && \
+     bash scripts/queue_planv8_qwen34_v8_3_after_v8_2.sh \
+       ${BASE_SEED} \
+       ${V82_RUN_ROOT} \
+       ${V82_RESULT_ROOT} \
+       ${V83_RUN_ROOT} \
+       ${V83_RESULT_ROOT} \
+       ${QWEN34_MODEL_DIR}"
+fi
+
 if ! tmux has-session -t "${SUPERWATCH_SESSION}" 2>/dev/null; then
   tmux new-session -d -s "${SUPERWATCH_SESSION}" \
-    "bash -lc 'while true; do ts=\$(date -u +%Y-%m-%dT%H:%M:%SZ); v80_state=down; v81q_state=down; v81_state=down; v82q_state=down; v82_state=down; tmux has-session -t ${V80_RUN_SESSION} 2>/dev/null && v80_state=up; tmux has-session -t ${V81_QUEUE_SESSION} 2>/dev/null && v81q_state=up; tmux has-session -t planv8_v81_q34 2>/dev/null && v81_state=up; tmux has-session -t ${V82_QUEUE_SESSION} 2>/dev/null && v82q_state=up; tmux has-session -t ${V82_RUN_SESSION} 2>/dev/null && v82_state=up; v80_metrics=\$(find ${V80_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); v81_metrics=\$(find ${V81_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); v82_metrics=\$(find ${V82_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); staged=\$(find ${QWEN34_MODEL_DIR} -maxdepth 1 -type f -name \"model-*.safetensors\" -printf \"%f=%s \" 2>/dev/null | sort | tr -d \"\\n\"); gpu=\$(nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1 | sed \"s/,/\\//g\" || true); active=\$(ps -eo pid,etimes,cmd | awk '\''/[w]get -c -O ${QWEN34_MODEL_DIR//\//\\/}\\/model-/{print \$1\":\"\$2\":\"\$3; exit}'\'' ); v80_summary=no; v81_summary=no; v82_summary=no; [ -f ${V80_RESULT_ROOT}/v8-0-summary.json ] && v80_summary=yes; [ -f ${V81_RESULT_ROOT}/v8-1-summary.json ] && v81_summary=yes; [ -f ${V82_RESULT_ROOT}/v8-2-summary.json ] && v82_summary=yes; echo \"\${ts} v80=\${v80_state} v80_metrics=\${v80_metrics} v80_summary=\${v80_summary} v81_queue=\${v81q_state} v81=\${v81_state} v81_metrics=\${v81_metrics} v81_summary=\${v81_summary} v82_queue=\${v82q_state} v82=\${v82_state} v82_metrics=\${v82_metrics} v82_summary=\${v82_summary} gpu_mib_util=\${gpu:-unknown} staged=\${staged:-none} active_wget=\${active:-none}\"; sleep 120; done' >> /root/autodl-tmp/runs/verify/planv8-qwen34-superwatch-live.log 2>&1"
+    "bash -lc 'while true; do ts=\$(date -u +%Y-%m-%dT%H:%M:%SZ); v80_state=down; v81q_state=down; v81_state=down; v82q_state=down; v82_state=down; v83q_state=down; v83_state=down; tmux has-session -t ${V80_RUN_SESSION} 2>/dev/null && v80_state=up; tmux has-session -t ${V81_QUEUE_SESSION} 2>/dev/null && v81q_state=up; tmux has-session -t planv8_v81_q34 2>/dev/null && v81_state=up; tmux has-session -t ${V82_QUEUE_SESSION} 2>/dev/null && v82q_state=up; tmux has-session -t ${V82_RUN_SESSION} 2>/dev/null && v82_state=up; tmux has-session -t ${V83_QUEUE_SESSION} 2>/dev/null && v83q_state=up; tmux has-session -t ${V83_RUN_SESSION} 2>/dev/null && v83_state=up; v80_metrics=\$(find ${V80_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); v81_metrics=\$(find ${V81_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); v82_metrics=\$(find ${V82_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); v83_metrics=\$(find ${V83_RUN_ROOT} -path \"*/metrics.json\" -type f 2>/dev/null | wc -l); staged=\$(find ${QWEN34_MODEL_DIR} -maxdepth 1 -type f -name \"model-*.safetensors\" -printf \"%f=%s \" 2>/dev/null | sort | tr -d \"\\n\"); gpu=\$(nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -n 1 | sed \"s/,/\\//g\" || true); active=\$(ps -eo pid,etimes,cmd | awk '\''/[w]get -c -O ${QWEN34_MODEL_DIR//\//\\/}\\/model-/{print \$1\":\"\$2\":\"\$3; exit}'\'' ); v80_summary=no; v81_summary=no; v82_summary=no; v83_summary=no; [ -f ${V80_RESULT_ROOT}/v8-0-summary.json ] && v80_summary=yes; [ -f ${V81_RESULT_ROOT}/v8-1-summary.json ] && v81_summary=yes; [ -f ${V82_RESULT_ROOT}/v8-2-summary.json ] && v82_summary=yes; [ -f ${V83_RESULT_ROOT}/v8-3-summary.json ] && v83_summary=yes; echo \"\${ts} v80=\${v80_state} v80_metrics=\${v80_metrics} v80_summary=\${v80_summary} v81_queue=\${v81q_state} v81=\${v81_state} v81_metrics=\${v81_metrics} v81_summary=\${v81_summary} v82_queue=\${v82q_state} v82=\${v82_state} v82_metrics=\${v82_metrics} v82_summary=\${v82_summary} v83_queue=\${v83q_state} v83=\${v83_state} v83_metrics=\${v83_metrics} v83_summary=\${v83_summary} gpu_mib_util=\${gpu:-unknown} staged=\${staged:-none} active_wget=\${active:-none}\"; sleep 120; done' >> /root/autodl-tmp/runs/verify/planv8-qwen34-superwatch-live.log 2>&1"
 fi

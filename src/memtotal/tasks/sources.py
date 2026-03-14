@@ -564,11 +564,13 @@ def _detect_structural_story_start_index(segments: list[str]) -> int:
 
 
 def _canonicalize_gsm8k(row: dict[str, Any], index: int, seed: int) -> dict[str, Any]:
-    answer = str(row["answer"]).split("\n####")[-1].strip()
+    solution = str(row["answer"]).strip()
+    answer = solution.split("\n####")[-1].strip()
     return {
         "id": str(row.get("id", f"gsm8k-{index}")),
         "question": str(row["question"]).strip(),
         "answer": answer,
+        "solution": solution,
     }
 
 
@@ -642,11 +644,29 @@ def _canonicalize_triviaqa(row: dict[str, Any], index: int, seed: int) -> dict[s
     aliases = [str(alias).strip() for alias in answer_block.get("normalized_aliases", []) if str(alias).strip()]
     if not aliases:
         raise ValueError("TriviaQA row is missing normalized aliases.")
+    entity_pages = row.get("entity_pages", {})
+    search_results = row.get("search_results", {})
+    evidence_sentences: list[str] = []
+    for container, key in (
+        (entity_pages, "wiki_context"),
+        (search_results, "search_context"),
+    ):
+        values = container.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = str(value).strip()
+            if text:
+                evidence_sentences.append(text)
     return {
         "id": str(row.get("question_id", f"triviaqa-{index}")),
         "question": str(row["question"]).strip(),
         "answer": aliases[0],
         "aliases": aliases,
+        "question_source": str(row.get("question_source", "")).strip(),
+        "entity_pages": entity_pages,
+        "search_results": search_results,
+        "evidence_sentences": evidence_sentences,
     }
 
 

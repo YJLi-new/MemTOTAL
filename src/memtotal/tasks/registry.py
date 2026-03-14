@@ -33,6 +33,7 @@ TASK_SPECS: dict[str, TaskSpec] = {
         evaluator_type="exact_match",
         metric_name="exact_match",
         prompt_template="Question: {question} || Solve carefully and give the final answer.",
+        passthrough_fields=("question", "solution"),
     ),
     "math": TaskSpec(
         benchmark_id="math",
@@ -59,6 +60,13 @@ TASK_SPECS: dict[str, TaskSpec] = {
         evaluator_type="exact_match",
         metric_name="exact_match",
         prompt_template="Question: {question} || Answer briefly.",
+        passthrough_fields=(
+            "question",
+            "question_source",
+            "entity_pages",
+            "search_results",
+            "evidence_sentences",
+        ),
     ),
     "kodcode": TaskSpec(
         benchmark_id="kodcode",

@@ -90,6 +90,30 @@ TRAIN_BACKBONE_PROMPT_MASK_SCHEDULES = {
     "none",
     "gsm8k_number_starvation_anneal",
 }
+OPD_ALIGNMENT_AUX_MODES = {
+    "opd_token_ce",
+    "opd_token_ce_centered",
+}
+OPD_SCOPE_MODES = {
+    "reader_only",
+}
+OPD_MASK_MODES = {
+    "target_only",
+}
+OPD_GSM8K_HINT_MODES = {
+    "answer_only",
+    "answer_plus_rationale",
+    "answer_plus_rationale64",
+}
+OPD_TRIVIAQA_HINT_MODES = {
+    "answer_only",
+    "answer_plus_evidence",
+    "answer_plus_two_evidence",
+}
+OPD_FEVER_HINT_MODES = {
+    "label_only",
+    "label_plus_evidence",
+}
 WRITER_CONTEXT_PROMPT_MODES = {
     "same_as_backbone",
     "full_unmasked_prompt",
@@ -646,25 +670,35 @@ def _resolve_alignment_aux_mode(config: dict[str, Any]) -> str:
         mode = "off"
     else:
         mode = str(raw_mode)
-    if mode not in {"off", "teacher_margin", "teacher_choice_kl", "teacher_choice_js"}:
+    if mode not in {"off", "teacher_margin", "teacher_choice_kl", "teacher_choice_js", *OPD_ALIGNMENT_AUX_MODES}:
         raise ValueError(
             f"Unsupported runtime.pilot_alignment_aux_mode={mode}. "
-            "Expected one of off, teacher_margin, teacher_choice_kl, teacher_choice_js."
+            "Expected one of off, teacher_margin, teacher_choice_kl, teacher_choice_js, "
+            "opd_token_ce, opd_token_ce_centered."
         )
     return mode
 
 
 def _resolve_alignment_aux_weight_max(config: dict[str, Any]) -> float:
+    mode = _resolve_alignment_aux_mode(config)
+    if mode in OPD_ALIGNMENT_AUX_MODES and "pilot_opd_weight_max" in config["runtime"]:
+        return float(config["runtime"].get("pilot_opd_weight_max", 0.0))
     if "pilot_alignment_aux_weight_max" in config["runtime"]:
         return float(config["runtime"].get("pilot_alignment_aux_weight_max", 0.0))
     return float(config["runtime"].get("pilot_alignment_aux_weight", 0.0))
 
 
 def _resolve_alignment_aux_start_step(config: dict[str, Any]) -> int:
+    mode = _resolve_alignment_aux_mode(config)
+    if mode in OPD_ALIGNMENT_AUX_MODES and "pilot_opd_start_step" in config["runtime"]:
+        return int(config["runtime"].get("pilot_opd_start_step", 0))
     return int(config["runtime"].get("pilot_alignment_aux_start_step", 0))
 
 
 def _resolve_alignment_aux_ramp_steps(config: dict[str, Any]) -> int:
+    mode = _resolve_alignment_aux_mode(config)
+    if mode in OPD_ALIGNMENT_AUX_MODES and "pilot_opd_ramp_steps" in config["runtime"]:
+        return int(config["runtime"].get("pilot_opd_ramp_steps", 0))
     return int(config["runtime"].get("pilot_alignment_aux_ramp_steps", 0))
 
 
@@ -682,6 +716,68 @@ def _resolve_alignment_aux_advantage_center(config: dict[str, Any]) -> float:
 
 def _resolve_alignment_aux_advantage_scale(config: dict[str, Any]) -> float:
     return float(config["runtime"].get("pilot_alignment_aux_advantage_scale", 0.25))
+
+
+def _resolve_opd_scope(config: dict[str, Any]) -> str:
+    scope = str(config["runtime"].get("pilot_opd_scope", "reader_only"))
+    if scope not in OPD_SCOPE_MODES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_opd_scope={scope}. Expected one of {sorted(OPD_SCOPE_MODES)}."
+        )
+    return scope
+
+
+def _resolve_opd_teacher_force_gold(config: dict[str, Any]) -> bool:
+    return bool(config["runtime"].get("pilot_opd_teacher_force_gold", True))
+
+
+def _resolve_opd_mask_mode(config: dict[str, Any]) -> str:
+    mode = str(config["runtime"].get("pilot_opd_mask_mode", "target_only"))
+    if mode not in OPD_MASK_MODES:
+        raise ValueError(
+            f"Unsupported runtime.pilot_opd_mask_mode={mode}. Expected one of {sorted(OPD_MASK_MODES)}."
+        )
+    return mode
+
+
+def _resolve_opd_advantage_clip(config: dict[str, Any]) -> float:
+    return max(0.0, float(config["runtime"].get("pilot_opd_advantage_clip", 5.0)))
+
+
+def _resolve_opd_center(config: dict[str, Any]) -> float:
+    return float(config["runtime"].get("pilot_opd_center", 0.0))
+
+
+def _resolve_opd_scale(config: dict[str, Any]) -> float:
+    return max(1.0e-6, float(config["runtime"].get("pilot_opd_scale", 0.5)))
+
+
+def _resolve_opd_hint_mode(config: dict[str, Any], benchmark_id: str) -> str:
+    runtime_cfg = config["runtime"]
+    benchmark_id = str(benchmark_id).strip().lower()
+    key = f"pilot_opd_hint_mode_{benchmark_id}"
+    if benchmark_id == "gsm8k":
+        mode = str(runtime_cfg.get(key, runtime_cfg.get("pilot_opd_hint_mode", "answer_only")))
+        if mode not in OPD_GSM8K_HINT_MODES:
+            raise ValueError(
+                f"Unsupported runtime.{key}={mode}. Expected one of {sorted(OPD_GSM8K_HINT_MODES)}."
+            )
+        return mode
+    if benchmark_id == "triviaqa":
+        mode = str(runtime_cfg.get(key, runtime_cfg.get("pilot_opd_hint_mode", "answer_only")))
+        if mode not in OPD_TRIVIAQA_HINT_MODES:
+            raise ValueError(
+                f"Unsupported runtime.{key}={mode}. Expected one of {sorted(OPD_TRIVIAQA_HINT_MODES)}."
+            )
+        return mode
+    if benchmark_id == "fever":
+        mode = str(runtime_cfg.get(key, runtime_cfg.get("pilot_opd_hint_mode", "label_only")))
+        if mode not in OPD_FEVER_HINT_MODES:
+            raise ValueError(
+                f"Unsupported runtime.{key}={mode}. Expected one of {sorted(OPD_FEVER_HINT_MODES)}."
+            )
+        return mode
+    return str(runtime_cfg.get("pilot_opd_hint_mode", "answer_only"))
 
 
 def _resolve_init_checkpoint_path(config: dict[str, Any]) -> str:
@@ -5081,6 +5177,229 @@ def _alignment_aux_loss(
     raise ValueError(f"Unsupported alignment aux mode: {mode}.")
 
 
+def _truncate_hint_words(text: str, *, max_words: int) -> str:
+    words = [word for word in str(text).strip().split() if word]
+    if not words:
+        return ""
+    return " ".join(words[:max_words]).strip()
+
+
+def _gsm8k_rationale_hint(solution: str, *, max_words: int) -> str:
+    rationale = str(solution).split("\n####", 1)[0].strip()
+    if not rationale:
+        return ""
+    return _truncate_hint_words(rationale, max_words=max_words)
+
+
+def _split_evidence_sentences(text: str) -> list[str]:
+    fragments = re.split(r"(?<=[.!?])\s+|\n+", str(text).strip())
+    return [fragment.strip() for fragment in fragments if fragment.strip()]
+
+
+def _triviaqa_evidence_sentences(example: dict[str, Any]) -> list[str]:
+    sentences: list[str] = []
+    for value in example.get("evidence_sentences", []):
+        text = str(value).strip()
+        if text:
+            sentences.append(text)
+    if sentences:
+        return sentences
+    for container_key, text_key in (
+        ("entity_pages", "wiki_context"),
+        ("search_results", "search_context"),
+    ):
+        container = example.get(container_key, {})
+        if not isinstance(container, dict):
+            continue
+        values = container.get(text_key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = str(value).strip()
+            if text:
+                sentences.append(text)
+    return sentences
+
+
+def _select_triviaqa_evidence_sentences(
+    example: dict[str, Any],
+    *,
+    answer_text: str,
+    count: int,
+) -> list[str]:
+    evidence_sentences = _triviaqa_evidence_sentences(example)
+    if not evidence_sentences:
+        return []
+    answer_text_lower = str(answer_text).strip().lower()
+    aliases = [answer_text_lower]
+    for alias in example.get("aliases", []):
+        alias_text = str(alias).strip().lower()
+        if alias_text:
+            aliases.append(alias_text)
+    matching = [
+        sentence
+        for sentence in evidence_sentences
+        if any(alias and alias in sentence.lower() for alias in aliases)
+    ]
+    pool = matching or evidence_sentences
+    shortest = sorted(pool, key=lambda sentence: (len(sentence.split()), len(sentence), sentence))
+    return shortest[: max(0, count)]
+
+
+def _build_opd_target_text(
+    *,
+    example: dict[str, Any],
+    hint_mode: str,
+) -> tuple[str | None, dict[str, Any]]:
+    benchmark_id = str(example.get("benchmark_id", "")).strip().lower()
+    answer_text = str(example.get("gold_answer", example.get("continuation", ""))).strip()
+    diagnostics: dict[str, Any] = {
+        "opd_hint_mode_requested": hint_mode,
+        "opd_hint_mode_effective": hint_mode,
+        "opd_target_context_available": False,
+    }
+    if benchmark_id == "gsm8k":
+        if hint_mode == "answer_only":
+            target_text = f"Answer: {answer_text}".strip()
+        else:
+            solution = str(example.get("solution", "")).strip()
+            rationale = _gsm8k_rationale_hint(
+                solution,
+                max_words=64 if hint_mode == "answer_plus_rationale64" else 48,
+            )
+            if rationale:
+                diagnostics["opd_target_context_available"] = True
+                target_text = f"Answer: {answer_text}\nRationale: {rationale}".strip()
+            else:
+                diagnostics["opd_hint_mode_effective"] = "answer_only"
+                target_text = f"Answer: {answer_text}".strip()
+        diagnostics["opd_target_label"] = "answer"
+        return (target_text or None), diagnostics
+    if benchmark_id == "triviaqa":
+        if hint_mode == "answer_only":
+            target_text = f"Answer: {answer_text}".strip()
+        else:
+            evidence_count = 1 if hint_mode == "answer_plus_evidence" else 2
+            evidence_sentences = _select_triviaqa_evidence_sentences(
+                example,
+                answer_text=answer_text,
+                count=evidence_count,
+            )
+            if evidence_sentences:
+                diagnostics["opd_target_context_available"] = True
+                evidence_block = " ".join(evidence_sentences).strip()
+                target_text = f"Answer: {answer_text}\nEvidence: {evidence_block}".strip()
+            else:
+                diagnostics["opd_hint_mode_effective"] = "answer_only"
+                target_text = f"Answer: {answer_text}".strip()
+        diagnostics["opd_target_label"] = "answer"
+        return (target_text or None), diagnostics
+    if benchmark_id == "fever":
+        label_text = answer_text or str(example.get("label", "")).replace("_", " ").title()
+        if hint_mode == "label_plus_evidence":
+            evidence_text = _truncate_hint_words(str(example.get("evidence", "")).strip(), max_words=48)
+            if evidence_text and "no gold evidence provided" not in evidence_text.lower():
+                diagnostics["opd_target_context_available"] = True
+                target_text = f"Label: {label_text}\nEvidence: {evidence_text}".strip()
+            else:
+                diagnostics["opd_hint_mode_effective"] = "label_only"
+                target_text = f"Label: {label_text}".strip()
+        else:
+            target_text = f"Label: {label_text}".strip()
+        diagnostics["opd_target_label"] = "label"
+        return (target_text or None), diagnostics
+    target_text = answer_text.strip()
+    diagnostics["opd_target_label"] = "answer"
+    return (target_text or None), diagnostics
+
+
+def _opd_target_cache(example_cache: SharedInjectionExampleCache, *, target_text: str) -> SharedInjectionExampleCache:
+    return SharedInjectionExampleCache(
+        example=example_cache.example,
+        candidate_labels=["opd_target"],
+        candidate_texts=[target_text],
+        gold_index=0,
+        raw_prompt_text=example_cache.raw_prompt_text,
+        prompt_text=example_cache.prompt_text,
+        writer_prompt_text=example_cache.writer_prompt_text,
+        prompt_variant=example_cache.prompt_variant,
+        evaluator_type=example_cache.evaluator_type,
+        task_mode="generation",
+    )
+
+
+def _score_opd_target(
+    *,
+    runtime: SharedInjectionPilotRuntime,
+    example_cache: SharedInjectionExampleCache,
+    target_text: str,
+    prompt_text: str,
+    support_text_block: str,
+    memory_tokens: torch.Tensor | None,
+    prefix_embeddings: torch.Tensor | None,
+    layer_prefix_hidden_by_layer: dict[int, torch.Tensor] | None,
+) -> torch.Tensor:
+    score_output = runtime.score_example(
+        _opd_target_cache(example_cache, target_text=target_text),
+        support_text_block=support_text_block,
+        memory_tokens=memory_tokens,
+        prefix_embeddings=prefix_embeddings,
+        layer_prefix_hidden_by_layer=layer_prefix_hidden_by_layer,
+        prompt_text_override=prompt_text,
+        return_diagnostics=False,
+    )
+    if isinstance(score_output, tuple):
+        score_tensor = score_output[0]
+    else:
+        score_tensor = score_output
+    return score_tensor[0]
+
+
+def _opd_aux_loss(
+    *,
+    mode: str,
+    active_target_score: torch.Tensor,
+    base_target_score: torch.Tensor,
+    teacher_target_score: torch.Tensor,
+    target_token_count: int,
+    center: float,
+    scale: float,
+    advantage_clip: float,
+) -> tuple[torch.Tensor | None, bool, dict[str, float]]:
+    active_score_fp32 = active_target_score.to(dtype=torch.float32)
+    base_score_fp32 = base_target_score.to(dtype=torch.float32)
+    teacher_score_fp32 = teacher_target_score.to(dtype=torch.float32)
+    token_count = max(1, int(target_token_count))
+    normalizer = torch.tensor(float(token_count), dtype=torch.float32, device=active_score_fp32.device)
+    active_logprob_per_token = active_score_fp32 / normalizer
+    base_logprob_per_token = base_score_fp32 / normalizer
+    teacher_logprob_per_token = teacher_score_fp32 / normalizer
+    advantage_raw = (teacher_logprob_per_token - base_logprob_per_token - float(center)) / max(float(scale), 1.0e-6)
+    if mode == "opd_token_ce":
+        clipped_advantage = advantage_raw.clamp(min=0.0, max=float(advantage_clip))
+    elif mode == "opd_token_ce_centered":
+        clipped_advantage = advantage_raw.clamp(min=-float(advantage_clip), max=float(advantage_clip))
+    elif mode == "off":
+        clipped_advantage = torch.zeros_like(advantage_raw)
+    else:
+        raise ValueError(f"Unsupported OPD alignment aux mode: {mode}.")
+    ce_per_token = (-active_score_fp32) / normalizer
+    diagnostics = {
+        "opd_target_logprob_per_token_active": float(active_logprob_per_token.detach().item()),
+        "opd_target_logprob_per_token_base": float(base_logprob_per_token.detach().item()),
+        "opd_target_logprob_per_token_teacher": float(teacher_logprob_per_token.detach().item()),
+        "opd_target_score_active": float(active_score_fp32.detach().item()),
+        "opd_target_score_base": float(base_score_fp32.detach().item()),
+        "opd_target_score_teacher": float(teacher_score_fp32.detach().item()),
+        "opd_mean_advantage": float(clipped_advantage.detach().item()),
+        "opd_positive_token_fraction": float((clipped_advantage.detach() > 0.0).to(torch.float32).item()),
+    }
+    if mode == "off":
+        return None, False, diagnostics
+    aux_loss = ce_per_token * clipped_advantage.to(device=active_score_fp32.device, dtype=torch.float32)
+    return aux_loss, bool(abs(float(clipped_advantage.detach().item())) > 1.0e-6), diagnostics
+
+
 def _cosine_anchor_loss(
     current: torch.Tensor,
     reference: torch.Tensor,
@@ -6235,6 +6554,15 @@ def run_shared_injection_pilot(
     alignment_aux_temperature = _resolve_alignment_aux_temperature(config)
     alignment_aux_advantage_center = _resolve_alignment_aux_advantage_center(config)
     alignment_aux_advantage_scale = _resolve_alignment_aux_advantage_scale(config)
+    opd_scope = _resolve_opd_scope(config)
+    opd_teacher_force_gold = _resolve_opd_teacher_force_gold(config)
+    opd_mask_mode = _resolve_opd_mask_mode(config)
+    opd_advantage_clip = _resolve_opd_advantage_clip(config)
+    opd_center = _resolve_opd_center(config)
+    opd_scale = _resolve_opd_scale(config)
+    opd_hint_mode_gsm8k = _resolve_opd_hint_mode(config, "gsm8k")
+    opd_hint_mode_triviaqa = _resolve_opd_hint_mode(config, "triviaqa")
+    opd_hint_mode_fever = _resolve_opd_hint_mode(config, "fever")
     init_checkpoint_path = _resolve_init_checkpoint_path(config)
     deep_prefix_layers = _resolve_deep_prefix_layers(config)
     deep_prefix_rank = _resolve_deep_prefix_rank(config)
@@ -6362,6 +6690,22 @@ def run_shared_injection_pilot(
     if trainable_variant == "writer_adapter_only" and not writer_adapter_enabled:
         raise ValueError(
             "runtime.pilot_trainable_variant=writer_adapter_only requires method.writer_adapter.enabled=true."
+        )
+    if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and opd_scope != "reader_only":
+        raise ValueError(
+            "runtime.pilot_alignment_aux_mode=opd_* currently requires runtime.pilot_opd_scope=reader_only."
+        )
+    if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and trainable_variant != "reader_only":
+        raise ValueError(
+            "runtime.pilot_alignment_aux_mode=opd_* currently requires runtime.pilot_trainable_variant=reader_only."
+        )
+    if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and not opd_teacher_force_gold:
+        raise ValueError(
+            "runtime.pilot_alignment_aux_mode=opd_* currently requires runtime.pilot_opd_teacher_force_gold=true."
+        )
+    if alignment_aux_mode in OPD_ALIGNMENT_AUX_MODES and opd_mask_mode != "target_only":
+        raise ValueError(
+            "runtime.pilot_alignment_aux_mode=opd_* currently supports only runtime.pilot_opd_mask_mode=target_only."
         )
     if arm in {"base_only", "teacher_text"} or writer_memory_control == "zero":
         train_steps = 0
@@ -7281,8 +7625,29 @@ def run_shared_injection_pilot(
                     "active_class_entropy": 0.0,
                     "teacher_class_entropy": 0.0,
                     "base_class_entropy": 0.0,
+                    "opd_target_score_active": 0.0,
+                    "opd_target_score_base": 0.0,
+                    "opd_target_score_teacher": 0.0,
+                    "opd_target_logprob_per_token_active": 0.0,
+                    "opd_target_logprob_per_token_base": 0.0,
+                    "opd_target_logprob_per_token_teacher": 0.0,
+                    "opd_mean_advantage": 0.0,
+                    "opd_positive_token_fraction": 0.0,
+                    "opd_target_text_chars": 0.0,
+                    "opd_target_token_count": 0.0,
+                    "opd_target_context_available": False,
+                    "opd_hint_mode_requested": "",
+                    "opd_hint_mode_effective": "",
+                    "opd_target_label": "",
                 }
-                if train_example.task_mode == "candidate_selection":
+                alignment_aux_allowed = not (
+                    alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
+                )
+                requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
+                if (
+                    requested_alignment_mode in {"teacher_margin", "teacher_choice_kl", "teacher_choice_js"}
+                    and train_example.task_mode == "candidate_selection"
+                ):
                     with torch.no_grad():
                         base_scores = runtime.backbone.score_continuations(
                             active_backbone_prompt_text,
@@ -7295,10 +7660,6 @@ def run_shared_injection_pilot(
                             ),
                             train_example.candidate_texts,
                         )
-                    alignment_aux_allowed = not (
-                        alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
-                    )
-                    requested_alignment_mode = alignment_aux_mode if alignment_aux_allowed else "off"
                     alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
                         mode=requested_alignment_mode,
                         active_scores=scores,
@@ -7318,6 +7679,65 @@ def run_shared_injection_pilot(
                         weighted_alignment_aux_loss = active_alignment_aux_weight * alignment_aux_loss
                         auxiliary_loss_terms.append(weighted_alignment_aux_loss)
                         loss = loss + weighted_alignment_aux_loss
+                elif requested_alignment_mode in OPD_ALIGNMENT_AUX_MODES:
+                    benchmark_id = str(train_example.example.get("benchmark_id", "")).strip().lower()
+                    hint_mode_by_benchmark = {
+                        "gsm8k": opd_hint_mode_gsm8k,
+                        "triviaqa": opd_hint_mode_triviaqa,
+                        "fever": opd_hint_mode_fever,
+                    }
+                    requested_hint_mode = hint_mode_by_benchmark.get(benchmark_id, "answer_only")
+                    target_text, target_diagnostics = _build_opd_target_text(
+                        example=train_example.example,
+                        hint_mode=requested_hint_mode,
+                    )
+                    alignment_aux_diagnostics.update(target_diagnostics)
+                    if target_text:
+                        target_token_count = max(1, runtime.backbone.count_tokens(target_text))
+                        alignment_aux_diagnostics["opd_target_text_chars"] = float(len(target_text))
+                        alignment_aux_diagnostics["opd_target_token_count"] = float(target_token_count)
+                        active_target_score = _score_opd_target(
+                            runtime=runtime,
+                            example_cache=train_example,
+                            target_text=target_text,
+                            prompt_text=active_backbone_prompt_text,
+                            support_text_block=teacher_support_text_block,
+                            memory_tokens=prefix_artifacts.memory_tokens,
+                            prefix_embeddings=prefix_artifacts.prefix_embeddings,
+                            layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+                        )
+                        with torch.no_grad():
+                            base_target_score = runtime.backbone.score_continuations(
+                                active_backbone_prompt_text,
+                                [target_text],
+                            )[0]
+                            teacher_target_score = runtime.backbone.score_continuations(
+                                _serialize_teacher_prompt(
+                                    active_backbone_prompt_text,
+                                    teacher_support_text_block,
+                                ),
+                                [target_text],
+                            )[0]
+                        alignment_aux_loss, alignment_aux_active, opd_diagnostics = _opd_aux_loss(
+                            mode=requested_alignment_mode,
+                            active_target_score=active_target_score,
+                            base_target_score=base_target_score,
+                            teacher_target_score=teacher_target_score,
+                            target_token_count=target_token_count,
+                            center=opd_center,
+                            scale=opd_scale,
+                            advantage_clip=opd_advantage_clip,
+                        )
+                        alignment_aux_diagnostics.update(opd_diagnostics)
+                        if (
+                            alignment_aux_mode != "off"
+                            and alignment_aux_allowed
+                            and active_alignment_aux_weight > 0.0
+                            and alignment_aux_loss is not None
+                        ):
+                            weighted_alignment_aux_loss = active_alignment_aux_weight * alignment_aux_loss
+                            auxiliary_loss_terms.append(weighted_alignment_aux_loss)
+                            loss = loss + weighted_alignment_aux_loss
                 aux_loss_total = (
                     torch.stack(auxiliary_loss_terms).sum()
                     if auxiliary_loss_terms
@@ -7986,6 +8406,30 @@ def run_shared_injection_pilot(
                     "active_class_entropy": float(alignment_aux_diagnostics["active_class_entropy"]),
                     "teacher_class_entropy": float(alignment_aux_diagnostics["teacher_class_entropy"]),
                     "base_class_entropy": float(alignment_aux_diagnostics["base_class_entropy"]),
+                    "opd_target_score_active": float(alignment_aux_diagnostics["opd_target_score_active"]),
+                    "opd_target_score_base": float(alignment_aux_diagnostics["opd_target_score_base"]),
+                    "opd_target_score_teacher": float(alignment_aux_diagnostics["opd_target_score_teacher"]),
+                    "opd_target_logprob_per_token_active": float(
+                        alignment_aux_diagnostics["opd_target_logprob_per_token_active"]
+                    ),
+                    "opd_target_logprob_per_token_base": float(
+                        alignment_aux_diagnostics["opd_target_logprob_per_token_base"]
+                    ),
+                    "opd_target_logprob_per_token_teacher": float(
+                        alignment_aux_diagnostics["opd_target_logprob_per_token_teacher"]
+                    ),
+                    "opd_mean_advantage": float(alignment_aux_diagnostics["opd_mean_advantage"]),
+                    "opd_positive_token_fraction": float(
+                        alignment_aux_diagnostics["opd_positive_token_fraction"]
+                    ),
+                    "opd_target_text_chars": float(alignment_aux_diagnostics["opd_target_text_chars"]),
+                    "opd_target_token_count": float(alignment_aux_diagnostics["opd_target_token_count"]),
+                    "opd_target_context_available": bool(
+                        alignment_aux_diagnostics["opd_target_context_available"]
+                    ),
+                    "opd_hint_mode_requested": str(alignment_aux_diagnostics["opd_hint_mode_requested"]),
+                    "opd_hint_mode_effective": str(alignment_aux_diagnostics["opd_hint_mode_effective"]),
+                    "opd_target_label": str(alignment_aux_diagnostics["opd_target_label"]),
                     "memory_slot_effective_rank": float(memory_slot_effective_rank),
                     "memory_long_effective_rank": float(memory_slot_effective_rank),
                     "memory_short_effective_rank": float(memory_short_effective_rank),
@@ -8718,6 +9162,16 @@ def run_shared_injection_pilot(
         "pilot_backbone_prompt_mask_mode": backbone_prompt_mask_mode,
         "pilot_writer_context_prompt_mode": writer_context_prompt_mode,
         "pilot_train_backbone_prompt_mask_schedule": train_backbone_prompt_mask_schedule,
+        "pilot_alignment_aux_mode": alignment_aux_mode,
+        "pilot_opd_scope": opd_scope,
+        "pilot_opd_teacher_force_gold": bool(opd_teacher_force_gold),
+        "pilot_opd_mask_mode": opd_mask_mode,
+        "pilot_opd_advantage_clip": float(opd_advantage_clip),
+        "pilot_opd_center": float(opd_center),
+        "pilot_opd_scale": float(opd_scale),
+        "pilot_opd_hint_mode_gsm8k": opd_hint_mode_gsm8k,
+        "pilot_opd_hint_mode_triviaqa": opd_hint_mode_triviaqa,
+        "pilot_opd_hint_mode_fever": opd_hint_mode_fever,
         "pilot_writer_stimulus_mode": runtime.writer_stimulus_mode,
         "pilot_writer_context_tokens": int(runtime.writer_context_tokens),
         "pilot_writer_adapter_enabled": bool(runtime.writer_adapter_enabled),
@@ -9057,6 +9511,45 @@ def run_shared_injection_pilot(
         "train_final_active_class_entropy": train_events[-1]["active_class_entropy"] if train_events else None,
         "train_final_teacher_class_entropy": train_events[-1]["teacher_class_entropy"] if train_events else None,
         "train_final_base_class_entropy": train_events[-1]["base_class_entropy"] if train_events else None,
+        "train_final_opd_target_score_active": (
+            train_events[-1]["opd_target_score_active"] if train_events else None
+        ),
+        "train_final_opd_target_score_base": (
+            train_events[-1]["opd_target_score_base"] if train_events else None
+        ),
+        "train_final_opd_target_score_teacher": (
+            train_events[-1]["opd_target_score_teacher"] if train_events else None
+        ),
+        "train_final_opd_target_logprob_per_token_active": (
+            train_events[-1]["opd_target_logprob_per_token_active"] if train_events else None
+        ),
+        "train_final_opd_target_logprob_per_token_base": (
+            train_events[-1]["opd_target_logprob_per_token_base"] if train_events else None
+        ),
+        "train_final_opd_target_logprob_per_token_teacher": (
+            train_events[-1]["opd_target_logprob_per_token_teacher"] if train_events else None
+        ),
+        "train_final_opd_mean_advantage": (
+            train_events[-1]["opd_mean_advantage"] if train_events else None
+        ),
+        "train_final_opd_positive_token_fraction": (
+            train_events[-1]["opd_positive_token_fraction"] if train_events else None
+        ),
+        "train_final_opd_target_text_chars": (
+            train_events[-1]["opd_target_text_chars"] if train_events else None
+        ),
+        "train_final_opd_target_token_count": (
+            train_events[-1]["opd_target_token_count"] if train_events else None
+        ),
+        "train_final_opd_target_context_available": (
+            train_events[-1]["opd_target_context_available"] if train_events else None
+        ),
+        "train_final_opd_hint_mode_requested": (
+            train_events[-1]["opd_hint_mode_requested"] if train_events else None
+        ),
+        "train_final_opd_hint_mode_effective": (
+            train_events[-1]["opd_hint_mode_effective"] if train_events else None
+        ),
         "train_final_memory_slot_effective_rank": (
             train_events[-1]["memory_slot_effective_rank"] if train_events else None
         ),
