@@ -18,6 +18,9 @@ V81_QUEUE_SESSION="${11:-planv8_q34_queue_v81}"
 SUPERWATCH_SESSION="${12:-planv8_q34_superwatch}"
 V81_RUN_ROOT="${13:-/root/autodl-tmp/runs/verify/planv8-v8-1-reader-interface-scout-qwen34}"
 V81_RESULT_ROOT="${14:-/root/autodl-tmp/results/generated/planv8-v8-1-reader-interface-scout-qwen34}"
+V80_REVIEW_NAMESPACE="${15:-planv8-v8-0-qwen34-baselines-oracles}"
+V80_DOC_PATH="${16:-docs/exec-plans/active/20260314-planv8-qwen34-restart.md}"
+V80_POST_COMMIT_MESSAGE="${17:-feat: complete planv8 qwen34 v8-0 baselines oracles}"
 
 mkdir -p "${V80_RUN_ROOT}" "${V80_RESULT_ROOT}" "${V81_RUN_ROOT}" "${V81_RESULT_ROOT}"
 
@@ -50,11 +53,11 @@ if ! tmux has-session -t "${V80_POST_SESSION}" 2>/dev/null; then
     "bash -lc 'while [ ! -f ${V80_RESULT_ROOT}/v8-0-summary.json ]; do sleep 30; done; \
      cd ${ROOT_DIR}; \
      bash scripts/publish_review_artifacts.sh; \
-     git add docs/exec-plans/active/20260314-planv8-qwen34-restart.md \
-       results/generated/review/planv8-v8-0-qwen34-baselines-oracles \
-       runs/review/planv8-v8-0-qwen34-baselines-oracles; \
+     git add ${V80_DOC_PATH} \
+       results/generated/review/${V80_REVIEW_NAMESPACE} \
+       runs/review/${V80_REVIEW_NAMESPACE}; \
      if ! git diff --cached --quiet; then \
-       git commit -m \"feat: complete planv8 qwen34 v8-0 baselines oracles\"; \
+       git commit -m \"${V80_POST_COMMIT_MESSAGE}\"; \
        gh auth setup-git; \
        git push origin main; \
        bash scripts/push_github_review_snapshot.sh; \

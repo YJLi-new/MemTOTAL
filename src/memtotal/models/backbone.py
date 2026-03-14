@@ -663,6 +663,28 @@ class BackboneWrapper(nn.Module):
             )
         return memory_tokens.to(device=self.device, dtype=self._resolve_torch_dtype())
 
+    def _match_memory_token_norm_to_content(
+        self,
+        memory_tokens: torch.Tensor,
+        *,
+        input_embeddings: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        if memory_tokens.numel() == 0 or input_embeddings.numel() == 0:
+            return memory_tokens
+        content_mask = attention_mask.to(device=input_embeddings.device, dtype=torch.float32).unsqueeze(-1)
+        valid_content_tokens = float(content_mask.sum().item())
+        if valid_content_tokens <= 0.0:
+            return memory_tokens
+        content_norms = input_embeddings.to(dtype=torch.float32).norm(dim=-1, keepdim=True)
+        target_norm = (content_norms * content_mask).sum(dim=1, keepdim=True) / content_mask.sum(
+            dim=1,
+            keepdim=True,
+        ).clamp_min(1.0)
+        memory_norms = memory_tokens.to(dtype=torch.float32).norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        scaled_memory = memory_tokens.to(dtype=torch.float32) * (target_norm / memory_norms)
+        return scaled_memory.to(dtype=memory_tokens.dtype)
+
     def _chunk_pool_hidden_states(
         self,
         hidden_states: torch.Tensor,
@@ -840,6 +862,11 @@ class BackboneWrapper(nn.Module):
             batch_size = encoded["input_ids"].shape[0]
             normalized_memory = self._normalize_memory_tokens(memory_tokens, batch_size=batch_size)
             input_embeddings = self.model.get_input_embeddings()(encoded["input_ids"])
+            normalized_memory = self._match_memory_token_norm_to_content(
+                normalized_memory,
+                input_embeddings=input_embeddings,
+                attention_mask=encoded["attention_mask"],
+            )
             model_kwargs = dict(encoded)
             model_kwargs.pop("input_ids")
             memory_mask = torch.ones(

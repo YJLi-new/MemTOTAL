@@ -483,6 +483,34 @@ class BackboneRealModeTest(unittest.TestCase):
 
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_prepend_memory_tokens_are_rescaled_to_content_embedding_norm(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen3-8B",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        memory_tokens = torch.full((1, 2, 8), 100.0, dtype=torch.float32)
+        model_kwargs, metadata = backbone._prepare_prefixed_hf_inputs(
+            ["Prompt"],
+            None,
+            None,
+            memory_tokens=memory_tokens,
+        )
+        self.assertEqual(int(metadata["prefix_length"]), 2)
+        inputs_embeds = model_kwargs["inputs_embeds"].to(dtype=torch.float32)
+        attention_mask = model_kwargs["attention_mask"].to(dtype=torch.bool)
+        prefix_norms = inputs_embeds[:, :2, :].norm(dim=-1)
+        content_norms = inputs_embeds[:, 2:, :].norm(dim=-1)
+        content_mean = content_norms[attention_mask[:, 2:]].mean()
+        for norm_value in prefix_norms.flatten():
+            self.assertAlmostEqual(float(norm_value.item()), float(content_mean.item()), places=5)
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
     def test_reader_cross_attn_state_dict_round_trip(self, _mock_model, _mock_tokenizer):
         backbone = BackboneWrapper(
             name="Qwen3-8B",

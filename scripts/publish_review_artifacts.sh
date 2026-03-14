@@ -216,6 +216,9 @@ sync_first_available "runs/review/planv8-v8-0-qwen3-baselines-oracles" \
   "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen3-baselines-oracles" \
   "/tmp/memtotal-runs/planv8-v8-0-qwen3-baselines-oracles"
 sync_first_available "runs/review/planv8-v8-0-qwen34-baselines-oracles" \
+  "runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1" \
+  "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles-r1" \
+  "/tmp/memtotal-runs/planv8-v8-0-qwen34-baselines-oracles-r1" \
   "runs/verify/planv8-v8-0-qwen34-baselines-oracles" \
   "/root/autodl-tmp/runs/verify/planv8-v8-0-qwen34-baselines-oracles" \
   "/tmp/memtotal-runs/planv8-v8-0-qwen34-baselines-oracles"
@@ -383,6 +386,9 @@ sync_first_available "results/generated/review/planv8-v8-0-qwen3-baselines-oracl
   "/root/autodl-tmp/results/generated/planv8-v8-0-qwen3-baselines-oracles" \
   "/tmp/memtotal-results/planv8-v8-0-qwen3-baselines-oracles"
 sync_first_available "results/generated/review/planv8-v8-0-qwen34-baselines-oracles" \
+  "results/generated/planv8-v8-0-qwen34-baselines-oracles-r1" \
+  "/root/autodl-tmp/results/generated/planv8-v8-0-qwen34-baselines-oracles-r1" \
+  "/tmp/memtotal-results/planv8-v8-0-qwen34-baselines-oracles-r1" \
   "results/generated/planv8-v8-0-qwen34-baselines-oracles" \
   "/root/autodl-tmp/results/generated/planv8-v8-0-qwen34-baselines-oracles" \
   "/tmp/memtotal-results/planv8-v8-0-qwen34-baselines-oracles"
