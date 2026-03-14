@@ -37,7 +37,11 @@ class RetrievalBaselineRuntime:
             device=runtime_device,
             dtype=str(backbone_cfg.get("dtype", "float32")),
             cache_dir=backbone_cfg.get("cache_dir"),
+            attn_implementation=backbone_cfg.get("attn_implementation"),
             max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
+            gradient_checkpointing=bool(backbone_cfg.get("gradient_checkpointing", False)),
+            use_chat_template=bool(backbone_cfg.get("use_chat_template", False)),
+            chat_template_enable_thinking=backbone_cfg.get("chat_template_enable_thinking"),
         )
         rag_cfg = baseline_cfg.get("rag", {})
         self.family = family
