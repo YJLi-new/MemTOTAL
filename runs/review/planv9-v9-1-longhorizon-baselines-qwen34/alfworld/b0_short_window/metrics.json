@@ -1,0 +1,12 @@
+{
+  "backbone": "Qwen3-4B",
+  "baseline_id": "b0_short_window",
+  "benchmark_id": "alfworld",
+  "examples_evaluated": 120,
+  "mean_invalid_resolution_count": 12.0,
+  "mean_steps_executed": 12.0,
+  "mode": "eval_alfworld_longhorizon",
+  "step_budget": 12,
+  "success_rate": 0.0,
+  "task_score": 0.0
+}

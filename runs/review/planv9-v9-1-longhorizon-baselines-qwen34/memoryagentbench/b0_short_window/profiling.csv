@@ -1,0 +1,2 @@
+event_name,device,examples,token_count,wall_time_sec,tokens_per_sec,peak_device_memory_bytes,peak_device_memory_mib,peak_rss_kb
+eval,cuda,100,263121,293.437533,896.684882,8709092864,8305.638184,4882860

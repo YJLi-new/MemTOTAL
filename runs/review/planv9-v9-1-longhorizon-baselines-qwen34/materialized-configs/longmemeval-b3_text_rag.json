@@ -1,0 +1,43 @@
+{
+  "backbone": {
+    "attn_implementation": "sdpa",
+    "cache_dir": "/root/autodl-tmp/hf-cache",
+    "chat_template_enable_thinking": false,
+    "dtype": "bfloat16",
+    "gradient_checkpointing": false,
+    "load_mode": "hf_causal_lm",
+    "max_new_tokens": 160,
+    "model_id": "/root/autodl-tmp/models/Qwen3-4B",
+    "name": "Qwen3-4B",
+    "use_chat_template": true
+  },
+  "baseline": {
+    "family": "rag",
+    "mode": "retrieval_augmented",
+    "rag": {
+      "include_answer_in_memory": false,
+      "memory_prefix": "Retrieved note",
+      "retriever": "lexical_overlap"
+    },
+    "support_examples": 4
+  },
+  "experiment": {
+    "method_variant": "b3_text_rag",
+    "name": "planv9_v9_1_longmemeval_b3_text_rag",
+    "stage": "V9-1"
+  },
+  "runtime": {
+    "device": "cuda",
+    "eval_examples": 100
+  },
+  "task": {
+    "dataset_path": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b3_rag_eval.jsonl",
+    "evaluator": {
+      "normalizer": "text",
+      "type": "qa_f1"
+    },
+    "metric_name": "f1",
+    "name": "planv9_v9_1_longmemeval",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b3_rag_support.jsonl"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "backbone": "Qwen3-4B",
+  "baseline_id": "b3_text_rag",
+  "benchmark_id": "alfworld",
+  "examples_evaluated": 120,
+  "mean_invalid_resolution_count": 2.825,
+  "mean_steps_executed": 11.991666666666667,
+  "mode": "eval_alfworld_longhorizon",
+  "step_budget": 12,
+  "success_rate": 0.008333333333333333,
+  "task_score": 0.008333333333333333
+}

@@ -1,0 +1,28 @@
+experiment:
+  name: planv9_v9_1_alfworld_b2_text_summary
+  stage: V9-1
+  method_variant: b2_text_summary
+runtime:
+  device: cuda
+  eval_examples: 120
+  max_steps: 12
+backbone:
+  name: Qwen3-4B
+  load_mode: hf_causal_lm
+  model_id: /root/autodl-tmp/models/Qwen3-4B
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+  attn_implementation: sdpa
+  use_chat_template: true
+  chat_template_enable_thinking: false
+  max_new_tokens: 64
+task:
+  name: planv9_v9_1_alfworld
+  metric_name: success_rate
+  evaluator:
+    type: exact_match
+    normalizer: action
+baseline:
+  family: prompting
+  mode: vanilla
+  baseline_id: b2_text_summary

@@ -1,0 +1,37 @@
+backbone:
+  attn_implementation: sdpa
+  cache_dir: /root/autodl-tmp/hf-cache
+  chat_template_enable_thinking: false
+  dtype: bfloat16
+  gradient_checkpointing: false
+  load_mode: hf_causal_lm
+  max_new_tokens: 160
+  model_id: /root/autodl-tmp/models/Qwen3-4B
+  name: Qwen3-4B
+  use_chat_template: true
+baseline:
+  family: prompting
+  mode: vanilla
+  rag:
+    include_answer_in_memory: false
+    memory_prefix: Retrieved note
+    retriever: lexical_overlap
+  support_examples: 0
+experiment:
+  method_variant: b2_text_summary
+  name: planv9_v9_1_memoryagentbench_b2_text_summary
+  stage: V9-1
+runtime:
+  device: cuda
+  eval_examples: 100
+task:
+  dataset_path: /root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b2_text_summary_eval.jsonl
+  evaluator:
+    normalizer: text
+    type: memoryagentbench
+  metric_name: memoryagent_score
+  name: planv9_v9_1_memoryagentbench
+  support_dataset_path: ''
+_meta:
+  config_path: /root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-configs/memoryagentbench-b2_text_summary.json
+  includes: []

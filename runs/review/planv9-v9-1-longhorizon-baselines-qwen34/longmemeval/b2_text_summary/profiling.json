@@ -1,0 +1,11 @@
+{
+  "device": "cuda",
+  "event_name": "eval",
+  "examples": 100,
+  "peak_device_memory_bytes": 9461572608,
+  "peak_device_memory_mib": 9023.258789,
+  "peak_rss_kb": 6303016,
+  "token_count": 929255,
+  "tokens_per_sec": 3106.68302,
+  "wall_time_sec": 299.114842
+}
