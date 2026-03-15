@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("HF_DATASETS_CACHE", "/root/.cache/huggingface/datasets")
+os.environ.setdefault("HF_HUB_CACHE", "/root/autodl-tmp/.cache/huggingface/hub")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
