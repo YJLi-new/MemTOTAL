@@ -273,6 +273,10 @@ sync_first_available "runs/review/planv8-v8-9-cdmi-qwen34" \
   "runs/verify/planv8-v8-9-cdmi-qwen34" \
   "/root/autodl-tmp/runs/verify/planv8-v8-9-cdmi-qwen34" \
   "/tmp/memtotal-runs/planv8-v8-9-cdmi-qwen34"
+sync_first_available "runs/review/planv9-v9-0-flashmem-discrimination-qwen34" \
+  "runs/verify/planv9-v9-0-flashmem-discrimination-qwen34" \
+  "/root/autodl-tmp/runs/verify/planv9-v9-0-flashmem-discrimination-qwen34" \
+  "/tmp/memtotal-runs/planv9-v9-0-flashmem-discrimination-qwen34"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-negative-count-sweep-v1" "runs/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-retrieval-loss-sweep-v1" "runs/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "/root/autodl-tmp/memtotal-stage-c-qonly-seed-sweep-v5-margin-canonical" "runs/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"
@@ -483,6 +487,10 @@ sync_first_available "results/generated/review/planv8-v8-9-cdmi-qwen34" \
   "results/generated/planv8-v8-9-cdmi-qwen34" \
   "/root/autodl-tmp/results/generated/planv8-v8-9-cdmi-qwen34" \
   "/tmp/memtotal-results/planv8-v8-9-cdmi-qwen34"
+sync_first_available "results/generated/review/planv9-v9-0-flashmem-discrimination-qwen34" \
+  "results/generated/planv9-v9-0-flashmem-discrimination-qwen34" \
+  "/root/autodl-tmp/results/generated/planv9-v9-0-flashmem-discrimination-qwen34" \
+  "/tmp/memtotal-results/planv9-v9-0-flashmem-discrimination-qwen34"
 sync_dir "results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-negative-count-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1" "results/generated/review/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1"
 sync_dir "results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical" "results/generated/review/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical"

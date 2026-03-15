@@ -75,6 +75,7 @@ ORACLE_SLOT_SOURCE_MODES = {
 }
 SEQUENCE_MEMORY_CONSUMER_MODES = {
     "legacy_prefix",
+    "precache_latent",
     "reader_lora_sequence",
     "reader_cross_attn",
 }
@@ -430,6 +431,10 @@ def _resolve_memory_consumer_mode(config: dict[str, Any]) -> str:
         "ri0": "legacy_prefix",
         "legacy": "legacy_prefix",
         "legacy_prefix": "legacy_prefix",
+        "flashmem": "precache_latent",
+        "flashmem_precache": "precache_latent",
+        "precache": "precache_latent",
+        "precache_latent": "precache_latent",
         "ri1": "reader_lora_sequence",
         "reader_lora_sequence": "reader_lora_sequence",
         "prepend_block": "reader_lora_sequence",

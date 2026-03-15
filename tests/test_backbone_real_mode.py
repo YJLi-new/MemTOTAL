@@ -164,10 +164,20 @@ class _FakeModel(torch.nn.Module):
             hidden + 0.1,
             hidden + 0.2,
         ]
+        returned_past = past_key_values
+        if use_cache:
+            from transformers.cache_utils import DynamicCache
+
+            returned_past = past_key_values if past_key_values is not None else DynamicCache()
+            key_states = hidden[..., :4].view(batch, seq, 1, 4).transpose(1, 2).contiguous()
+            value_states = hidden[..., 4:8].view(batch, seq, 1, 4).transpose(1, 2).contiguous()
+            for layer_index in range(self.config.num_hidden_layers):
+                returned_past.update(key_states, value_states, layer_index)
         return types.SimpleNamespace(
             logits=logits,
             hidden_states=hidden_states,
             attentions=tuple(attentions) if attentions is not None else None,
+            past_key_values=returned_past,
         )
 
     def generate(
@@ -508,6 +518,48 @@ class BackboneRealModeTest(unittest.TestCase):
         content_mean = content_norms[attention_mask[:, 2:]].mean()
         for norm_value in prefix_norms.flatten():
             self.assertAlmostEqual(float(norm_value.item()), float(content_mean.item()), places=5)
+
+    @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
+    @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())
+    def test_real_mode_supports_precached_latent_memory(self, _mock_model, _mock_tokenizer):
+        backbone = BackboneWrapper(
+            name="Qwen3-8B",
+            load_mode="hf_causal_lm",
+            hidden_size=None,
+            seed=123,
+            model_id="fake/model",
+            device="cpu",
+            dtype="float32",
+        )
+        memory_tokens = torch.full((1, 2, 8), 25.0, dtype=torch.float32)
+        baseline_scores = backbone.score_continuations("Prompt", ["good ending", "bad"])
+        precached_scores, diagnostics = backbone.score_continuations(
+            "Prompt",
+            ["good ending", "bad"],
+            memory_tokens=memory_tokens,
+            memory_consumer_mode="precache_latent",
+            return_diagnostics=True,
+        )
+        self.assertEqual(list(precached_scores.shape), [2])
+        self.assertEqual(diagnostics["memory_consumer_mode"], "precache_latent")
+        self.assertEqual(int(diagnostics["prefix_length"]), 2)
+        self.assertEqual(int(diagnostics["cache_growth_tokens"]), 2)
+        self.assertEqual(diagnostics["diagnostic_layers"], [0, 1])
+        self.assertFalse(torch.equal(baseline_scores, precached_scores))
+
+        encoded = backbone._prepare_hf_inputs(["Prompt"])
+        model_kwargs, metadata = backbone._prepare_precached_latent_hf_inputs(encoded, memory_tokens)
+        self.assertEqual(int(metadata["prefix_length"]), 2)
+        self.assertEqual(int(metadata["cache_growth_tokens"]), 2)
+        self.assertEqual(int(model_kwargs["past_key_values"].get_seq_length()), 2)
+
+        generations = backbone.generate(
+            ["Prompt"],
+            memory_tokens=memory_tokens,
+            memory_consumer_mode="precache_latent",
+        )
+        self.assertEqual(len(generations), 1)
+        self.assertTrue(generations[0])
 
     @mock.patch("transformers.AutoTokenizer.from_pretrained", return_value=_FakeTokenizer())
     @mock.patch("transformers.AutoModelForCausalLM.from_pretrained", return_value=_FakeModel())

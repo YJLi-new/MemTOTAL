@@ -882,7 +882,8 @@ class BackboneWrapper(nn.Module):
                     "prefix_length": int(normalized_memory.shape[1]),
                     "token_logit_slice_start": int(normalized_memory.shape[1]),
                     "attention_query_offset": int(normalized_memory.shape[1]),
-                    "diagnostic_layers": [max(0, int(getattr(self.model.config, "num_hidden_layers", 1)) - 1)],
+                    "diagnostic_layers": list(range(max(1, int(getattr(self.model.config, "num_hidden_layers", 1))))),
+                    "cache_growth_tokens": int(normalized_memory.shape[1]),
                 }
             )
             return model_kwargs, metadata
@@ -918,11 +919,68 @@ class BackboneWrapper(nn.Module):
                     "prefix_length": int(prefix_embeddings.shape[1]),
                     "token_logit_slice_start": int(prefix_embeddings.shape[1]),
                     "attention_query_offset": int(prefix_embeddings.shape[1]),
-                    "diagnostic_layers": [max(0, int(getattr(self.model.config, "num_hidden_layers", 1)) - 1)],
+                    "diagnostic_layers": list(range(max(1, int(getattr(self.model.config, "num_hidden_layers", 1))))),
+                    "cache_growth_tokens": int(prefix_embeddings.shape[1]),
                 }
             )
             return model_kwargs, metadata
         return self._prepare_deep_prefixed_hf_inputs(encoded, layer_prefix_hidden_by_layer or {})
+
+    def _prepare_precached_latent_hf_inputs(
+        self,
+        encoded: dict[str, torch.Tensor],
+        memory_tokens: torch.Tensor,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self.model is None:
+            raise RuntimeError("Real backbone model is not initialized.")
+        batch_size, query_length = encoded["input_ids"].shape
+        normalized_memory = self._normalize_memory_tokens(memory_tokens, batch_size=batch_size)
+        input_embeddings = self.model.get_input_embeddings()(encoded["input_ids"])
+        normalized_memory = self._match_memory_token_norm_to_content(
+            normalized_memory,
+            input_embeddings=input_embeddings,
+            attention_mask=encoded["attention_mask"],
+        )
+        prefix_length = int(normalized_memory.shape[1])
+        memory_mask = torch.ones(
+            batch_size,
+            prefix_length,
+            dtype=encoded["attention_mask"].dtype,
+            device=self.device,
+        )
+        with torch.inference_mode():
+            memory_outputs = self.model(
+                inputs_embeds=normalized_memory,
+                attention_mask=memory_mask,
+                cache_position=torch.arange(prefix_length, device=self.device),
+                use_cache=True,
+            )
+        past_key_values = getattr(memory_outputs, "past_key_values", None)
+        if past_key_values is None:
+            raise RuntimeError(
+                "precache_latent requires a backbone forward that returns past_key_values when use_cache=True."
+            )
+        model_kwargs: dict[str, Any] = {
+            "input_ids": encoded["input_ids"],
+            "attention_mask": torch.cat([memory_mask, encoded["attention_mask"]], dim=1),
+            "past_key_values": past_key_values,
+            "cache_position": torch.arange(
+                prefix_length,
+                prefix_length + query_length,
+                device=self.device,
+            ),
+            "use_cache": True,
+        }
+        metadata = {
+            "prefix_length": prefix_length,
+            "score_input_ids": encoded["input_ids"],
+            "score_attention_mask": encoded["attention_mask"],
+            "token_logit_slice_start": 0,
+            "attention_query_offset": 0,
+            "diagnostic_layers": list(range(max(1, int(getattr(self.model.config, "num_hidden_layers", 1))))),
+            "cache_growth_tokens": prefix_length,
+        }
+        return model_kwargs, metadata
 
     def _decoder_layers(self) -> list[nn.Module]:
         if self.model is None:
@@ -1484,10 +1542,14 @@ class BackboneWrapper(nn.Module):
             raise RuntimeError("Real backbone is not initialized.")
         prompt_with_sep = prompt if prompt.endswith((" ", "\n", "\t")) else f"{prompt} "
         full_texts = [f"{prompt_with_sep}{candidate_text}" for candidate_text in candidate_texts]
-        if memory_tokens is not None and memory_consumer_mode not in {"prepend_block", "reader_cross_attn"}:
+        if memory_tokens is not None and memory_consumer_mode not in {
+            "prepend_block",
+            "precache_latent",
+            "reader_cross_attn",
+        }:
             raise ValueError(
                 f"Unsupported memory_consumer_mode={memory_consumer_mode}. "
-                "Expected one of prepend_block, reader_cross_attn."
+                "Expected one of prepend_block, precache_latent, reader_cross_attn."
             )
         if memory_tokens is not None and memory_consumer_mode == "reader_cross_attn":
             model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
@@ -1495,6 +1557,12 @@ class BackboneWrapper(nn.Module):
                 None,
                 None,
                 apply_chat_template=self.use_chat_template,
+            )
+        elif memory_tokens is not None and memory_consumer_mode == "precache_latent":
+            encoded = self._prepare_hf_inputs(full_texts, apply_chat_template=self.use_chat_template)
+            model_kwargs, metadata = self._prepare_precached_latent_hf_inputs(
+                encoded,
+                memory_tokens,
             )
         else:
             model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
@@ -1580,6 +1648,7 @@ class BackboneWrapper(nn.Module):
             "prefix_attention_mass_by_candidate_by_layer": attention_by_layer,
             "diagnostic_layers": diagnostic_layers,
             "memory_consumer_mode": str(memory_consumer_mode),
+            "cache_growth_tokens": int(metadata.get("cache_growth_tokens", prefix_length)),
         }
         if memory_tokens is not None and memory_consumer_mode == "reader_cross_attn":
             reader_cross_attn_by_layer = self.reader_cross_attn_diagnostics()
@@ -1625,10 +1694,14 @@ class BackboneWrapper(nn.Module):
                 raise ValueError("memory_tokens and prefix_embeddings are mutually exclusive.")
             if layer_prefix_hidden_by_layer is not None and memory_tokens is not None:
                 raise ValueError("memory_tokens and layer_prefix_hidden_by_layer are mutually exclusive.")
-            if memory_tokens is not None and memory_consumer_mode not in {"prepend_block", "reader_cross_attn"}:
+            if memory_tokens is not None and memory_consumer_mode not in {
+                "prepend_block",
+                "precache_latent",
+                "reader_cross_attn",
+            }:
                 raise ValueError(
                     f"Unsupported memory_consumer_mode={memory_consumer_mode}. "
-                    "Expected one of prepend_block, reader_cross_attn."
+                    "Expected one of prepend_block, precache_latent, reader_cross_attn."
                 )
             model_kwargs: dict[str, Any]
             prompt_attention_mask: torch.Tensor
@@ -1636,6 +1709,13 @@ class BackboneWrapper(nn.Module):
                 encoded = self._prepare_hf_inputs(prompt_list, apply_chat_template=self.use_chat_template)
                 model_kwargs = dict(encoded)
                 prompt_attention_mask = encoded["attention_mask"]
+            elif memory_tokens is not None and memory_consumer_mode == "precache_latent":
+                encoded = self._prepare_hf_inputs(prompt_list, apply_chat_template=self.use_chat_template)
+                model_kwargs, metadata = self._prepare_precached_latent_hf_inputs(
+                    encoded,
+                    memory_tokens,
+                )
+                prompt_attention_mask = metadata["score_attention_mask"]
             elif prefix_embeddings is not None or layer_prefix_hidden_by_layer is not None or memory_tokens is not None:
                 model_kwargs, metadata = self._prepare_prefixed_hf_inputs(
                     prompt_list,
