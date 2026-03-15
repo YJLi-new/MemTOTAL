@@ -76,8 +76,46 @@ def _load_v76_reference(path: Path) -> dict[str, Any]:
     }
 
 
-def _load_v86_reference(path: Path) -> dict[str, Any]:
-    payload = _load_json(path)
+def _load_v83_reference_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    best_arm_id = str(payload.get("best_arm_id") or payload.get("base_for_v8_4_arm_id") or "").strip()
+    arm_payload = payload.get("arm_summaries", {}).get(best_arm_id, {})
+    task_scores: dict[str, float] = {}
+    route_live: dict[str, bool] = {}
+    prompt_variants: dict[str, str] = {}
+    for task_name in ALL_TASKS:
+        task_payload = arm_payload.get("tasks", {}).get(task_name, {})
+        if task_payload:
+            task_scores[task_name] = _safe_float(task_payload.get("task_score"))
+            route_live[task_name] = bool(task_payload.get("route_live", False))
+            prompt_variant = str(task_payload.get("prompt_variant", "")).strip()
+            if prompt_variant:
+                prompt_variants[task_name] = prompt_variant
+    return {
+        "comparator_id": "m4_best_v8_qwen34",
+        "scope": "planv8_best_route_reference",
+        "source_phase": "V8-3",
+        "best_arm_id": best_arm_id,
+        "selected_interface_family": str(
+            payload.get("selected_interface_family_for_v8_7")
+            or payload.get("selected_interface_family_for_v8_4")
+            or payload.get("best_interface_family")
+            or ""
+        ).strip(),
+        "selected_bridge_family": str(payload.get("selected_bridge_family_for_v8_7") or "BR0").strip() or "BR0",
+        "selected_aux_family": str(
+            payload.get("selected_aux_family_for_v8_7")
+            or payload.get("selected_aux_family_for_v8_4")
+            or payload.get("best_alignment_aux_mode")
+            or "reader_opd"
+        ).strip(),
+        "task_scores": task_scores,
+        "route_live_by_task": route_live,
+        "prompt_variants": prompt_variants,
+        "recommended_next_step": str(payload.get("recommended_next_step", "")).strip(),
+    }
+
+
+def _load_v86_reference_payload(payload: dict[str, Any]) -> dict[str, Any]:
     best_arm_id = str(
         payload.get("base_for_v8_7_arm_id")
         or payload.get("best_arm_id")
@@ -98,6 +136,7 @@ def _load_v86_reference(path: Path) -> dict[str, Any]:
     return {
         "comparator_id": "m4_best_v8_qwen34",
         "scope": "planv8_best_route_reference",
+        "source_phase": "V8-6",
         "best_arm_id": best_arm_id,
         "selected_interface_family": str(payload.get("selected_interface_family_for_v8_7", "")).strip(),
         "selected_bridge_family": str(payload.get("selected_bridge_family_for_v8_7", "")).strip(),
@@ -107,6 +146,16 @@ def _load_v86_reference(path: Path) -> dict[str, Any]:
         "prompt_variants": prompt_variants,
         "recommended_next_step": str(payload.get("recommended_next_step", "")).strip(),
     }
+
+
+def _load_best_v8_reference(path: Path) -> dict[str, Any]:
+    payload = _load_json(path)
+    phase = str(payload.get("phase", "")).strip()
+    if phase == "V8-3":
+        return _load_v83_reference_payload(payload)
+    if phase == "V8-6":
+        return _load_v86_reference_payload(payload)
+    raise ValueError(f"Unsupported PLANv8 comparator source phase: {phase!r}")
 
 
 def _load_rag_reference(result_root: Path) -> dict[str, Any]:
@@ -178,13 +227,13 @@ def build_summary(
     result_root: Path,
     v80_summary_path: Path,
     v76_summary_path: Path,
-    v86_summary_path: Path,
+    best_v8_summary_path: Path,
 ) -> dict[str, Any]:
     floor = _load_v80_reference(v80_summary_path)
     rag = _load_rag_reference(result_root)
     memgen = _load_memgen_reference(result_root)
     legacy = _load_v76_reference(v76_summary_path)
-    best_v8 = _load_v86_reference(v86_summary_path)
+    best_v8 = _load_best_v8_reference(best_v8_summary_path)
 
     best_vs_floor = _pairwise_delta(best_v8, floor)
     best_vs_rag = _pairwise_delta(best_v8, rag)
@@ -226,6 +275,7 @@ def build_summary(
         "comparison_conclusion": comparison_conclusion,
         "recommended_next_step": recommended_next_step,
         "base_for_v8_8_arm_id": best_v8["best_arm_id"],
+        "base_for_v8_8_source_phase": best_v8["source_phase"],
         "selected_interface_family_for_v8_8": best_v8["selected_interface_family"],
         "selected_bridge_family_for_v8_8": best_v8["selected_bridge_family"],
         "selected_aux_family_for_v8_8": best_v8["selected_aux_family"],
@@ -253,6 +303,7 @@ def write_report(summary: dict[str, Any], output_path: Path) -> None:
         f"- Comparison conclusion: `{summary['comparison_conclusion']}`",
         f"- Recommended next step: `{summary['recommended_next_step']}`",
         f"- Base arm for V8-8: `{summary['base_for_v8_8_arm_id']}`",
+        f"- Base source phase for V8-8: `{summary['base_for_v8_8_source_phase']}`",
         f"- Route-live primary task count: `{summary['route_live_primary_task_count']}`",
         "",
         "## Comparator Deltas",
@@ -278,7 +329,7 @@ def main() -> int:
     parser.add_argument("--result_root", required=True)
     parser.add_argument("--v80_summary", required=True)
     parser.add_argument("--v76_summary", required=True)
-    parser.add_argument("--v86_summary", required=True)
+    parser.add_argument("--best_v8_summary", required=True)
     parser.add_argument("--output_json", required=True)
     parser.add_argument("--output_report", required=True)
     args = parser.parse_args()
@@ -287,7 +338,7 @@ def main() -> int:
         result_root=Path(args.result_root),
         v80_summary_path=Path(args.v80_summary),
         v76_summary_path=Path(args.v76_summary),
-        v86_summary_path=Path(args.v86_summary),
+        best_v8_summary_path=Path(args.best_v8_summary),
     )
     output_json = Path(args.output_json)
     output_json.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

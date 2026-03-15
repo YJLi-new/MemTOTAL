@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+run_clean_network() {
+  env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy "$@"
+}
+
 BRANCH_NAME="${1:-review}"
 REMOTE_NAME="${2:-origin}"
 REVIEW_TMPDIR="${MEMTOTAL_REVIEW_TMPDIR:-}"
@@ -41,11 +45,11 @@ fi
 touch "${SNAPSHOT_ROOT}/.nojekyll"
 git -C "${SNAPSHOT_ROOT}" add .
 git -C "${SNAPSHOT_ROOT}" commit -m "review snapshot from ${SOURCE_COMMIT}" >/dev/null
-git -C "${SNAPSHOT_ROOT}" push --force origin "HEAD:${BRANCH_NAME}"
+run_clean_network git -C "${SNAPSHOT_ROOT}" push --force origin "HEAD:${BRANCH_NAME}"
 
 if [[ "${SET_DEFAULT_BRANCH}" == "1" ]] && command -v gh >/dev/null 2>&1; then
-  REPO_SLUG="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
-  gh api "repos/${REPO_SLUG}" -X PATCH -F "default_branch=${BRANCH_NAME}" >/dev/null
+  REPO_SLUG="$(run_clean_network gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+  run_clean_network gh api "repos/${REPO_SLUG}" -X PATCH -F "default_branch=${BRANCH_NAME}" >/dev/null
 fi
 
 echo "review snapshot pushed"

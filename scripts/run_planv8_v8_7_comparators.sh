@@ -17,7 +17,7 @@ PRIMARY_MODEL_DIR="${4:-${PRIMARY_MODEL_DIR_DEFAULT}}"
 V80_SUMMARY_PATH="${5:-results/generated/review/planv8-v8-0-${PRIMARY_BACKBONE_KEY}-baselines-oracles/v8-0-summary.json}"
 SELECTED_PROMPTS_PATH="${6:-results/generated/review/planv8-v8-0-${PRIMARY_BACKBONE_KEY}-baselines-oracles/selected-prompt-modes.json}"
 V76_SUMMARY_PATH="${7:-results/generated/review/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json}"
-V86_SUMMARY_PATH="${8:-results/generated/review/planv8-v8-6-writer-aux-${PRIMARY_BACKBONE_KEY}/v8-6-summary.json}"
+BEST_V8_SUMMARY_PATH="${8:-results/generated/review/planv8-v8-6-writer-aux-${PRIMARY_BACKBONE_KEY}/v8-6-summary.json}"
 
 export HF_HOME="${HF_HOME:-/root/autodl-tmp/hf-cache}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}}"
@@ -32,18 +32,24 @@ MANIFEST_ROOT="${RUN_ROOT}/materialized-manifests"
 CONFIG_ROOT="${RUN_ROOT}/materialized-configs"
 mkdir -p "${DATA_ROOT}" "${SOURCE_ROOT}" "${MANIFEST_ROOT}" "${CONFIG_ROOT}"
 
-python - "${V86_SUMMARY_PATH}" <<'PY'
+BEST_V8_PHASE="$(
+python - "${BEST_V8_SUMMARY_PATH}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 summary = json.loads(Path(sys.argv[1]).read_text())
+phase = str(summary.get("phase", "")).strip()
 next_step = str(summary.get("recommended_next_step", "")).strip()
 if next_step != "open_v8_7_comparators":
     raise SystemExit(
-        f"V8-6 did not authorize V8-7; recommended_next_step={next_step!r}"
+        f"Best V8 summary did not authorize V8-7; recommended_next_step={next_step!r}"
     )
+if phase not in {"V8-3", "V8-6"}:
+    raise SystemExit(f"Best V8 summary must come from V8-3 or V8-6; phase={phase!r}")
+print(phase)
 PY
+)"
 
 SPLIT_PLAN_JSON="${MANIFEST_ROOT}/v8-7-split-plan.json"
 python - <<'PY' "${SPLIT_PLAN_JSON}"
@@ -96,7 +102,12 @@ bash "${PRIMARY_PREP_SCRIPT}" \
 
 cp "${V80_SUMMARY_PATH}" "${RESULT_ROOT}/v8-0-summary.reference.json"
 cp "${V76_SUMMARY_PATH}" "${RESULT_ROOT}/v7-6-summary.reference.json"
-cp "${V86_SUMMARY_PATH}" "${RESULT_ROOT}/v8-6-summary.reference.json"
+cp "${BEST_V8_SUMMARY_PATH}" "${RESULT_ROOT}/best-v8-summary.reference.json"
+if [[ "${BEST_V8_PHASE}" == "V8-3" ]]; then
+  cp "${BEST_V8_SUMMARY_PATH}" "${RESULT_ROOT}/v8-3-summary.reference.json"
+else
+  cp "${BEST_V8_SUMMARY_PATH}" "${RESULT_ROOT}/v8-6-summary.reference.json"
+fi
 if [[ -f "${SELECTED_PROMPTS_PATH}" ]]; then
   cp "${SELECTED_PROMPTS_PATH}" "${RESULT_ROOT}/selected-prompt-modes.json"
 fi
@@ -174,7 +185,7 @@ python scripts/update_planv8_v8_7_summary.py \
   --result_root "${RESULT_ROOT}" \
   --v80_summary "${V80_SUMMARY_PATH}" \
   --v76_summary "${V76_SUMMARY_PATH}" \
-  --v86_summary "${V86_SUMMARY_PATH}" \
+  --best_v8_summary "${BEST_V8_SUMMARY_PATH}" \
   --output_json "${RESULT_ROOT}/v8-7-summary.json" \
   --output_report "${RESULT_ROOT}/v8-7-summary.md"
 

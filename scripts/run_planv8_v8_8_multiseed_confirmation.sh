@@ -54,102 +54,27 @@ bash "${PRIMARY_PREP_SCRIPT}" \
   "${HF_HOME}"
 
 SELECTION_MANIFEST="${MANIFEST_ROOT}/selection-manifest.json"
-python - "${V83_SUMMARY_PATH}" "${V85_SUMMARY_PATH}" "${V86_SUMMARY_PATH}" "${V87_SUMMARY_PATH}" "${V83_RUN_ROOT}" "${V85_RUN_ROOT}" "${V86_RUN_ROOT}" "${SELECTION_MANIFEST}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-v83_summary = json.loads(Path(sys.argv[1]).read_text())
-v85_summary = json.loads(Path(sys.argv[2]).read_text())
-v86_summary = json.loads(Path(sys.argv[3]).read_text())
-v87_summary = json.loads(Path(sys.argv[4]).read_text())
-v83_run_root = str(Path(sys.argv[5]).resolve())
-v85_run_root = str(Path(sys.argv[6]).resolve())
-v86_run_root = str(Path(sys.argv[7]).resolve())
-output_path = Path(sys.argv[8])
-
-if str(v87_summary.get("recommended_next_step", "")).strip() != "open_v8_8_multiseed_confirmation":
-    raise SystemExit("V8-7 summary does not authorize V8-8.")
-
-variants = []
-best_reader_arm = str(v83_summary.get("base_for_v8_4_arm_id") or v83_summary.get("best_arm_id") or "").strip()
-if best_reader_arm:
-    variants.append(
-        {
-            "variant_id": "c1_reader_opd",
-            "source_phase": "V8-3",
-            "source_run_root": v83_run_root,
-            "arm_id": best_reader_arm,
-            "interface_family": str(v83_summary.get("selected_interface_family_for_v8_4", "")).strip(),
-            "bridge_family": "BR0",
-            "auxiliary_family": str(v83_summary.get("selected_aux_family_for_v8_4", "reader_opd")).strip() or "reader_opd",
-        }
-    )
-
-best_current_arm = str(v86_summary.get("base_for_v8_7_arm_id") or v86_summary.get("best_arm_id") or "").strip()
-if best_current_arm:
-    variants.append(
-        {
-            "variant_id": "c2_best_writer_route",
-            "source_phase": "V8-6",
-            "source_run_root": v86_run_root,
-            "arm_id": best_current_arm,
-            "interface_family": str(v86_summary.get("selected_interface_family_for_v8_7", "")).strip(),
-            "bridge_family": str(v86_summary.get("selected_bridge_family_for_v8_7", "")).strip(),
-            "auxiliary_family": str(v86_summary.get("selected_aux_family_for_v8_7", "")).strip(),
-        }
-    )
-
-bridge_best_arm = str(v85_summary.get("best_arm_id", "")).strip()
-bridge_is_distinct = str(v86_summary.get("best_arm_id", "")).strip() != "a0_none"
-if (
-    bridge_best_arm
-    and bridge_best_arm != "b0_no_bridge"
-    and bool(v85_summary.get("best_arm_acceptance_qualified", False))
-    and bridge_is_distinct
-):
-    variants.append(
-        {
-            "variant_id": "c3_bridge_route",
-            "source_phase": "V8-5",
-            "source_run_root": v85_run_root,
-            "arm_id": bridge_best_arm,
-            "interface_family": str(v85_summary.get("selected_interface_family_for_v8_6", "")).strip(),
-            "bridge_family": str(v85_summary.get("selected_bridge_family_for_v8_6", "")).strip(),
-            "auxiliary_family": "bridge_compressed",
-        }
-    )
-
-deduped = []
-seen = set()
-for row in variants:
-    key = (row["source_phase"], row["arm_id"])
-    if key in seen:
-        continue
-    seen.add(key)
-    deduped.append(row)
-
-if not deduped:
-    raise SystemExit("No V8-8 confirmation candidates were available.")
-
-payload = {
-    "phase": "V8-8",
-    "seeds": [61109, 61110, 61111],
-    "promoted_variants": deduped,
-    "v87_comparison_conclusion": str(v87_summary.get("comparison_conclusion", "")).strip(),
-    "v87_recommended_next_step": str(v87_summary.get("recommended_next_step", "")).strip(),
-    "base_for_v8_8_arm_id": str(v87_summary.get("base_for_v8_8_arm_id", "")).strip(),
-}
-output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-PY
+python scripts/planv8_v8_8_selection_manifest.py \
+  --v83_summary "${V83_SUMMARY_PATH}" \
+  --v83_run_root "${V83_RUN_ROOT}" \
+  --v87_summary "${V87_SUMMARY_PATH}" \
+  --output_json "${SELECTION_MANIFEST}" \
+  --v85_summary "${V85_SUMMARY_PATH}" \
+  --v85_run_root "${V85_RUN_ROOT}" \
+  --v86_summary "${V86_SUMMARY_PATH}" \
+  --v86_run_root "${V86_RUN_ROOT}"
 
 if [[ -f "${SELECTED_PROMPTS_PATH}" ]]; then
   cp "${SELECTED_PROMPTS_PATH}" "${RESULT_ROOT}/selected-prompt-modes.json"
 fi
 cp "${V80_SUMMARY_PATH}" "${RESULT_ROOT}/v8-0-summary.reference.json"
 cp "${V83_SUMMARY_PATH}" "${RESULT_ROOT}/v8-3-summary.reference.json"
-cp "${V85_SUMMARY_PATH}" "${RESULT_ROOT}/v8-5-summary.reference.json"
-cp "${V86_SUMMARY_PATH}" "${RESULT_ROOT}/v8-6-summary.reference.json"
+if [[ -f "${V85_SUMMARY_PATH}" ]]; then
+  cp "${V85_SUMMARY_PATH}" "${RESULT_ROOT}/v8-5-summary.reference.json"
+fi
+if [[ -f "${V86_SUMMARY_PATH}" ]]; then
+  cp "${V86_SUMMARY_PATH}" "${RESULT_ROOT}/v8-6-summary.reference.json"
+fi
 cp "${V87_SUMMARY_PATH}" "${RESULT_ROOT}/v8-7-summary.reference.json"
 cp "${SELECTION_MANIFEST}" "${RESULT_ROOT}/selection-manifest.json"
 

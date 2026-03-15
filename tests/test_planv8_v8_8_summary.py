@@ -178,6 +178,47 @@ class PlanV8V88SummaryTest(unittest.TestCase):
             self.assertEqual(summary["recommended_next_step"], "hold_v8_9_confirmation_review")
             self.assertEqual(summary["best_confirmed_variant_id"], "")
 
+    def test_build_summary_supports_single_reader_only_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result_root = root / "results"
+            v80_summary = root / "v8-0-summary.json"
+            v87_summary = root / "v8-7-summary.json"
+            selection_manifest = root / "selection-manifest.json"
+            self._write_v80_summary(v80_summary)
+            self._write_v87_summary(v87_summary)
+            self._write_json(
+                selection_manifest,
+                {
+                    "seeds": [61109, 61110, 61111],
+                    "promoted_variants": [
+                        {
+                            "variant_id": "c1_reader_opd",
+                            "source_phase": "V8-3",
+                            "arm_id": "p5_opd_ansplusctx_centered",
+                            "interface_family": "ri0_legacy_prefix",
+                            "bridge_family": "BR0",
+                            "auxiliary_family": "opd_token_ce_centered",
+                        }
+                    ],
+                },
+            )
+
+            for seed in (61109, 61110, 61111):
+                self._write_task(result_root, "c1_reader_opd", seed, "gsm8k", task_score=0.81)
+                self._write_task(result_root, "c1_reader_opd", seed, "triviaqa", task_score=0.03)
+                self._write_task(result_root, "c1_reader_opd", seed, "fever", task_score=0.79)
+
+            summary = build_summary(
+                result_root=result_root,
+                selection_manifest_path=selection_manifest,
+                v80_summary_path=v80_summary,
+                v87_summary_path=v87_summary,
+            )
+
+            self.assertEqual(summary["recommended_next_step"], "open_v8_9_cdmi")
+            self.assertEqual(summary["best_confirmed_variant_id"], "c1_reader_opd")
+
 
 if __name__ == "__main__":
     unittest.main()

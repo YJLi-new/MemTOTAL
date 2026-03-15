@@ -189,10 +189,9 @@ fi
 if ! tmux has-session -t "${V87_QUEUE_SESSION}" 2>/dev/null; then
   tmux new-session -d -s "${V87_QUEUE_SESSION}" \
     "cd ${ROOT_DIR} && \
-     bash scripts/queue_planv8_qwen34_v8_7_after_v8_6.sh \
+     bash scripts/queue_planv8_qwen34_v8_7_after_v8_3.sh \
        ${BASE_SEED} \
-       ${V86_RUN_ROOT} \
-       ${V86_RESULT_ROOT} \
+       ${V83_RESULT_ROOT} \
        ${V87_RUN_ROOT} \
        ${V87_RESULT_ROOT} \
        ${QWEN34_MODEL_DIR}"

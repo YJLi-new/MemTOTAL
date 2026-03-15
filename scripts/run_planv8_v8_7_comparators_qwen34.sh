@@ -18,4 +18,4 @@ bash scripts/run_planv8_v8_7_comparators.sh \
   "${5:-results/generated/review/planv8-v8-0-qwen34-baselines-oracles/v8-0-summary.json}" \
   "${6:-results/generated/review/planv8-v8-0-qwen34-baselines-oracles/selected-prompt-modes.json}" \
   "${7:-results/generated/review/planv7-lr75e5-v7-6-multiseed-confirmation-qwen25/v7-6-summary.json}" \
-  "${8:-results/generated/review/planv8-v8-6-writer-aux-qwen34/v8-6-summary.json}"
+  "${8:-results/generated/review/planv8-v8-3-reader-opd-qwen34/v8-3-summary.json}"
