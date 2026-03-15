@@ -45,7 +45,7 @@ fi
 touch "${SNAPSHOT_ROOT}/.nojekyll"
 git -C "${SNAPSHOT_ROOT}" add .
 git -C "${SNAPSHOT_ROOT}" commit -m "review snapshot from ${SOURCE_COMMIT}" >/dev/null
-run_clean_network git -C "${SNAPSHOT_ROOT}" push --force origin "HEAD:${BRANCH_NAME}"
+run_clean_network git -c http.version=HTTP/1.1 -C "${SNAPSHOT_ROOT}" push --force origin "HEAD:${BRANCH_NAME}"
 
 if [[ "${SET_DEFAULT_BRANCH}" == "1" ]] && command -v gh >/dev/null 2>&1; then
   REPO_SLUG="$(run_clean_network gh repo view --json nameWithOwner --jq '.nameWithOwner')"

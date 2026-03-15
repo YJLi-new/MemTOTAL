@@ -65,8 +65,8 @@ if ! tmux has-session -t "${POST_SESSION}" 2>/dev/null; then
        runs/review/planv8-v8-3-reader-opd-qwen34; \
      if ! git diff --cached --quiet; then \
        git commit -m \"feat: complete planv8 qwen34 v8-3 reader opd\"; \
-       gh auth setup-git; \
-       git push origin main; \
-       bash scripts/push_github_review_snapshot.sh; \
+       env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy gh auth setup-git; \
+       env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy git -c http.version=HTTP/1.1 push origin main; \
+       env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy bash scripts/push_github_review_snapshot.sh; \
      fi' > ${V83_RUN_ROOT}/postpublish.log 2>&1"
 fi
