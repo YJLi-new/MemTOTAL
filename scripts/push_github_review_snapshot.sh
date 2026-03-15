@@ -8,6 +8,24 @@ run_clean_network() {
   env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy "$@"
 }
 
+
+push_review_branch() {
+  local snapshot_root="$1"
+  local branch_name="$2"
+  local attempt=1
+  local max_attempts=4
+  while (( attempt <= max_attempts )); do
+    if run_clean_network git -c http.version=HTTP/1.1 -C "${snapshot_root}" push --force origin "HEAD:${branch_name}"; then
+      return 0
+    fi
+    if (( attempt == max_attempts )); then
+      return 1
+    fi
+    sleep $(( attempt * 5 ))
+    attempt=$(( attempt + 1 ))
+  done
+}
+
 BRANCH_NAME="${1:-review}"
 REMOTE_NAME="${2:-origin}"
 REVIEW_TMPDIR="${MEMTOTAL_REVIEW_TMPDIR:-}"
@@ -45,7 +63,7 @@ fi
 touch "${SNAPSHOT_ROOT}/.nojekyll"
 git -C "${SNAPSHOT_ROOT}" add .
 git -C "${SNAPSHOT_ROOT}" commit -m "review snapshot from ${SOURCE_COMMIT}" >/dev/null
-run_clean_network git -c http.version=HTTP/1.1 -C "${SNAPSHOT_ROOT}" push --force origin "HEAD:${BRANCH_NAME}"
+push_review_branch "${SNAPSHOT_ROOT}" "${BRANCH_NAME}"
 
 if [[ "${SET_DEFAULT_BRANCH}" == "1" ]] && command -v gh >/dev/null 2>&1; then
   REPO_SLUG="$(run_clean_network gh repo view --json nameWithOwner --jq '.nameWithOwner')"
