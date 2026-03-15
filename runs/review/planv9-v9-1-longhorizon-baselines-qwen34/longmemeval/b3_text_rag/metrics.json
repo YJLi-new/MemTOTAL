@@ -1,0 +1,19 @@
+{
+  "accuracy": 0.0,
+  "backbone": "Qwen3-4B",
+  "baseline_family": "rag",
+  "baseline_mode": "retrieval_augmented",
+  "baseline_retriever": "lexical_overlap",
+  "benchmark_id": null,
+  "evaluator_type": "qa_f1",
+  "examples_evaluated": 100,
+  "f1": 0.13872499624765772,
+  "mean_score": 0.13872499624765772,
+  "mean_support_retrieval_score": 0.05491076066206788,
+  "metric_name": "f1",
+  "mode": "eval_baseline_rag_grouped_pool",
+  "support_examples_requested": 4,
+  "support_pool_size_mean": 48.18,
+  "task_domain": null,
+  "task_score": 0.13872499624765772
+}

@@ -1,0 +1,20 @@
+{
+  "fever": {
+    "eval_examples": 48,
+    "source_examples": 256,
+    "support_examples": 8,
+    "train_examples": 48
+  },
+  "gsm8k": {
+    "eval_examples": 64,
+    "source_examples": 136,
+    "support_examples": 8,
+    "train_examples": 64
+  },
+  "triviaqa": {
+    "eval_examples": 64,
+    "source_examples": 136,
+    "support_examples": 8,
+    "train_examples": 64
+  }
+}

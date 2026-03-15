@@ -1,0 +1,12 @@
+includes:
+  - tl_poc_fever_qwen25_single_level_sl8.yaml
+
+experiment:
+  name: tl_poc_fever_qwen25_dynamics_recovery_sl8
+  stage: TL-PoC
+  method_variant: fever-tl-poc-dynamics-sl8
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl
+

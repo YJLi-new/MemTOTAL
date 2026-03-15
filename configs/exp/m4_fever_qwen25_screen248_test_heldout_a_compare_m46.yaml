@@ -1,0 +1,9 @@
+includes:
+  - m4_fever_qwen25_screen248_test_heldout_a_gate_m46_common.yaml
+
+experiment:
+  name: m4_fever_qwen25_screen248_test_heldout_a_compare_m46
+  method_variant: fever-screen248-test-heldout-a-compare-m46
+
+runtime:
+  analysis_mode: m4_shared_injection_compare

@@ -1,0 +1,23 @@
+includes:
+  - ../tasks/toy_meta_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: m3_stage_b_qwen25_smoke
+  stage: M3-stage-b
+  method_variant: ours-stage-b-meta-queries
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  training_stage: stage_b
+  query_learning_mode: meta_trained
+  meta_episodes: 6
+  inner_steps: 2
+  inner_learning_rate: 0.2
+  meta_learning_rate: 0.4
+  device: cpu

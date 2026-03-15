@@ -1,0 +1,16 @@
+{
+  "analysis_mode": "m4_writer_information_audit",
+  "base_margin": -8.739530039747478e-05,
+  "base_run_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25/pilot-A-base-only",
+  "base_task_score": 0.25,
+  "phase0_support_has_value": false,
+  "phase1_gate_passed": false,
+  "probe_gate_passed": false,
+  "probe_results_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25/writer-audit/probe_results.csv",
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25/writer-audit/report.md",
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25/writer-audit/summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25/writer-audit/summary.svg",
+  "teacher_margin": -0.9794906545430422,
+  "teacher_run_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-shared-injection-qwen25/pilot-T-teacher-text",
+  "teacher_task_score": 0.25
+}

@@ -1,0 +1,10 @@
+task:
+  name: memoryagentbench_real_smoke
+  benchmark_id: memoryagentbench
+  domain: agent
+  split: eval
+  smoke_subset: hf_real_smoke4_trunc512
+  dataset_path: data/benchmarks/materialized/memoryagentbench/eval-real-smoke4.jsonl
+  metric_name: memoryagent_score
+  evaluator:
+    type: memoryagentbench

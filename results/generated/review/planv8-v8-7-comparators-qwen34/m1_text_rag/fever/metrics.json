@@ -1,0 +1,19 @@
+{
+  "accuracy": 0.4166666666666667,
+  "backbone": "Qwen3-4B",
+  "baseline_family": "rag",
+  "baseline_mode": "retrieval_augmented",
+  "baseline_retriever": "lexical_overlap",
+  "benchmark_id": "fever",
+  "evaluator_type": "multiple_choice",
+  "examples_evaluated": 48,
+  "macro_f1": 0.4166666666666667,
+  "mean_score": 0.4166666666666667,
+  "mean_support_retrieval_score": 0.2910784240460373,
+  "metric_name": "accuracy",
+  "mode": "eval_baseline_rag_split_pool",
+  "support_examples_requested": 8,
+  "support_pool_size": 8,
+  "task_domain": "qa",
+  "task_score": 0.4166666666666667
+}

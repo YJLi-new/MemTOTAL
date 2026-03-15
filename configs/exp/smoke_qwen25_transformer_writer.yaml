@@ -1,0 +1,20 @@
+includes:
+  - ../tasks/toy_reasoning_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: smoke_qwen25_transformer_writer
+  stage: M2
+  method_variant: ours-transformer-writer-bootstrap
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  train_steps: 4
+  eval_examples: 4
+  learning_rate: 0.01
+  device: cpu

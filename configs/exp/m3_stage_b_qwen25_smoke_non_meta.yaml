@@ -1,0 +1,11 @@
+includes:
+  - m3_stage_b_qwen25_smoke.yaml
+
+experiment:
+  name: m3_stage_b_qwen25_smoke_non_meta
+  method_variant: ours-stage-b-non-meta-multitask-reader
+
+runtime:
+  query_learning_mode: non_meta_multitask
+  multitask_steps: 6
+  multitask_learning_rate: 0.2

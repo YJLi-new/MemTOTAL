@@ -1,0 +1,14 @@
+includes:
+  - tl_poc_fever_qwen25_bridge_h4_k8.yaml
+  - ../tasks/benchmarks/pilots/fever_screen248_test_m46_heldout_a.yaml
+
+experiment:
+  name: tl_poc_fever_qwen25_screen248_test_heldout_a_gate_bridge_h4_k8
+  stage: TL-PoC
+  method_variant: fever-tl-poc-screen248-heldout-a-h4-k8
+
+runtime:
+  pilot_init_checkpoint_path: ""
+  pilot_train_steps: 0
+  pilot_projector_warmup_steps: 0
+

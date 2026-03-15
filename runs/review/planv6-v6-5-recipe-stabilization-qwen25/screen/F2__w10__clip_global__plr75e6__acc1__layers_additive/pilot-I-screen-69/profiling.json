@@ -1,0 +1,11 @@
+{
+  "device": "cuda",
+  "event_name": "train",
+  "examples": 264,
+  "peak_device_memory_bytes": 8142756352,
+  "peak_device_memory_mib": 7765.537598,
+  "peak_rss_kb": 3981012,
+  "token_count": 79044,
+  "tokens_per_sec": 807.97768,
+  "wall_time_sec": 97.829435
+}

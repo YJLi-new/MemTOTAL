@@ -1,0 +1,10 @@
+experiment:
+  name: m4_fever_qwen25_compare_m47
+  stage: M4-shared-injection
+  method_variant: fever-compare-m47
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+
+runtime:
+  analysis_mode: m4_shared_injection_compare

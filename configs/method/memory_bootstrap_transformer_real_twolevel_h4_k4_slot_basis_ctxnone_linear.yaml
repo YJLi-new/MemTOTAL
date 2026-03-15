@@ -1,0 +1,6 @@
+includes:
+  - memory_bootstrap_transformer_real_twolevel_h4_k4_slot_basis_ctxnone.yaml
+
+method:
+  fuser:
+    arch: linear

@@ -1,0 +1,26 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: baseline_prompt_tuning_story_cloze_qwen25_real_smoke
+  stage: M5
+  method_variant: baseline-prompt-tuning
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: adapter
+  mode: prompt_tuning
+  support_examples: 2
+  prompt_tuning:
+    prompt_tokens: 4
+
+runtime:
+  train_steps: 4
+  eval_examples: 4
+  learning_rate: 0.05
+  device: cpu

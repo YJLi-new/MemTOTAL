@@ -1,0 +1,21 @@
+includes:
+  - ../tasks/toy_reasoning_smoke.yaml
+  - ../method/memory_bootstrap.yaml
+
+experiment:
+  name: smoke_qwen3_bootstrap
+  stage: M0
+  method_variant: ours-bootstrap
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  train_steps: 4
+  eval_examples: 4
+  learning_rate: 0.01
+  device: cpu
+

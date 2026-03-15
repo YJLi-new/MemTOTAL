@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/m4_fever_qwen25_phase2_compare.yaml",
+    "--seed",
+    "9625",
+    "--output_dir",
+    "results/generated/m4-fever-shared-injection-qwen25-v5/phase2-compare",
+    "--input_root",
+    "runs/verify/m4-fever-shared-injection-qwen25-v5/phase2-selected"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "m4_fever_qwen25_phase2_compare",
+  "git_hash": "063092bc880192e65400ecf397437bf07c606858",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-phase2-compare",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 9625,
+  "smoke_subset": "real_fixed64",
+  "stage": "M4-shared-injection",
+  "task_domain": "qa",
+  "task_name": "fever_real_fixed64",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T18:27:20.176122+00:00",
+  "torch_version": "2.8.0+cu128"
+}

@@ -1,0 +1,19 @@
+{
+  "accuracy": 0.125,
+  "backbone": "Qwen3-4B",
+  "baseline_family": "rag",
+  "baseline_mode": "retrieval_augmented",
+  "baseline_retriever": "lexical_overlap",
+  "benchmark_id": "triviaqa",
+  "evaluator_type": "exact_match",
+  "exact_match": 0.125,
+  "examples_evaluated": 64,
+  "mean_score": 0.125,
+  "mean_support_retrieval_score": 0.17992982788226905,
+  "metric_name": "exact_match",
+  "mode": "eval_baseline_rag_split_pool",
+  "support_examples_requested": 8,
+  "support_pool_size": 8,
+  "task_domain": "qa",
+  "task_score": 0.125
+}

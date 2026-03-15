@@ -1,0 +1,27 @@
+includes:
+  - ../tasks/benchmarks/story_cloze_smoke.yaml
+
+experiment:
+  name: baseline_lora_story_cloze_qwen25_smoke
+  stage: M5
+  method_variant: baseline-lora
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: adapter
+  mode: lora
+  support_examples: 1
+  lora:
+    rank: 4
+    alpha: 8.0
+
+runtime:
+  train_steps: 4
+  eval_examples: 2
+  learning_rate: 0.05
+  device: cpu

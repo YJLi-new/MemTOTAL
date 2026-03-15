@@ -1,0 +1,5 @@
+flip_count,flip_count_delta,left_alias,mean_margin_gain,mean_proxy_gain,mean_task_gain,paired_examples,regression_count,right_alias
+0,0,A,-0.0002198028564453125,3.770552916556591e-05,0.0,100,0,B
+0,0,A,0.0016285324096679688,0.00023484499303563528,0.0,100,0,C
+0,0,C,-5.245208740234375e-08,4.5178534741063814e-09,0.0,100,0,D
+0,0,C,3.814697265625e-08,0.0,0.0,100,0,E

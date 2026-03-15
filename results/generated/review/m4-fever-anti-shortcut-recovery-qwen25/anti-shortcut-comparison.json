@@ -1,0 +1,17 @@
+{
+  "comparison_conclusion": "run_a_equals_run_b",
+  "run_a_cap_saturation_onset_step": 80,
+  "run_a_dominant_label_collapse_onset_step": 4,
+  "run_a_fixed64_gate_passed": false,
+  "run_a_primary_gate_passed": false,
+  "run_a_selected_step": null,
+  "run_a_selection_passed": false,
+  "run_a_support_bank_brittle": false,
+  "run_b_cap_saturation_onset_step": 80,
+  "run_b_dominant_label_collapse_onset_step": 4,
+  "run_b_fixed64_gate_passed": false,
+  "run_b_primary_gate_passed": false,
+  "run_b_selected_step": null,
+  "run_b_selection_passed": false,
+  "run_b_support_bank_brittle": false
+}

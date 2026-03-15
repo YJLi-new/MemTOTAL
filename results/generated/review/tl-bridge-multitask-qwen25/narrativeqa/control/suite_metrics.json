@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "A",
+      "arm": "base_only",
+      "macro_f1": 0.2857142857142857,
+      "subdir": "pilot-A-selected",
+      "task_score": 0.2857142857142857,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "task_native",
+  "selected_support_serialization": "example_blocks_raw8"
+}

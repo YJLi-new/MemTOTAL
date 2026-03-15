@@ -1,0 +1,20 @@
+{
+  "best_adapt_macro_f1": 0.5294117647058824,
+  "best_adapt_task_margin": 0.10450554033741355,
+  "best_adapt_task_score": 0.53125,
+  "dominant_label_fraction": 0.6875,
+  "label_recall_by_class": {
+    "REFUTES": 0.3958333333333333,
+    "SUPPORTS": 0.9375
+  },
+  "pilot_arm_alias": "T",
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "teacher_text",
+  "step": 0,
+  "support_serialization_variant": "example_blocks_raw8",
+  "support_text_block_chars": 1988,
+  "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-T-selected/snapshot_evals/step_0000/task_case_dump.jsonl",
+  "task_case_dump_rows": 64,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "real"
+}

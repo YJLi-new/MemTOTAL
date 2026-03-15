@@ -1,0 +1,5 @@
+{
+  "conversations.txt": "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/m2_memgen-triviaqa/memgen_raw/conversations.txt",
+  "launcher.json": "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/m2_memgen-triviaqa/memgen_raw/launcher.json",
+  "log.txt": "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/m2_memgen-triviaqa/memgen_raw/log.txt"
+}

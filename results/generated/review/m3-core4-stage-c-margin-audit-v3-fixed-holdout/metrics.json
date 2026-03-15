@@ -1,0 +1,98 @@
+{
+  "analysis_mode": "m3_stage_c_margin_audit",
+  "audit_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-margin-audit-v3-fixed-holdout/audit_rows.csv",
+  "audit_svg": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-margin-audit-v3-fixed-holdout/audit_summary.svg",
+  "by_backbone": {
+    "Qwen2.5-1.5B-Instruct": {
+      "cross_zero_margin_rate": 0.0,
+      "margin_improves_rate": 0.6,
+      "mean_final_margin_gap_to_flip": 0.016980339359078146,
+      "mean_final_task_margin": 0.0008962441028820126,
+      "mean_margin_gap_closed": 0.00037459296484788283,
+      "mean_total_margin_gain": 0.000408685911032889,
+      "mean_zero_shot_margin_gap_to_flip": 0.017354932323926025,
+      "mean_zero_shot_task_margin": 0.00048755819184912363,
+      "seed_count": 5,
+      "target_split_policies": [
+        "random"
+      ]
+    },
+    "Qwen3-8B": {
+      "cross_zero_margin_rate": 0.0,
+      "margin_improves_rate": 0.8,
+      "mean_final_margin_gap_to_flip": 0.04383234733508693,
+      "mean_final_task_margin": -0.02171063315537241,
+      "mean_margin_gap_closed": 7.209728161493741e-05,
+      "mean_total_margin_gain": 7.55603114763876e-05,
+      "mean_zero_shot_margin_gap_to_flip": 0.043904444616701864,
+      "mean_zero_shot_task_margin": -0.021786193466848798,
+      "seed_count": 5,
+      "target_split_policies": [
+        "random"
+      ]
+    }
+  },
+  "by_backbone_negative_only": {
+    "Qwen2.5-1.5B-Instruct": {
+      "cross_zero_margin_rate": 0.0,
+      "margin_improves_rate": 1.0,
+      "mean_final_margin_gap_to_flip": 0.04245084839769536,
+      "mean_final_task_margin": -0.04245084839769536,
+      "mean_margin_gap_closed": 0.000936482412119707,
+      "mean_total_margin_gain": 0.000936482412119707,
+      "mean_zero_shot_margin_gap_to_flip": 0.043387330809815064,
+      "mean_zero_shot_task_margin": -0.043387330809815064,
+      "seed_count": 2,
+      "target_split_policies": [
+        "random"
+      ]
+    },
+    "Qwen3-8B": {
+      "cross_zero_margin_rate": 0.0,
+      "margin_improves_rate": 1.0,
+      "mean_final_margin_gap_to_flip": 0.07305391222514489,
+      "mean_final_task_margin": -0.07305391222514489,
+      "mean_margin_gap_closed": 0.00012016213602489567,
+      "mean_total_margin_gain": 0.00012016213602489567,
+      "mean_zero_shot_margin_gap_to_flip": 0.07317407436116978,
+      "mean_zero_shot_task_margin": -0.07317407436116978,
+      "seed_count": 3,
+      "target_split_policies": [
+        "random"
+      ]
+    }
+  },
+  "by_backbone_non_negative_only": {
+    "Qwen2.5-1.5B-Instruct": {
+      "cross_zero_margin_rate": 0.0,
+      "margin_improves_rate": 0.3333333333333333,
+      "mean_final_margin_gap_to_flip": 0.0,
+      "mean_final_task_margin": 0.029794305769933593,
+      "mean_margin_gap_closed": 0.0,
+      "mean_total_margin_gain": 5.6821576975010314e-05,
+      "mean_zero_shot_margin_gap_to_flip": 0.0,
+      "mean_zero_shot_task_margin": 0.029737484192958585,
+      "seed_count": 3,
+      "target_split_policies": [
+        "random"
+      ]
+    },
+    "Qwen3-8B": {
+      "cross_zero_margin_rate": 0.0,
+      "margin_improves_rate": 0.5,
+      "mean_final_margin_gap_to_flip": 0.0,
+      "mean_final_task_margin": 0.055304285449286304,
+      "mean_margin_gap_closed": 0.0,
+      "mean_total_margin_gain": 8.657574653625488e-06,
+      "mean_zero_shot_margin_gap_to_flip": 0.0,
+      "mean_zero_shot_task_margin": 0.05529562787463268,
+      "seed_count": 2,
+      "target_split_policies": [
+        "random"
+      ]
+    }
+  },
+  "input_root": "/root/autodl-tmp/memtotal-stage-c-curve-suite-v3-fixed-holdout",
+  "mode": "analysis",
+  "rows_collected": 10
+}

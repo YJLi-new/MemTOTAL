@@ -1,0 +1,9 @@
+{
+  "analysis_mode": "story_cloze_real_pilot_split",
+  "eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/screen-eval248.jsonl",
+  "eval_examples": 248,
+  "manifest_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/screen-split-manifest.json",
+  "source_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/story_cloze/eval-real-smoke256.jsonl",
+  "support_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/pilot-support8.jsonl",
+  "support_examples": 8
+}

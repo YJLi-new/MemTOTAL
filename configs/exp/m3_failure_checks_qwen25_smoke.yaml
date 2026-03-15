@@ -1,0 +1,32 @@
+includes:
+  - ../tasks/toy_meta_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: m3_failure_checks_qwen25_smoke
+  stage: M3-failure-checks
+  method_variant: ours-m3-failure-checks
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  analysis_mode: m3_failure_checks
+  expected_query_learning_mode: meta_trained
+  device: cpu
+  failure_checks:
+    eval_domains:
+      - math
+      - code
+      - qa
+      - narrative
+    max_examples_per_domain: 2
+    writer_noise_trials: 8
+    thresholds:
+      reader_memory_loss_gap_min: 0.001
+      writer_noise_loss_gap_min: 0.001
+      fuser_slot_diversity_min: 0.001
+      fuser_collapse_loss_gap_min: 0.001

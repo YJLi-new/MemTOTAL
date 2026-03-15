@@ -1,0 +1,40 @@
+{
+  "fever": {
+    "selected_arm_id": "b4_q34_fever_nonthink",
+    "selected_prompt_variant": "answer_slot_labels"
+  },
+  "gsm8k": {
+    "arm_scores": {
+      "b0_q34_gsm8k_nonthink": {
+        "macro_f1": 0.8125,
+        "prompt_variant": "q3_gsm8k_nonthink",
+        "task_score": 0.8125
+      },
+      "b1_q34_gsm8k_think_boxed": {
+        "macro_f1": 0.1875,
+        "prompt_variant": "q3_gsm8k_think_boxed",
+        "task_score": 0.1875
+      }
+    },
+    "selected_arm_id": "b0_q34_gsm8k_nonthink",
+    "selected_prompt_variant": "q3_gsm8k_nonthink",
+    "task_name": "gsm8k"
+  },
+  "triviaqa": {
+    "arm_scores": {
+      "b2_q34_trivia_nonthink": {
+        "macro_f1": 0.03125,
+        "prompt_variant": "q3_trivia_nonthink",
+        "task_score": 0.03125
+      },
+      "b3_q34_trivia_think": {
+        "macro_f1": 0.015625,
+        "prompt_variant": "q3_trivia_think",
+        "task_score": 0.015625
+      }
+    },
+    "selected_arm_id": "b2_q34_trivia_nonthink",
+    "selected_prompt_variant": "q3_trivia_nonthink",
+    "task_name": "triviaqa"
+  }
+}

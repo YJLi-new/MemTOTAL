@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/tl_writer_value_fever_qwen25_dynamics_recovery_slot_query_only_partition_none_linear_h4_k4.yaml",
+    "--seed",
+    "27191",
+    "--output_dir",
+    "/root/autodl-tmp/results/generated/tl-writer-value-fever-qwen25/v1-slot-query-only-partition-none-linear-h4-k4/dynamics-recovery",
+    "--input_root",
+    "/root/autodl-tmp/runs/verify/tl-writer-value-fever-qwen25/v1-slot-query-only-partition-none-linear-h4-k4"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "tl_writer_value_fever_qwen25_dynamics_recovery_slot_query_only_partition_none_linear_h4_k4",
+  "git_hash": "97386c4755170e55d2dedc822109a71606bffabd",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-tl-writer-v1-dynamics-slot-query-only-partition-none-linear-h4-k4",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 27191,
+  "smoke_subset": "real_screen_val_m46_canonical",
+  "stage": "TL-Writer-Value-V1",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_val_m46_canonical",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-09T03:55:30.195596+00:00",
+  "torch_version": "2.8.0+cu128"
+}

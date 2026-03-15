@@ -1,0 +1,84 @@
+{
+  "fever": {
+    "eval": {
+      "ids": [
+        "70041",
+        "202314"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/fever/eval.jsonl",
+      "rows": 2
+    },
+    "support": {
+      "ids": [
+        "126173",
+        "15542",
+        "164502",
+        "182701",
+        "224140",
+        "47848"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/fever/support.jsonl",
+      "rows": 6
+    },
+    "train": {
+      "ids": [
+        "113501",
+        "163803"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/fever/train.jsonl",
+      "rows": 2
+    }
+  },
+  "gsm8k": {
+    "eval": {
+      "ids": [
+        "gsm8k-6",
+        "gsm8k-7"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/gsm8k/eval.jsonl",
+      "rows": 2
+    },
+    "support": {
+      "ids": [
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/gsm8k/support.jsonl",
+      "rows": 4
+    },
+    "train": {
+      "ids": [
+        "gsm8k-4",
+        "gsm8k-5"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/gsm8k/train.jsonl",
+      "rows": 2
+    }
+  },
+  "narrativeqa": {
+    "eval": {
+      "ids": [
+        "00fb61fa7bee266ad995e52190ebb73606b60b70-q3"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/eval.jsonl",
+      "rows": 1
+    },
+    "support": {
+      "ids": [
+        "00fb61fa7bee266ad995e52190ebb73606b60b70-q0",
+        "00fb61fa7bee266ad995e52190ebb73606b60b70-q1"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/support.jsonl",
+      "rows": 2
+    },
+    "train": {
+      "ids": [
+        "00fb61fa7bee266ad995e52190ebb73606b60b70-q2"
+      ],
+      "path": "/root/autodl-tmp/runs/verify/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/train.jsonl",
+      "rows": 1
+    }
+  }
+}

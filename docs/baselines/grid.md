@@ -1,0 +1,150 @@
+# Baseline Grid Smoke
+
+本文件记录 `M5` 当前最小 baseline `shot/step` grid smoke。
+
+## Scope
+
+- 任务：`story_cloze` real-source smoke
+- backbones:
+  - `Qwen2.5-1.5B-Instruct`
+  - `Qwen3-8B`
+- families:
+  - `prompting`
+  - `meta_prompting`
+  - `rag`
+  - `memory_bank`
+  - `lightthinker`
+  - `adapter`
+- 当前 smoke 网格：
+  - `shots = {0, 2}`
+  - `steps = {0, 4}`
+
+说明：
+
+- `prompting / meta_prompting / rag / lightthinker` 当前只有 `step=0`
+- `adapter` 当前支持 `shot=0, step=0` 的 zero-adaptation init 点
+- `adapter` 的 `shot=0, step>0` 会被自动剪掉，因为没有 support 数据可更新
+- grid runner 现已支持 `grid.imports`，用于把外部 baseline 的既有评测点导入同一条 `adapt_curve.csv`
+- `grid.imports` 现已支持 `allow_missing: true`
+  - 当前会把未就绪的外部点记入 `adapt_cost.json.skipped_import_count`
+  - 当前会把未就绪的外部点记入 `grid_plan.json.skipped_imports`
+- grid runner 现已支持 `grid.reuse_existing_runs`，可在同一输出目录上复用已有 `train/eval` 产物，避免只改汇总配置时把整套 grid 重跑一遍
+  - 当前复用判定会同时检查 `required artifacts + config.snapshot + seed`
+- 当前已验证导入 `MemGen` 的 `story_cloze` `Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B` 两个 `0-shot / 0-step` 外部评测点
+
+## Entry Points
+
+- config: `configs/exp/m5_story_cloze_baseline_grid_smoke.yaml`
+- script: `scripts/run_story_cloze_baseline_grid.sh`
+- module: `python -m memtotal.baselines.grid_runner`
+- import variant config: `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml`
+- import variant script: `scripts/run_story_cloze_baseline_grid_with_memgen.sh`
+- protocol-smoke config: `configs/exp/m5_story_cloze_baseline_grid_protocol_smoke.yaml`
+- protocol-smoke script: `scripts/run_story_cloze_baseline_grid_protocol_smoke.sh`
+- dual-import protocol config: `configs/exp/m5_story_cloze_baseline_grid_protocol_with_memgen_dual_smoke.yaml`
+- dual-import protocol script: `scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh`
+- watcher script: `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh`
+
+## Verified Commands
+
+```bash
+./scripts/run_story_cloze_baseline_grid.sh 991 results/generated/m5-story-cloze-baseline-grid-smoke
+./scripts/run_story_cloze_baseline_grid.sh 992 results/generated/m5-story-cloze-baseline-grid-smoke-dryrun --dry-run
+./scripts/run_story_cloze_baseline_grid_with_memgen.sh 993 results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke
+python -m memtotal.tasks.setup_data --benchmarks story_cloze --max_examples 8 --seed 701 --output_root data/benchmarks/materialized --manifest_root data/benchmarks/manifests --summary_path data/benchmarks/source_summary.json
+./scripts/run_story_cloze_baseline_grid_protocol_smoke.sh 997 results/generated/m5-story-cloze-baseline-grid-protocol-smoke
+./scripts/run_story_cloze_baseline_grid_protocol_with_memgen_dual.sh 1001 results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke
+ONCE=1 ./scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh
+```
+
+## Verified Outputs
+
+- `results/generated/m5-story-cloze-baseline-grid-smoke/adapt_curve.csv`
+- `results/generated/m5-story-cloze-baseline-grid-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-smoke/summary.csv`
+- `results/generated/m5-story-cloze-baseline-grid-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_curve.csv`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/summary.csv`
+- `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_curve.csv`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/summary.csv`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/adapt_cost.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/grid_plan.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/summary.svg`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/watcher_state.json`
+- `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/watcher.log`
+- `data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl`
+
+当前已验证：
+
+- `cell_count = 48`
+- `variant_count = 20`
+- `train_run_count = 24`
+- `eval_run_count = 48`
+- `imported_eval_count = 0`
+- import variant:
+  - `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/adapt_cost.json` 当前仍是 `imported_eval_count = 1`
+- protocol-smoke:
+  - `shots = {0, 1, 2, 4}`
+  - `steps = {0, 1, 3, 5}`
+  - `cell_count = 152`
+  - `variant_count = 20`
+  - 当前 fresh run 已覆盖 `104` 个 adapter train cells 与 `152` 个 eval cells
+  - 当前立刻重跑后的 `adapt_cost.json` 为 `train_run_count = 0`、`eval_run_count = 0`
+  - `reused_train_run_count = 104`
+  - `reused_eval_run_count = 152`
+  - `imported_eval_count = 1`
+  - 当前新增的是 `prefix_tuning` 的 `26` 个 protocol adapter cells，其余 cell 在重跑时已直接复用
+- dual-import protocol:
+  - `imported_eval_count = 2`
+  - `skipped_import_count = 0`
+  - `cell_count = 152`
+  - `variant_count = 20`
+  - 当前立刻重跑后的 `adapt_cost.json` 为 `train_run_count = 0`、`eval_run_count = 0`
+  - `reused_train_run_count = 104`
+  - `reused_eval_run_count = 152`
+  - 当前已同时导入 `MemGen / Qwen2.5-1.5B-Instruct` 与 `MemGen / Qwen3-8B`
+  - `watcher_state.json` 当前为 `status=refreshed`
+  - watcher 已在 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后自动刷新同目录汇总
+
+## Current Smoke Signals
+
+- qwen25:
+  - `meta_prompting`: `0-shot=0.5`，`2-shot=0.75`
+  - `prompt_tuning`: `2-shot 0-step=0.75`，`2-shot 4-step=1.0`
+  - `lora`: `2-shot 0-step=0.75`，`2-shot 4-step=1.0`
+  - `prefix_tuning`: `0-shot 0-step=0.75`，`2-shot 4-step=0.75`
+- qwen3:
+  - `prompting / meta_prompting`: 当前 `0-shot` 与 `2-shot` 都是 `1.0 / 0.75` 这一量级，不形成明显 few-shot 差异
+  - `adapter`: 当前 `0-step` 就已达到 `1.0`，`4-step` 不再提升
+  - `prefix_tuning`: `0-shot 0-step=0.75`，`2-shot 4-step=1.0`
+- imported external point:
+  - `MemGen / Qwen2.5-1.5B-Instruct / 0-shot / 0-step`: `compute_reward = 0.75`
+  - `MemGen / Qwen3-8B / 0-shot / 0-step`: `compute_reward = 1.0`
+- protocol-smoke:
+  - `qwen25 / vanilla`: `0-shot=0.625`，`1-shot=0.75`
+  - `qwen25 / meta_prompting`: `0-shot=0.5`，`4-shot=0.625`
+  - `qwen25 / rag`: `0~4-shot` 当前都在 `0.625` 量级
+  - `qwen25 / memory_bank`: `0-shot=0.5`，`1-shot=0.75`
+  - `qwen25 / ia3`: `0-shot=0.625`，`1-shot 0-step=0.625`，`1-shot 1~5-step=0.5`
+  - `qwen25 / prefix_tuning`: `0-shot=0.75`，`1-shot 1-step=0.875`
+  - `qwen25 / lightthinker`: `0-shot=0.625`，`1~4-shot=0.625`
+  - `qwen3 / prompt_tuning`: `0-shot=0.5`，`4-shot 5-step=0.75`
+  - `qwen3 / lora`: `0-shot=0.5`，`4-shot 5-step=0.75`
+  - `qwen3 / rag`: 当前 best cell 是 `1-shot / 0-step = 0.75`
+  - `qwen3 / memory_bank`: 当前 `1~4-shot / 0-step = 0.75`
+  - `qwen3 / ia3`: `0-shot=0.75`，`1-shot 0-step=0.75`
+  - `qwen3 / prefix_tuning`: `0-shot=0.625`，`4-shot 3~5-step=1.0`
+  - `qwen3 / lightthinker`: `0-shot=0.375`，`1~4-shot=0.5`
+
+这些数字仍然只是 stub-backbone contract smoke，不是论文结果。它们的意义是：
+
+- baseline 家族现在不再只是孤立单点 smoke
+- 仓库已经具备“在单个 suite 内循环 shot/step 网格并产出 `adapt_curve.csv`”的最小能力
+- 统一 grid 现在也能把外部 baseline 点导入同一张曲线，而不需要手工抄数
+- materialize 层现在不会再因为不同 `max_examples` 覆盖同一个 real-smoke 文件，`smoke4` 和 `smoke8` 可以并存
+- 只改导入点或汇总配置时，grid suite 现在可以直接复用已有 run，避免重复计算
+- 外部 baseline 点现在可以先占位、后补齐，不会因为某一条尚未完成就阻断整套 grid 汇总；`MemGen / Qwen3-8B` 这条链已经从 `waiting` 实际走到了 `refreshed`

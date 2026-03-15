@@ -1,0 +1,31 @@
+{
+  "analysis_mode": "m3_stage_c_curve_summary",
+  "best_final_by_backbone": {
+    "Qwen2.5-1.5B-Instruct": {
+      "shot": 2,
+      "step": 5,
+      "target_split_policy": "random",
+      "task_gain": 0.0,
+      "task_proxy_score": 0.5155163539780511,
+      "task_score": 0.7777777777777778
+    },
+    "Qwen3-8B": {
+      "shot": 2,
+      "step": 5,
+      "target_split_policy": "random",
+      "task_gain": 0.0,
+      "task_proxy_score": 0.5135137008296119,
+      "task_score": 0.7777777777777778
+    }
+  },
+  "curve_rows_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout/curve_rows.csv",
+  "input_root": "/root/autodl-tmp/memtotal-stage-c-curve-suite-v3-fixed-holdout",
+  "mode": "analysis",
+  "rows_collected": 190,
+  "shot_curve_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout/shot_curve.csv",
+  "shot_curve_rows": 8,
+  "shot_curve_svg": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout/shot_curve.svg",
+  "step_curve_csv": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout/step_curve.csv",
+  "step_curve_rows": 12,
+  "step_curve_svg": "/root/mydir/MemTOTAL/results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout/step_curve.svg"
+}

@@ -1,0 +1,10 @@
+experiment:
+  name: m5_fever_qwen25_compare_alignment
+  stage: M5-shared-injection-alignment
+  method_variant: fever-compare-m51
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+
+runtime:
+  analysis_mode: m4_shared_injection_compare

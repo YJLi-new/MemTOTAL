@@ -1,0 +1,73 @@
+task:
+  name: fever_real_fixed64
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: real_fixed64
+  pilot_split: fixed64
+  dataset_path: data/benchmarks/pilots/fever/fixed64.jsonl
+  support_dataset_path: data/benchmarks/pilots/fever/pilot-support8.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/m3_stage_c_real_qwen25_shared_repair_fever_fixed64.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/pilots/fever_fixed64.yaml
+  - /root/mydir/MemTOTAL/configs/method/memory_bootstrap_transformer_real.yaml
+method:
+  name: general-writer-adaptable-reader-transformer-bootstrap
+  embed_dim: auto
+  writer:
+    arch: transformer
+    memory_slots: 8
+    hidden_dim: null
+    num_heads: 4
+    transformer_layers: 2
+    dropout: 0.0
+  reader:
+    num_queries: 4
+    gating_mode: false
+    query_residual_scale: 1.0
+    num_heads: 4
+    condition_on_context: true
+    dropout: 0.0
+    conditioning:
+      domain_key: domain
+      include_task_name: true
+  fuser:
+    arch: resampler
+    short_slots: 2
+    hidden_dim: null
+    num_heads: 4
+    dropout: 0.0
+  injector:
+    mode: prefix
+    enabled: true
+    position: segment
+  segmenter:
+    mode: delimiter
+    delimiter: '||'
+experiment:
+  name: m3_stage_c_real_qwen25_shared_repair_fever_fixed64
+  stage: M3-fever-real-fixed64
+  method_variant: stage-c-real-shared-repair-fever-fixed64
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+runtime:
+  training_stage: stage_c_real_pilot
+  stage_c_decision_mode: shared_summary_late_fusion
+  stage_c_memory_control: real
+  stage_c_choice_objective: choice_repair_ce_margin
+  stage_c_choice_residual_scale: 1.0
+  stage_c_choice_margin: 0.1
+  stage_c_repair_anchor_margin_threshold: 0.01
+  pilot_support_examples: 8
+  pilot_support_learning_rate: 0.2
+  pilot_adapt_steps: 3
+  expected_query_learning_mode: meta_trained
+  device: cuda

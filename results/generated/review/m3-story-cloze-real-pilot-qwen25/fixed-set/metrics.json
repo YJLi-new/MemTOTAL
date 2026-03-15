@@ -1,0 +1,14 @@
+{
+  "analysis_mode": "story_cloze_real_fixed_set_builder",
+  "bucket_counts": {
+    "base_correct_control": 20,
+    "improving_but_unflipped": 40,
+    "stubborn_wrong_other": 20,
+    "stubborn_wrong_story_context": 20
+  },
+  "calibration_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/calibration-hard32.jsonl",
+  "calibration_examples": 32,
+  "fixed_eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/fixed100.jsonl",
+  "fixed_eval_examples": 100,
+  "manifest_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/story_cloze/fixed100-manifest.json"
+}

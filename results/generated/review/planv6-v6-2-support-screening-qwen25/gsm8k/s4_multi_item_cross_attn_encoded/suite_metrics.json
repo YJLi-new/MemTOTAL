@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "V6_2_S4_C1_L0",
+      "arm": "injected",
+      "macro_f1": 0.0,
+      "subdir": "pilot-I-s4_multi_item_cross_attn_encoded",
+      "task_score": 0.0,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "task_native",
+  "selected_support_serialization": "example_blocks_raw8"
+}

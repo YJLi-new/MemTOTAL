@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "scripts/planv9_v9_1_retrieval_eval.py",
+    "--config",
+    "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-configs/longmemeval-b3_text_rag.json",
+    "--seed",
+    "61109",
+    "--output_dir",
+    "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/longmemeval/b3_text_rag"
+  ],
+  "backbone": "Qwen3-4B",
+  "benchmark_id": null,
+  "experiment_name": "planv9_v9_1_longmemeval_b3_text_rag",
+  "git_hash": "8ec1638acc3344f21aeb833f2a38d80736dcb9e7",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "b3_text_rag",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 61109,
+  "smoke_subset": null,
+  "stage": "V9-1",
+  "task_domain": null,
+  "task_name": "planv9_v9_1_longmemeval",
+  "task_split": null,
+  "timestamp_utc": "2026-03-15T15:01:37.524783+00:00",
+  "torch_version": "2.8.0+cu128"
+}

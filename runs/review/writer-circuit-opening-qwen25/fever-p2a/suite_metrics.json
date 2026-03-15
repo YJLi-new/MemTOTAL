@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "I_p2a",
+      "arm": "injected",
+      "macro_f1": 0.3333333333333333,
+      "subdir": "pilot-I-source-stub-lora",
+      "task_score": 0.5,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "flat_raw8"
+}

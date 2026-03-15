@@ -1,0 +1,29 @@
+{
+  "base_arm_id": "b_w3_q16",
+  "base_source_phase": "v7_3",
+  "branch_variant_map": {
+    "p1_a5_barlow": "a5_barlow",
+    "p2_a1_reconstruction": "a1_reconstruction"
+  },
+  "control_source_arm_id": "b_w3_q16",
+  "direct_control_arm_id": "d_w1_shared",
+  "promoted_arms": [
+    "a5_barlow",
+    "a1_reconstruction"
+  ],
+  "seeds": [
+    61109,
+    61110,
+    61111
+  ],
+  "variants": [
+    "c0_frozen_no_memory",
+    "c1_additive_continuity",
+    "c2_best_direct",
+    "p1_a5_barlow",
+    "p2_a1_reconstruction"
+  ],
+  "winner_uses_bridge": true,
+  "winning_depth": "D1",
+  "winning_depth_label": "mid4"
+}

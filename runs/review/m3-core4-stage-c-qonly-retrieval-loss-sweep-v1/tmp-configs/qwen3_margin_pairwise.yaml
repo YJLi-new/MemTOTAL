@@ -1,0 +1,10 @@
+includes:
+  - /root/mydir/MemTOTAL/configs/exp/m3_stage_c_core4_qwen3_smoke.yaml
+
+experiment:
+  name: m3_stage_c_core4_qwen3_qonly_loss_margin_pairwise
+  method_variant: m3-core4-stage-c-qonly-loss-margin_pairwise-qwen3
+
+runtime:
+  retrieval_loss_type: margin_pairwise
+  retrieval_margin_value: 0.1

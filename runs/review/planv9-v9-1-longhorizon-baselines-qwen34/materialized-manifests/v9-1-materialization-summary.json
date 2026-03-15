@@ -1,0 +1,10 @@
+{
+  "manifests": {
+    "alfworld": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-manifests/alfworld-pilot.json",
+    "longmemeval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-manifests/longmemeval-pilot.json",
+    "memoryagentbench": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-manifests/memoryagentbench-pilot.json"
+  },
+  "materialized_root": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34",
+  "phase": "V9-1",
+  "seed": 61109
+}

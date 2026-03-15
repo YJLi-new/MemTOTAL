@@ -1,0 +1,8 @@
+includes:
+  - tl_micro_lora_fever_qwen25_control_partition_none_linear_h4_k4.yaml
+  - ../method/tl_receiver_microlora_kv_r2_all5.yaml
+
+experiment:
+  name: tl_micro_lora_fever_qwen25_microlora_r2_all5_partition_none_linear_h4_k4
+  stage: TL-Micro-LoRA-V2
+  method_variant: fever-tl-micro-lora-v2-r2-all5-partition-none-linear-h4-k4

@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/m5_fever_qwen25_dynamics_recovery_structured.yaml",
+    "--seed",
+    "14891",
+    "--output_dir",
+    "/root/autodl-tmp/results/generated/m5-fever-writer-objective-rewrite-qwen25/canonical/dynamics-recovery",
+    "--input_root",
+    "/root/autodl-tmp/runs/verify/m5-fever-writer-objective-rewrite-qwen25/canonical"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "m5_fever_qwen25_dynamics_recovery_structured",
+  "git_hash": "f0719c5c2f1264eaf4f15165a964a2907985170b",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-dynamics-recovery-m51-structured",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 14891,
+  "smoke_subset": "real_screen_val_m46_canonical",
+  "stage": "M5-shared-injection-alignment",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_val_m46_canonical",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-08T10:45:30.625419+00:00",
+  "torch_version": "2.8.0+cu128"
+}

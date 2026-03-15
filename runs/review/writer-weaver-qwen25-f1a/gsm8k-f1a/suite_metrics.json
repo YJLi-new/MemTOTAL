@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "I_f1a",
+      "arm": "injected",
+      "macro_f1": 0.0,
+      "subdir": "pilot-I-big-context",
+      "task_score": 0.0,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "task_native",
+  "selected_support_serialization": "example_blocks_raw8"
+}

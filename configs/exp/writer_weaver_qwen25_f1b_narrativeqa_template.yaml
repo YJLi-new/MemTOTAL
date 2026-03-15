@@ -1,0 +1,80 @@
+includes:
+  - ../tasks/benchmarks/materialized/narrativeqa_real_smoke.yaml
+  - ../method/memory_bootstrap_transformer_real.yaml
+
+experiment:
+  name: writer_weaver_qwen25_f1b_narrativeqa_template
+  stage: Writer-Weaver-F1b
+  method_variant: writer-weaver-qwen25-f1b-narrativeqa
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+
+method:
+  writer:
+    memory_slots: 8
+    hidden_dim: 3072
+    num_heads: 8
+    transformer_layers: 4
+    conditioning_layers: 3
+    dropout: 0.0
+  writer_adapter:
+    enabled: true
+    target_modules:
+      - conditioning_out_proj
+      - encoder_self_attn_out_proj
+    rank: 2
+    alpha: 4.0
+    dropout: 0.0
+
+runtime:
+  training_stage: shared_injection_pilot
+  shared_injection_arm: injected
+  writer_memory_control: real
+  pilot_arm_alias: I_writer_f1b
+  pilot_bridge_mode: writer_direct
+  pilot_writer_stimulus_mode: support_and_context
+  pilot_writer_context_tokens: 8
+  pilot_memory_path_variant: single_level
+  pilot_injection_mode: shallow_prefix
+  pilot_projector_token_source: writer_slots
+  pilot_support_examples: 8
+  pilot_support_encoder_mode: pooled_block
+  pilot_train_support_mode: static_support_rows
+  pilot_train_steps: 48
+  pilot_snapshot_steps:
+    - 0
+    - 8
+    - 16
+    - 32
+    - 48
+  pilot_projector_warmup_steps: 0
+  pilot_trainable_variant: writer_adapter_only
+  pilot_writer_learning_rate: 0.0002
+  pilot_writer_adapter_learning_rate: 0.0005
+  pilot_projector_learning_rate: 0.001
+  pilot_writer_weight_decay: 0.0
+  pilot_writer_adapter_weight_decay: 0.0
+  pilot_projector_weight_decay: 0.0
+  stage_c_choice_margin: 0.1
+  pilot_choice_ce_weight: 1.0
+  pilot_competitor_hinge_weight_max: 0.0
+  pilot_prompt_variant: task_native
+  pilot_support_serialization: example_blocks_raw8
+  pilot_alignment_aux_mode: off
+  pilot_writer_gain_margin: 0.05
+  pilot_writer_gain_margin_weight: 0.25
+  pilot_writer_common_mode_penalty_weight: 0.1
+  pilot_writer_covariance_diversity_weight: 0.05
+  pilot_writer_slot_energy_balance_weight: 0.01
+  pilot_writer_orthogonalize_slot_basis: true
+  device: cuda
+
+task:
+  support_dataset_path: ""
+  train_dataset_path: ""
+  train_support_dataset_path: ""

@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "scripts/planv8_v8_7_retrieval_eval.py",
+    "--config",
+    "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-configs/gsm8k-m1_text_rag.json",
+    "--seed",
+    "61109",
+    "--output_dir",
+    "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/m1_text_rag-gsm8k"
+  ],
+  "backbone": "Qwen3-4B",
+  "benchmark_id": "gsm8k",
+  "experiment_name": "planv8_v8_7_m1_text_rag_gsm8k",
+  "git_hash": "7cc07c0b9eec1e65afcc2d180103e51311774da5",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "m1_text_rag",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 61109,
+  "smoke_subset": null,
+  "stage": "V8-7",
+  "task_domain": "math",
+  "task_name": "gsm8k_real_smoke",
+  "task_split": null,
+  "timestamp_utc": "2026-03-15T08:18:35.310822+00:00",
+  "torch_version": "2.8.0+cu128"
+}

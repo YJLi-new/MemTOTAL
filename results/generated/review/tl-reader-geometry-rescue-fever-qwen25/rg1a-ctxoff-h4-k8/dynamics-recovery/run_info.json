@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/tl_reader_geometry_rescue_fever_qwen25_dynamics_recovery_ctxnone_h4_k8.yaml",
+    "--seed",
+    "20191",
+    "--output_dir",
+    "/root/autodl-tmp/results/generated/tl-reader-geometry-rescue-fever-qwen25/rg1a-ctxoff-h4-k8/dynamics-recovery",
+    "--input_root",
+    "/root/autodl-tmp/runs/verify/tl-reader-geometry-rescue-fever-qwen25/rg1a-ctxoff-h4-k8"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "tl_reader_geometry_rescue_fever_qwen25_dynamics_recovery_ctxnone_h4_k8",
+  "git_hash": "d52ad62aabfed3ef9c173e21dd6765c4cac4ac39",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "fever-tl-reader-geometry-rg1-dynamics-ctxnone-h4-k8",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 20191,
+  "smoke_subset": "real_screen_val_m46_canonical",
+  "stage": "TL-Reader-Geometry-RG1",
+  "task_domain": "qa",
+  "task_name": "fever_real_screen_val_m46_canonical",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-08T18:40:13.878911+00:00",
+  "torch_version": "2.8.0+cu128"
+}

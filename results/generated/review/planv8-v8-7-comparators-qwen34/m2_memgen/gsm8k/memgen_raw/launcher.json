@@ -1,0 +1,76 @@
+{
+  "args": {
+    "argv": [
+      "main.py",
+      "--cfg-path",
+      "/root/mydir/MemTOTAL/MemGen-master/configs/latent_memory/gsm8k.yaml",
+      "--options",
+      "run.seed=61139",
+      "run.mode=evaluate",
+      "dataset.name=gsm8k",
+      "model.model_name=/root/autodl-tmp/models/Qwen3-4B",
+      "model.weaver.model_name=/root/autodl-tmp/models/Qwen3-4B",
+      "model.trigger.model_name=/root/autodl-tmp/models/Qwen3-4B",
+      "model.trigger.active=False",
+      "model.max_prompt_aug_num=1",
+      "model.max_inference_aug_num=1",
+      "model.attn_implementation=sdpa",
+      "dataset.mode=sft",
+      "dataset.sft.val_ratio=0.01",
+      "dataset.sft.num_workers=1",
+      "dataset.sft.max_train_samples=8",
+      "dataset.sft.max_valid_samples=4",
+      "dataset.sft.max_test_samples=8",
+      "run.interaction.batch_size=1",
+      "run.interaction.do_sample=False",
+      "run.interaction.max_response_length=256"
+    ],
+    "cfg_path": "/root/mydir/MemTOTAL/MemGen-master/configs/latent_memory/gsm8k.yaml",
+    "options": [
+      "run.seed=61139",
+      "run.mode=evaluate",
+      "dataset.name=gsm8k",
+      "model.model_name=/root/autodl-tmp/models/Qwen3-4B",
+      "model.weaver.model_name=/root/autodl-tmp/models/Qwen3-4B",
+      "model.trigger.model_name=/root/autodl-tmp/models/Qwen3-4B",
+      "model.trigger.active=False",
+      "model.max_prompt_aug_num=1",
+      "model.max_inference_aug_num=1",
+      "model.attn_implementation=sdpa",
+      "dataset.mode=sft",
+      "dataset.sft.val_ratio=0.01",
+      "dataset.sft.num_workers=1",
+      "dataset.sft.max_train_samples=8",
+      "dataset.sft.max_valid_samples=4",
+      "dataset.sft.max_test_samples=8",
+      "run.interaction.batch_size=1",
+      "run.interaction.do_sample=False",
+      "run.interaction.max_response_length=256"
+    ]
+  },
+  "cwd": "/root/mydir/MemTOTAL/MemGen-master",
+  "env": {
+    "HF_HOME": "/root/autodl-tmp/hf-cache"
+  },
+  "git": {
+    "commit": "7cc07c0b9eec1e65afcc2d180103e51311774da5",
+    "dirty": true,
+    "root": "/root/mydir/MemTOTAL"
+  },
+  "launcher": {
+    "cmd": null,
+    "pwd": null,
+    "script": null
+  },
+  "python": {
+    "executable": "/root/miniconda3/bin/python",
+    "version": "3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 19:46:43) [GCC 11.2.0]"
+  },
+  "system": {
+    "hostname": "autodl-container-u6thunte83-1976be19",
+    "pid": 206096,
+    "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+    "user": "root"
+  },
+  "timestamp": "2026-03-15T16:22:29"
+}

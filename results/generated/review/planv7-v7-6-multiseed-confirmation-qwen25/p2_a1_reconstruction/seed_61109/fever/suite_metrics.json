@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "P2_A1_RECONSTRUCTION",
+      "arm": "injected",
+      "macro_f1": 0.15261044176706826,
+      "subdir": "pilot-I-real",
+      "task_score": 0.296875,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "inline_short_labels",
+  "selected_support_serialization": "flat_raw8"
+}

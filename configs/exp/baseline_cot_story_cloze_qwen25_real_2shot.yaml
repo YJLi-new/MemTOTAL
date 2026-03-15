@@ -1,0 +1,22 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: baseline_cot_story_cloze_qwen25_real_2shot
+  stage: M5
+  method_variant: baseline-cot-2shot
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: prompting
+  mode: cot
+  support_examples: 2
+
+runtime:
+  eval_examples: 4
+  device: cpu

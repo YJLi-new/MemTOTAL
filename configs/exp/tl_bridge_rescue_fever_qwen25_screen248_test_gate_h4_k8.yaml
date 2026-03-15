@@ -1,0 +1,13 @@
+includes:
+  - tl_bridge_rescue_fever_qwen25_h4_k8.yaml
+  - ../tasks/benchmarks/pilots/fever_screen248_test_m46_canonical.yaml
+
+experiment:
+  name: tl_bridge_rescue_fever_qwen25_screen248_test_gate_h4_k8
+  stage: TL-Bridge-Rescue
+  method_variant: fever-tl-bridge-rescue-screen248-test-h4-k8
+
+runtime:
+  pilot_init_checkpoint_path: ""
+  pilot_train_steps: 0
+  pilot_projector_warmup_steps: 0

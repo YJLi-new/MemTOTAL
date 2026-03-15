@@ -1,0 +1,17 @@
+task:
+  name: toy_meta_smoke
+  dataset_path: data/toy/meta_samples.jsonl
+  metric_name: toy_meta_accuracy
+  meta:
+    general_domains:
+      - math
+      - code
+      - qa
+      - narrative
+    source_domains:
+      - math
+      - code
+      - qa
+    target_domain: narrative
+    support_size: 2
+    query_size: 2

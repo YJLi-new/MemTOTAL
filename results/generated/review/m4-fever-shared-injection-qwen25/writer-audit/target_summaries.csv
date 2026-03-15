@@ -1,0 +1,4 @@
+best_control_metric,best_real_metric,metric_gap,target_name
+0.75,0.703125,-0.046875,label_probe
+0.75,0.671875,-0.078125,base_margin_sign_probe
+0.4483901515151515,0.5409090909090909,0.0925189393939394,teacher_gain_probe

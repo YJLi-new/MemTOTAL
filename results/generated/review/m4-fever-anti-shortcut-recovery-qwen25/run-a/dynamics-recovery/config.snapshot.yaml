@@ -1,0 +1,109 @@
+task:
+  name: fever_real_screen_val_m46_canonical
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: real_screen_val_m46_canonical
+  pilot_split: screen_val
+  dataset_path: data/benchmarks/pilots/fever/screen-val.jsonl
+  train_dataset_path: data/benchmarks/pilots/fever/screen-train.jsonl
+  support_dataset_path: data/benchmarks/pilots/fever/m46-screen-val-canonical-support6.jsonl
+  support_lookup_dataset_paths:
+  - data/benchmarks/pilots/fever/screen-train.jsonl
+  - data/benchmarks/pilots/fever/screen-val.jsonl
+  - data/benchmarks/pilots/fever/screen-eval248.jsonl
+  - data/benchmarks/pilots/fever/fixed64.jsonl
+  - data/benchmarks/pilots/fever/pilot-support8.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice
+  train_support_episode_bank_path: data/benchmarks/pilots/fever/m46-train-triad-episode-bank32.json
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/m4_fever_qwen25_dynamics_recovery_m46.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/exp/m4_fever_qwen25_phase2_val_episode_bank_common.yaml
+method:
+  name: general-writer-adaptable-reader-transformer-bootstrap
+  embed_dim: auto
+  writer:
+    arch: transformer
+    memory_slots: 8
+    hidden_dim: null
+    num_heads: 4
+    transformer_layers: 2
+    dropout: 0.0
+  reader:
+    num_queries: 4
+    gating_mode: false
+    query_residual_scale: 1.0
+    num_heads: 4
+    condition_on_context: true
+    dropout: 0.0
+    conditioning:
+      domain_key: domain
+      include_task_name: true
+  fuser:
+    arch: resampler
+    short_slots: 2
+    hidden_dim: null
+    num_heads: 4
+    dropout: 0.0
+  injector:
+    mode: prefix
+    enabled: true
+    position: segment
+  segmenter:
+    mode: delimiter
+    delimiter: '||'
+experiment:
+  name: m4_fever_qwen25_dynamics_recovery_m46
+  stage: M4-shared-injection
+  method_variant: fever-dynamics-recovery-m46
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+  attn_implementation: eager
+runtime:
+  training_stage: shared_injection_pilot
+  shared_injection_arm: base_only
+  writer_memory_control: real
+  pilot_arm_alias: A
+  pilot_prompt_variant: answer_slot_labels
+  pilot_support_serialization: triad_curated6
+  pilot_support_examples: 0
+  pilot_injection_mode: sparse_deep_prefix
+  pilot_train_support_mode: episode_bank
+  pilot_train_support_mask_count: 5
+  pilot_deep_prefix_layers:
+  - 0
+  - 7
+  - 14
+  - 21
+  - 27
+  pilot_deep_prefix_rank: 16
+  pilot_train_steps: 96
+  pilot_writer_learning_rate: 0.0002
+  pilot_projector_learning_rate: 0.001
+  pilot_writer_weight_decay: 0.0001
+  pilot_projector_weight_decay: 0.0001
+  pilot_projector_warmup_steps: 8
+  pilot_gradient_clip_norm: 1.0
+  pilot_prefix_slot_max_norm: 48.0
+  pilot_prefix_total_max_norm: 192.0
+  pilot_snapshot_steps:
+  - 0
+  - 4
+  - 8
+  - 16
+  - 32
+  - 48
+  - 64
+  - 80
+  - 96
+  stage_c_choice_margin: 0.1
+  device: cuda
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl

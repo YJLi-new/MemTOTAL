@@ -1,0 +1,20 @@
+includes:
+  - ../tasks/benchmarks/pilots/fever_screen248.yaml
+  - ../method/memory_bootstrap_transformer_real.yaml
+
+experiment:
+  name: m4_fever_qwen25_split_prep
+  stage: M4-shared-injection
+  method_variant: fever-split-prep
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+
+runtime:
+  analysis_mode: m4_prepare_fever_validation_splits
+  split_output_root: data/benchmarks/pilots/fever
+  device: cuda

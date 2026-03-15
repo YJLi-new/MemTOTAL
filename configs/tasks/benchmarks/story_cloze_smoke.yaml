@@ -1,0 +1,10 @@
+task:
+  name: story_cloze_smoke
+  benchmark_id: story_cloze
+  domain: narrative
+  split: smoke
+  smoke_subset: local_contract_v1
+  dataset_path: data/benchmarks/smoke/story_cloze_smoke.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

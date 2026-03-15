@@ -1,0 +1,10 @@
+includes:
+  - m5_fever_qwen25_phase2_val_alignment_canonical_common.yaml
+
+experiment:
+  name: m5_fever_qwen25_phase2_val_alignment_freeze_writer_common
+  stage: M5-shared-injection-alignment
+  method_variant: fever-phase2-val-alignment-m51-freeze-writer-common
+
+runtime:
+  pilot_trainable_variant: projector_only

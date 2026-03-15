@@ -1,0 +1,30 @@
+includes:
+  - ../tasks/benchmarks/pilots/story_cloze_fixed100.yaml
+  - ../method/memory_bootstrap_transformer_real.yaml
+
+experiment:
+  name: m3_stage_c_real_qwen25_shared_delta_shuffled_fixed100
+  stage: M3-story-cloze-real-fixed100
+  method_variant: stage-c-real-shared-plus-candidate-delta-shuffled-fixed100
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+
+runtime:
+  training_stage: stage_c_real_pilot
+  stage_c_decision_mode: shared_plus_candidate_delta_late_fusion
+  stage_c_memory_control: shuffled
+  stage_c_choice_objective: continuation_retrieval
+  stage_c_choice_residual_scale: 1.0
+  stage_c_candidate_delta_scale: 1.0
+  stage_c_candidate_delta_gate_tau: 0.01
+  stage_c_choice_margin: 0.1
+  pilot_support_examples: 8
+  pilot_support_learning_rate: 0.2
+  pilot_adapt_steps: 3
+  expected_query_learning_mode: meta_trained
+  device: cuda

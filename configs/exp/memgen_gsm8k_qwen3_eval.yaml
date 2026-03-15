@@ -1,0 +1,23 @@
+experiment:
+  name: memgen_gsm8k_qwen3_eval
+  stage: M1
+  method_variant: memgen-baseline
+
+task:
+  name: gsm8k
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+
+baseline:
+  name: memgen
+  repo_root: MemGen-master
+  task_name: gsm8k
+  memgen_run_mode: evaluate
+  memgen_config_path: configs/latent_memory/gsm8k.yaml
+  trigger_active: false
+  insertion_profile: task_default
+  load_model_path: null
+  max_prompt_aug_num: 1
+  max_inference_aug_num: 5

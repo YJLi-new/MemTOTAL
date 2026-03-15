@@ -1,0 +1,1209 @@
+{
+  "acceptance": {
+    "alfworld_ready": true,
+    "longmemeval_ready": true,
+    "memoryagentbench_ready": true
+  },
+  "benchmark_hardening_complete": true,
+  "benchmark_summaries": {
+    "alfworld": {
+      "all_required_baselines_present": true,
+      "baselines": {
+        "b0_short_window": {
+          "baseline_id": "b0_short_window",
+          "examples_evaluated": 120,
+          "label": "B0 short-window baseline",
+          "mean_invalid_resolution_count": 12.0,
+          "mean_steps_executed": 12.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b1_full_history": {
+          "baseline_id": "b1_full_history",
+          "examples_evaluated": 120,
+          "label": "B1 full-history baseline",
+          "mean_invalid_resolution_count": 2.875,
+          "mean_steps_executed": 11.958333333333334,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "",
+          "present": true,
+          "success_rate": 0.008333333333333333,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.008333333333333333
+        },
+        "b2_text_summary": {
+          "baseline_id": "b2_text_summary",
+          "examples_evaluated": 120,
+          "label": "B2 text-summary baseline",
+          "mean_invalid_resolution_count": 4.475,
+          "mean_steps_executed": 12.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b3_text_rag": {
+          "baseline_id": "b3_text_rag",
+          "examples_evaluated": 120,
+          "label": "B3 text-RAG baseline",
+          "mean_invalid_resolution_count": 2.825,
+          "mean_steps_executed": 11.991666666666667,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "",
+          "present": true,
+          "success_rate": 0.008333333333333333,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.008333333333333333
+        }
+      },
+      "benchmark_name": "ALFWorld",
+      "manifest": {
+        "asset_info": {
+          "asset_root": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld",
+          "logic_root": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/logic",
+          "split_root": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1"
+        },
+        "benchmark_id": "alfworld",
+        "episodes_per_family": 20,
+        "notes": "V9-1 promotes ALFWorld to a governed 120-episode TextWorld pilot. The pilot combines valid splits to satisfy the 20x6 family quota, then evaluates success rate and step budget after one expert bootstrap action.",
+        "selected_episodes": [
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-AlarmClock-None-DeskLamp-323/trial_T20190909_044715_250790/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Bowl-None-DeskLamp-301/trial_T20190909_150719_492274/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Bowl-None-DeskLamp-316/trial_T20190908_230702_962704/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Box-None-DeskLamp-205/trial_T20190907_074425_330493/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-CD-None-DeskLamp-302/trial_T20190907_154618_526741/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-CD-None-DeskLamp-314/trial_T20190907_114323_767231/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-CD-None-DeskLamp-320/trial_T20190907_224451_655673/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-KeyChain-None-DeskLamp-327/trial_T20190906_202601_548273/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Laptop-None-DeskLamp-328/trial_T20190908_201550_622420/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Pillow-None-DeskLamp-302/trial_T20190909_150916_682139/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Pillow-None-DeskLamp-323/trial_T20190908_053153_077977/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Statue-None-DeskLamp-216/trial_T20190909_193045_208933/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/look_at_obj_in_light-Vase-None-DeskLamp-303/trial_T20190907_150418_457594/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-AlarmClock-None-DeskLamp-308/trial_T20190908_222917_366542/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-AlarmClock-None-DeskLamp-308/trial_T20190908_222933_607649/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-AlarmClock-None-DeskLamp-308/trial_T20190908_222951_616606/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-Book-None-DeskLamp-308/trial_T20190908_020029_636862/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-Book-None-DeskLamp-308/trial_T20190908_020048_814402/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-Book-None-DeskLamp-308/trial_T20190908_144951_587345/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/look_at_obj_in_light-Bowl-None-DeskLamp-308/trial_T20190907_133919_856963/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "look_at_obj_in_light"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Book-None-SideTable-329/trial_T20190908_050633_745514/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Book-None-Sofa-229/trial_T20190907_042856_259139/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Bowl-None-CoffeeTable-201/trial_T20190907_171639_045329/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Box-None-Dresser-224/trial_T20190907_164104_229696/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Candle-None-Cart-401/trial_T20190909_081908_677973/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Candle-None-Toilet-407/trial_T20190909_055248_059513/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Candle-None-Toilet-429/trial_T20190908_052232_887934/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-CellPhone-None-ArmChair-318/trial_T20190909_120047_968274/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-CellPhone-None-Bed-324/trial_T20190907_233817_198528/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-CreditCard-None-ArmChair-201/trial_T20190908_124340_258012/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-CreditCard-None-Drawer-227/trial_T20190909_010644_297017/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Egg-None-Microwave-4/trial_T20190906_234406_356490/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Knife-None-SideTable-3/trial_T20190918_184236_557252/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Mug-None-Dresser-311/trial_T20190909_152837_739016/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Mug-None-SideTable-329/trial_T20190909_032318_169393/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Mug-None-SideTable-329/trial_T20190909_032340_274147/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Newspaper-None-Sofa-224/trial_T20190909_111324_949106/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Pencil-None-Desk-310/trial_T20190909_113054_894334/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-Pencil-None-Dresser-330/trial_T20190909_071128_012892/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_and_place_simple-RemoteControl-None-ArmChair-230/trial_T20190909_021000_274398/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_and_place_simple"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-ButterKnife-None-CounterTop-8/trial_T20190909_105559_983897/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-ButterKnife-None-DiningTable-16/trial_T20190909_114508_617301/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-ButterKnife-None-Drawer-2/trial_T20190908_121728_511866/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-ButterKnife-None-Drawer-30/trial_T20190908_052007_212776/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-ButterKnife-None-Drawer-8/trial_T20190909_124425_112757/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Cloth-None-Cabinet-405/trial_T20190907_080903_889497/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Cloth-None-Drawer-423/trial_T20190908_140701_251653/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-DishSponge-None-Cart-401/trial_T20190907_024634_972453/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-DishSponge-None-CounterTop-403/trial_T20190908_144357_621068/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Fork-None-CounterTop-23/trial_T20190908_233922_171295/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Fork-None-Drawer-8/trial_T20190908_132152_999725/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Ladle-None-CounterTop-14/trial_T20190909_113844_191747/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Ladle-None-CounterTop-8/trial_T20190909_121908_219603/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Ladle-None-DiningTable-16/trial_T20190909_183724_205399/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Ladle-None-DiningTable-27/trial_T20190911_131350_027076/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Ladle-None-DiningTable-4/trial_T20190909_164840_568811/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Lettuce-None-CounterTop-16/trial_T20190909_051630_092360/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Lettuce-None-Fridge-19/trial_T20190908_100138_446072/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Mug-None-CoffeeMachine-26/trial_T20190907_233056_022802/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_clean_then_place_in_recep-Plate-None-CounterTop-19/trial_T20190908_212725_836398/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_clean_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Apple-None-CounterTop-14/trial_T20190909_044933_815840/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Apple-None-GarbageCan-2/trial_T20190906_195943_081289/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Apple-None-Microwave-19/trial_T20190906_210937_878489/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Apple-None-Microwave-5/trial_T20190908_150807_823817/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Bowl-None-Cabinet-20/trial_T20190909_112912_154874/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Bread-None-CounterTop-7/trial_T20190909_045605_307949/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Cup-None-Microwave-17/trial_T20190906_192817_654400/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Cup-None-SideTable-21/trial_T20190906_192823_237997/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Egg-None-Microwave-24/trial_T20190908_234112_645480/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Lettuce-None-CounterTop-1/trial_T20190908_042713_075616/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Lettuce-None-CounterTop-11/trial_T20190908_222555_651605/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Mug-None-CoffeeMachine-16/trial_T20190908_184242_348366/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Pan-None-DiningTable-7/trial_T20190908_232648_241836/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Pan-None-StoveBurner-18/trial_T20190906_181023_216915/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Pan-None-StoveBurner-23/trial_T20190906_215856_374127/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Plate-None-Cabinet-27/trial_T20190906_173120_350651/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Plate-None-Cabinet-7/trial_T20190907_231206_512424/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Plate-None-CounterTop-1/trial_T20190906_205324_559361/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Pot-None-DiningTable-21/trial_T20190909_004531_429065/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_cool_then_place_in_recep-Tomato-None-CounterTop-12/trial_T20190909_063754_216554/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_cool_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Apple-None-DiningTable-26/trial_T20190907_060234_011675/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Cup-None-Cabinet-22/trial_T20190907_173251_960848/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Egg-None-CounterTop-2/trial_T20190908_122951_021026/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Egg-None-Fridge-14/trial_T20190909_091314_636733/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Mug-None-Cabinet-26/trial_T20190909_062333_424779/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Mug-None-Cabinet-3/trial_T20190909_014639_335717/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Mug-None-CoffeeMachine-1/trial_T20190907_222640_487432/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Mug-None-SideTable-21/trial_T20190909_090729_088825/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Plate-None-Cabinet-1/trial_T20190908_070946_578973/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Plate-None-DiningTable-28/trial_T20190908_001247_096796/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Potato-None-Fridge-11/trial_T20190909_011341_436523/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Potato-None-Fridge-12/trial_T20190908_014451_271080/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Tomato-None-DiningTable-16/trial_T20190907_201243_698086/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Tomato-None-Fridge-15/trial_T20190909_020200_054379/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Tomato-None-Fridge-23/trial_T20190909_082320_103350/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_heat_then_place_in_recep-Tomato-None-Fridge-24/trial_T20190908_033721_967359/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/pick_heat_then_place_in_recep-Apple-None-Fridge-10/trial_T20190906_182259_116320/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/pick_heat_then_place_in_recep-Apple-None-Fridge-10/trial_T20190906_182353_418140/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/pick_heat_then_place_in_recep-Apple-None-Fridge-10/trial_T20190906_182435_622538/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_unseen/pick_heat_then_place_in_recep-Apple-None-GarbageCan-10/trial_T20190908_145050_918567/game.tw-pddl",
+            "split": "valid_unseen",
+            "task_family": "pick_heat_then_place_in_recep"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-AlarmClock-None-Dresser-305/trial_T20190907_165826_194855/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Book-None-Desk-302/trial_T20190906_181233_363875/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Book-None-Desk-313/trial_T20190908_125930_920681/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Box-None-CoffeeTable-213/trial_T20190906_200927_069627/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-CD-None-Drawer-304/trial_T20190907_230232_832893/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-CreditCard-None-Dresser-311/trial_T20190907_201917_045715/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-CreditCard-None-Safe-323/trial_T20190907_001129_214240/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Glassbottle-None-Shelf-1/trial_T20190907_122204_941737/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Knife-None-Drawer-18/trial_T20190907_065232_689984/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Newspaper-None-Drawer-224/trial_T20190911_101248_326533/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Pan-None-CounterTop-14/trial_T20190907_012519_974044/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-RemoteControl-None-Ottoman-203/trial_T20190906_182952_858723/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-SoapBar-None-GarbageCan-418/trial_T20190909_055538_380023/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-SoapBar-None-GarbageCan-418/trial_T20190909_055649_717880/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-Spatula-None-Drawer-13/trial_T20190908_183331_203888/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-SprayBottle-None-Cabinet-407/trial_T20190907_144556_144188/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-SprayBottle-None-GarbageCan-419/trial_T20190908_164236_518264/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-SprayBottle-None-Toilet-402/trial_T20190910_222914_814642/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-SprayBottle-None-Toilet-429/trial_T20190907_033843_707544/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          },
+          {
+            "game_file": "/root/mydir/MemTOTAL/data/benchmarks/external/alfworld/json_2.1.1/valid_seen/pick_two_obj_and_place-TissueBox-None-Toilet-426/trial_T20190909_044602_338962/game.tw-pddl",
+            "split": "valid_seen",
+            "task_family": "pick_two_obj_and_place"
+          }
+        ],
+        "selected_episodes_total": 120,
+        "split_priority": [
+          "valid_seen",
+          "valid_unseen",
+          "valid_train"
+        ],
+        "task_families": [
+          "look_at_obj_in_light",
+          "pick_and_place_simple",
+          "pick_clean_then_place_in_recep",
+          "pick_cool_then_place_in_recep",
+          "pick_heat_then_place_in_recep",
+          "pick_two_obj_and_place"
+        ]
+      }
+    },
+    "longmemeval": {
+      "all_required_baselines_present": true,
+      "baselines": {
+        "b0_short_window": {
+          "baseline_id": "b0_short_window",
+          "examples_evaluated": 100,
+          "label": "B0 short-window baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "f1",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b1_full_history": {
+          "baseline_id": "b1_full_history",
+          "examples_evaluated": 100,
+          "label": "B1 full-history baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "f1",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b2_text_summary": {
+          "baseline_id": "b2_text_summary",
+          "examples_evaluated": 100,
+          "label": "B2 text-summary baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "f1",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b3_text_rag": {
+          "baseline_id": "b3_text_rag",
+          "examples_evaluated": 100,
+          "label": "B3 text-RAG baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.05491076066206788,
+          "metric_name": "f1",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 48.18,
+          "task_score": 0.13872499624765772
+        }
+      },
+      "benchmark_name": "LongMemEval",
+      "manifest": {
+        "aux_holdout_type": "knowledge-update",
+        "benchmark_id": "longmemeval",
+        "dataset_files": {
+          "aux_holdout_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/aux_holdout_eval.jsonl",
+          "b0_short_window_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b0_short_window_eval.jsonl",
+          "b1_full_history_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b1_full_history_eval.jsonl",
+          "b2_text_summary_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b2_text_summary_eval.jsonl",
+          "b3_rag_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b3_rag_eval.jsonl",
+          "b3_rag_support": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/longmemeval/b3_rag_support.jsonl"
+        },
+        "examples_per_primary_type": 20,
+        "knowledge-update": {
+          "examples_materialized": 20,
+          "question_ids": [
+            "01493427-aux",
+            "0ddfec37-aux",
+            "0f05491a-aux",
+            "2698e78f-aux",
+            "42ec0761-aux",
+            "45dc21b6-aux",
+            "4b24c848-aux",
+            "5a4f22c0-aux",
+            "603deb26-aux",
+            "6aeb4375_abs-aux",
+            "71315a70-aux",
+            "72e3ee87-aux",
+            "830ce83f-aux",
+            "852ce960-aux",
+            "945e3d21-aux",
+            "b6019101-aux",
+            "cc5ded98-aux",
+            "db467c8c-aux",
+            "f685340e-aux",
+            "f9e8c073-aux"
+          ]
+        },
+        "multi-session": {
+          "examples_materialized": 20,
+          "question_ids": [
+            "21d02d0d",
+            "2ce6a0f2",
+            "2e6d26dc",
+            "60bf93ed_abs",
+            "67e0d0f2",
+            "77eafa52",
+            "8e91e7d9",
+            "a1cc6108",
+            "a4996e51",
+            "b3c15d39",
+            "bb7c3b45",
+            "bc149d6b",
+            "c18a7dc8",
+            "c2ac3c61",
+            "d682f1a2",
+            "d905b33f",
+            "e3038f8c",
+            "gpt4_2f91af09",
+            "gpt4_372c3eed",
+            "gpt4_372c3eed_abs"
+          ]
+        },
+        "notes": "V9-1 uses the official cleaned LongMemEval source. The primary pilot follows PLANv9's 100-item budget across five governed question types, while `knowledge-update` is preserved as an auxiliary holdout slice for later regressions.",
+        "primary_question_types": [
+          "single-session-user",
+          "single-session-assistant",
+          "single-session-preference",
+          "multi-session",
+          "temporal-reasoning"
+        ],
+        "recent_session_budget": 3,
+        "single-session-assistant": {
+          "examples_materialized": 20,
+          "question_ids": [
+            "16c90bf4",
+            "18dcd5a5",
+            "1b9b7252",
+            "1de5cff2",
+            "2bf43736",
+            "3249768e",
+            "3e321797",
+            "4baee567",
+            "561fabcd",
+            "58470ed2",
+            "6222b6eb",
+            "70b3e69b",
+            "7a8d0b71",
+            "7e00a6cb",
+            "89527b6b",
+            "8aef76bc",
+            "c4f10528",
+            "e982271f",
+            "eaca4986",
+            "fca762bc"
+          ]
+        },
+        "single-session-preference": {
+          "examples_materialized": 20,
+          "question_ids": [
+            "06878be2",
+            "06f04340",
+            "195a1a1b",
+            "1c0ddc50",
+            "1d4e3b97",
+            "1da05512",
+            "35a27287",
+            "38146c39",
+            "505af2f5",
+            "54026fce",
+            "57f827a0",
+            "6b7dfb22",
+            "75832dbd",
+            "75f70248",
+            "95228167",
+            "a89d7624",
+            "afdc33df",
+            "b0479f84",
+            "b6025781",
+            "caf03d32"
+          ]
+        },
+        "single-session-user": {
+          "examples_materialized": 20,
+          "question_ids": [
+            "001be529",
+            "19b5f2b3",
+            "19b5f2b3_abs",
+            "1e043500",
+            "25e5aa4f",
+            "545bd2b5",
+            "577d4d32",
+            "58ef2f1c",
+            "86f00804",
+            "8e9d538c",
+            "94f70d80",
+            "a06e4cfe",
+            "c5e8278d",
+            "c8c3f81d",
+            "ccb36322",
+            "d52b4f67",
+            "dccbc061",
+            "e01b8e2f",
+            "e47becba",
+            "f8c5f88b"
+          ]
+        },
+        "source_path": "/root/autodl-tmp/.cache/huggingface/hub/datasets--xiaowu0162--longmemeval-cleaned/blobs/d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+        "temporal-reasoning": {
+          "examples_materialized": 20,
+          "question_ids": [
+            "2ebe6c90",
+            "993da5e2",
+            "gpt4_213fd887",
+            "gpt4_21adecb5",
+            "gpt4_2f56ae70",
+            "gpt4_2f584639",
+            "gpt4_4cd9eba1",
+            "gpt4_4edbafa2",
+            "gpt4_59149c77",
+            "gpt4_59149c78",
+            "gpt4_65aabe59",
+            "gpt4_68e94288",
+            "gpt4_6dc9b45b",
+            "gpt4_70e84552",
+            "gpt4_7a0daae1",
+            "gpt4_7bc6cf22",
+            "gpt4_7ca326fa",
+            "gpt4_8279ba02",
+            "gpt4_e414231e",
+            "gpt4_fe651585"
+          ]
+        }
+      }
+    },
+    "memoryagentbench": {
+      "all_required_baselines_present": true,
+      "baselines": {
+        "b0_short_window": {
+          "baseline_id": "b0_short_window",
+          "examples_evaluated": 100,
+          "label": "B0 short-window baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "memoryagent_score",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b1_full_history": {
+          "baseline_id": "b1_full_history",
+          "examples_evaluated": 100,
+          "label": "B1 full-history baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "memoryagent_score",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b2_text_summary": {
+          "baseline_id": "b2_text_summary",
+          "examples_evaluated": 100,
+          "label": "B2 text-summary baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.0,
+          "metric_name": "memoryagent_score",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 0.0,
+          "task_score": 0.0
+        },
+        "b3_text_rag": {
+          "baseline_id": "b3_text_rag",
+          "examples_evaluated": 100,
+          "label": "B3 text-RAG baseline",
+          "mean_invalid_resolution_count": 0.0,
+          "mean_steps_executed": 0.0,
+          "mean_support_retrieval_score": 0.045017497249705454,
+          "metric_name": "memoryagent_score",
+          "present": true,
+          "success_rate": 0.0,
+          "support_pool_size_mean": 39.5,
+          "task_score": 0.03439415039622352
+        }
+      },
+      "benchmark_name": "MemoryAgentBench",
+      "manifest": {
+        "benchmark_id": "memoryagentbench",
+        "context_token_budget_short_window": 512,
+        "dataset_files": {
+          "b0_short_window_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b0_short_window_eval.jsonl",
+          "b1_full_history_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b1_full_history_eval.jsonl",
+          "b2_text_summary_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b2_text_summary_eval.jsonl",
+          "b3_rag_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b3_rag_eval.jsonl",
+          "b3_rag_support": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b3_rag_support.jsonl"
+        },
+        "examples_per_capability": 25,
+        "notes": "V9-1 promotes MemoryAgentBench to a governed pilot by preserving full context for B1, retaining a short-window control for B0, generating deterministic text summaries for B2, and chunking per-episode support notes for B3 retrieval with a bounded, evenly spread bank.",
+        "pilot_examples_total": 100,
+        "rag_support_chunk_stride_words": 320,
+        "rag_support_chunk_words": 384,
+        "rag_support_chunks_per_group_cap": 48,
+        "selected_capabilities": {
+          "AR": {
+            "display_name": "Accurate Retrieval",
+            "examples_materialized": 25,
+            "preferred_source": "ruler_qa1_197K",
+            "primary_metric": "exact_match",
+            "rows_used": [
+              {
+                "preferred_source_match": true,
+                "questions_available": 100,
+                "questions_selected": 25,
+                "source": "ruler_qa1_197K"
+              }
+            ]
+          },
+          "CR": {
+            "display_name": "Conflict Resolution",
+            "examples_materialized": 25,
+            "preferred_source": "factconsolidation_mh_6k",
+            "primary_metric": "exact_match",
+            "rows_used": [
+              {
+                "preferred_source_match": true,
+                "questions_available": 100,
+                "questions_selected": 25,
+                "source": "factconsolidation_mh_6k"
+              }
+            ]
+          },
+          "LRU": {
+            "display_name": "Long-Range Understanding",
+            "examples_materialized": 25,
+            "preferred_source": "infbench_sum_eng_shots2",
+            "primary_metric": "rougeLsum_f1",
+            "rows_used": [
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              },
+              {
+                "preferred_source_match": true,
+                "questions_available": 1,
+                "questions_selected": 1,
+                "source": "infbench_sum_eng_shots2"
+              }
+            ]
+          },
+          "TTL": {
+            "display_name": "Test-Time Learning",
+            "examples_materialized": 25,
+            "preferred_source": "icl_trec_coarse_6600shot_balance",
+            "primary_metric": "exact_match",
+            "rows_used": [
+              {
+                "preferred_source_match": true,
+                "questions_available": 100,
+                "questions_selected": 25,
+                "source": "icl_trec_coarse_6600shot_balance"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "mainline_consumer_candidate": "C0_or_C2_only",
+  "phase": "V9-1",
+  "primary_backbone_key": "qwen34",
+  "primary_backbone_label": "Qwen3-4B",
+  "recommended_next_step": "open_v9_2_withinsession_sharedkv_scout_c0_c2",
+  "source_v9_0_next_step": "hard_fail_a2_shift_mainline_consumer_to_c0_or_c2",
+  "source_v9_0_outcome": "O2"
+}

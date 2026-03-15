@@ -1,0 +1,22 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: baseline_vanilla_story_cloze_qwen3_real_2shot
+  stage: M5
+  method_variant: baseline-vanilla-2shot
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: prompting
+  mode: vanilla
+  support_examples: 2
+
+runtime:
+  eval_examples: 4
+  device: cpu

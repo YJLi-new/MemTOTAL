@@ -1,0 +1,10 @@
+task:
+  name: fever_real_screen_source256
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: hf_real_screen256
+  dataset_path: data/benchmarks/materialized/fever/eval-real-smoke256.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

@@ -1,0 +1,12 @@
+includes:
+  - tl_poc_fever_qwen25_bridge_h4_k8.yaml
+
+experiment:
+  name: tl_poc_fever_qwen25_dynamics_recovery_bridge_h4_k8
+  stage: TL-PoC
+  method_variant: fever-tl-poc-dynamics-h4-k8
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl
+

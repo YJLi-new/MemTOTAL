@@ -1,0 +1,11 @@
+includes:
+  - memory_bootstrap_transformer_real.yaml
+
+method:
+  writer:
+    memory_slots: 8
+  reader:
+    num_queries: 1
+  fuser:
+    arch: resampler
+    short_slots: 4

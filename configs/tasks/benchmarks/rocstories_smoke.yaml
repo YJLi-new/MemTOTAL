@@ -1,0 +1,10 @@
+task:
+  name: rocstories_smoke
+  benchmark_id: rocstories
+  domain: narrative
+  split: smoke
+  smoke_subset: local_contract_v1
+  dataset_path: data/benchmarks/smoke/rocstories_smoke.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

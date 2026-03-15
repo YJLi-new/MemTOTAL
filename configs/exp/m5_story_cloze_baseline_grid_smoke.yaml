@@ -1,0 +1,95 @@
+experiment:
+  name: m5_story_cloze_baseline_grid_smoke
+  stage: M5
+  method_variant: baseline-grid-smoke
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+grid:
+  shots: [0, 2]
+  steps: [0, 4]
+  variants:
+    - family: prompting
+      mode: vanilla
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_vanilla_story_cloze_qwen25_real_smoke.yaml
+    - family: prompting
+      mode: cot
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_cot_story_cloze_qwen25_real_smoke.yaml
+    - family: meta_prompting
+      mode: planner_critic
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_metaprompting_story_cloze_qwen25_real_smoke.yaml
+    - family: rag
+      mode: retrieval_augmented
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_rag_story_cloze_qwen25_real_smoke.yaml
+    - family: memory_bank
+      mode: episodic_bank
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_memory_bank_story_cloze_qwen25_real_smoke.yaml
+    - family: lightthinker
+      mode: compress_then_answer
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_lightthinker_story_cloze_qwen25_real_smoke.yaml
+    - family: adapter
+      mode: prompt_tuning
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_prompt_tuning_story_cloze_qwen25_real_smoke.yaml
+    - family: adapter
+      mode: lora
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_lora_story_cloze_qwen25_real_smoke.yaml
+    - family: adapter
+      mode: ia3
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_ia3_story_cloze_qwen25_real_smoke.yaml
+    - family: adapter
+      mode: prefix_tuning
+      backbone: Qwen2.5-1.5B-Instruct
+      template_config: baseline_prefix_tuning_story_cloze_qwen25_real_smoke.yaml
+    - family: prompting
+      mode: vanilla
+      backbone: Qwen3-8B
+      template_config: baseline_vanilla_story_cloze_qwen3_real_smoke.yaml
+    - family: prompting
+      mode: cot
+      backbone: Qwen3-8B
+      template_config: baseline_cot_story_cloze_qwen3_real_smoke.yaml
+    - family: meta_prompting
+      mode: planner_critic
+      backbone: Qwen3-8B
+      template_config: baseline_metaprompting_story_cloze_qwen3_real_smoke.yaml
+    - family: rag
+      mode: retrieval_augmented
+      backbone: Qwen3-8B
+      template_config: baseline_rag_story_cloze_qwen3_real_smoke.yaml
+    - family: memory_bank
+      mode: episodic_bank
+      backbone: Qwen3-8B
+      template_config: baseline_memory_bank_story_cloze_qwen3_real_smoke.yaml
+    - family: lightthinker
+      mode: compress_then_answer
+      backbone: Qwen3-8B
+      template_config: baseline_lightthinker_story_cloze_qwen3_real_smoke.yaml
+    - family: adapter
+      mode: prompt_tuning
+      backbone: Qwen3-8B
+      template_config: baseline_prompt_tuning_story_cloze_qwen3_real_smoke.yaml
+    - family: adapter
+      mode: lora
+      backbone: Qwen3-8B
+      template_config: baseline_lora_story_cloze_qwen3_real_smoke.yaml
+    - family: adapter
+      mode: ia3
+      backbone: Qwen3-8B
+      template_config: baseline_ia3_story_cloze_qwen3_real_smoke.yaml
+    - family: adapter
+      mode: prefix_tuning
+      backbone: Qwen3-8B
+      template_config: baseline_prefix_tuning_story_cloze_qwen3_real_smoke.yaml

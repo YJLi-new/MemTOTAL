@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/stage_c_real_pilot_content_audit_fever.yaml",
+    "--seed",
+    "7301",
+    "--output_dir",
+    "results/generated/review/m3-fever-real-pilot-qwen25/content-audit",
+    "--input_root",
+    "runs/review/m3-fever-real-pilot-qwen25"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "fever",
+  "experiment_name": "stage_c_real_pilot_content_audit_fever",
+  "git_hash": "07118f235c8a2af97eb3088a34d315e6cf10ff12",
+  "gpu_memory_total": "unknown",
+  "gpu_name": "none",
+  "method_variant": "stage-c-real-pilot-content-audit-fever",
+  "nvidia_driver_version": "unknown",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 7301,
+  "smoke_subset": "real_fixed64",
+  "stage": "M3-fever-real-pilot",
+  "task_domain": "qa",
+  "task_name": "fever_real_fixed64",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T12:33:25.463028+00:00",
+  "torch_version": "2.8.0+cu128"
+}

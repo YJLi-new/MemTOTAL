@@ -1,0 +1,11 @@
+includes:
+  - m4_fever_qwen25_shared_injection_common.yaml
+
+experiment:
+  name: m4_fever_qwen25_injected_shuffle
+  method_variant: shared-injection-shuffle
+
+runtime:
+  shared_injection_arm: injected
+  writer_memory_control: shuffled
+  pilot_arm_alias: I_shuffle

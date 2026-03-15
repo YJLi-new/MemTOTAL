@@ -1,0 +1,11 @@
+includes:
+  - tl_writer_value_fever_qwen25_control_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_micro_lora_fever_qwen25_control_partition_none_linear_h4_k4
+  stage: TL-Micro-LoRA-V2
+  method_variant: fever-tl-micro-lora-v2-control-partition-none-linear-h4-k4
+
+runtime:
+  pilot_receiver_lora_learning_rate: 5.0e-5
+  pilot_receiver_lora_weight_decay: 0.0

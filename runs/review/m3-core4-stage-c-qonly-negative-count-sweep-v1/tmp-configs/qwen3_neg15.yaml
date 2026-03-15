@@ -1,0 +1,9 @@
+includes:
+  - /root/mydir/MemTOTAL/configs/exp/m3_stage_c_core4_qwen3_smoke.yaml
+
+experiment:
+  name: m3_stage_c_core4_qwen3_qonly_neg15
+  method_variant: m3-core4-stage-c-qonly-neg15-qwen3
+
+runtime:
+  retrieval_negative_count: 15

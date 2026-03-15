@@ -1,0 +1,11 @@
+includes:
+  - tl_bridge_rescue_fever_qwen25_h4_k8.yaml
+
+experiment:
+  name: tl_bridge_rescue_fever_qwen25_dynamics_recovery_h4_k8
+  stage: TL-Bridge-Rescue
+  method_variant: fever-tl-bridge-rescue-dynamics-h4-k8
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl

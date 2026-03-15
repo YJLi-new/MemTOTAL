@@ -1,0 +1,9 @@
+includes:
+  - m3_stage_c_qwen25_smoke.yaml
+
+experiment:
+  name: m3_stage_c_qwen25_smoke_w_only
+  method_variant: ours-stage-c-fewshot-adapt-w-only
+
+runtime:
+  adaptation_target: w_only

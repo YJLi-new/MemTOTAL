@@ -1,0 +1,14 @@
+includes:
+  - ./m3_stage_c_core4_qwen25_smoke.yaml
+
+experiment:
+  name: m3_stage_c_core4_qwen25_curve_smoke
+  method_variant: ours-stage-c-core4-qwen25-curve-smoke
+
+runtime:
+  adapt_steps: 5
+  adapt_shots:
+    - 0
+    - 1
+    - 2
+    - 3

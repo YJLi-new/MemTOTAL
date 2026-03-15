@@ -1,0 +1,141 @@
+{
+  "_meta": {
+    "config_path": "/root/mydir/MemTOTAL/configs/exp/writer_weaver_qwen25_f1b_narrativeqa_template.yaml",
+    "includes": [
+      "/root/mydir/MemTOTAL/configs/tasks/benchmarks/materialized/narrativeqa_real_smoke.yaml",
+      "/root/mydir/MemTOTAL/configs/method/memory_bootstrap_transformer_real.yaml"
+    ]
+  },
+  "backbone": {
+    "cache_dir": "/root/autodl-tmp/hf-cache",
+    "dtype": "bfloat16",
+    "load_mode": "hf_causal_lm",
+    "model_id": "/root/autodl-tmp/models/Qwen2.5-1.5B-Instruct",
+    "name": "Qwen2.5-1.5B-Instruct"
+  },
+  "experiment": {
+    "method_variant": "writer-weaver-qwen25-f1b-narrativeqa",
+    "name": "writer_weaver_qwen25_f1b_narrativeqa_template",
+    "stage": "Writer-Weaver-F1b"
+  },
+  "method": {
+    "embed_dim": "auto",
+    "fuser": {
+      "arch": "resampler",
+      "dropout": 0.0,
+      "hidden_dim": null,
+      "num_heads": 4,
+      "short_slots": 2
+    },
+    "injector": {
+      "enabled": true,
+      "mode": "prefix",
+      "position": "segment"
+    },
+    "name": "general-writer-adaptable-reader-transformer-bootstrap",
+    "reader": {
+      "attention_mode": "standard",
+      "condition_on_context": true,
+      "conditioning": {
+        "domain_key": "domain",
+        "include_task_name": true
+      },
+      "conditioning_mode": "add",
+      "dropout": 0.0,
+      "gated_add_scale": 0.1,
+      "gating_mode": false,
+      "num_heads": 4,
+      "num_queries": 4,
+      "query_residual_scale": 1.0
+    },
+    "segmenter": {
+      "delimiter": "||",
+      "mode": "delimiter"
+    },
+    "writer": {
+      "arch": "transformer",
+      "conditioning_layers": 3,
+      "dropout": 0.0,
+      "hidden_dim": 3072,
+      "memory_slots": 8,
+      "num_heads": 8,
+      "transformer_layers": 4
+    },
+    "writer_adapter": {
+      "alpha": 4.0,
+      "dropout": 0.0,
+      "enabled": true,
+      "rank": 2,
+      "target_modules": [
+        "conditioning_out_proj",
+        "encoder_self_attn_out_proj"
+      ]
+    }
+  },
+  "runtime": {
+    "device": "cuda",
+    "pilot_alignment_aux_mode": false,
+    "pilot_arm_alias": "I_writer_f1b",
+    "pilot_bridge_mode": "writer_direct",
+    "pilot_choice_ce_weight": 1.0,
+    "pilot_competitor_hinge_weight_max": 0.0,
+    "pilot_injection_mode": "shallow_prefix",
+    "pilot_memory_path_variant": "single_level",
+    "pilot_projector_learning_rate": 0.001,
+    "pilot_projector_token_source": "writer_slots",
+    "pilot_projector_warmup_steps": 0,
+    "pilot_projector_weight_decay": 0.0,
+    "pilot_prompt_variant": "task_native",
+    "pilot_snapshot_steps": [
+      0,
+      8,
+      16,
+      32,
+      48
+    ],
+    "pilot_support_encoder_mode": "pooled_block",
+    "pilot_support_examples": 8,
+    "pilot_support_serialization": "example_blocks_raw8",
+    "pilot_train_steps": 48,
+    "pilot_train_support_mode": "static_support_rows",
+    "pilot_trainable_variant": "writer_adapter_only",
+    "pilot_writer_adapter_learning_rate": 0.0005,
+    "pilot_writer_adapter_weight_decay": 0.0,
+    "pilot_writer_common_mode_penalty_weight": 0.1,
+    "pilot_writer_context_tokens": 8,
+    "pilot_writer_covariance_diversity_weight": 0.05,
+    "pilot_writer_gain_margin": 0.05,
+    "pilot_writer_gain_margin_weight": 0.25,
+    "pilot_writer_learning_rate": 0.0002,
+    "pilot_writer_orthogonalize_slot_basis": true,
+    "pilot_writer_slot_energy_balance_weight": 0.01,
+    "pilot_writer_stimulus_mode": "support_and_context",
+    "pilot_writer_weight_decay": 0.0,
+    "shared_injection_arm": "injected",
+    "stage_c_choice_margin": 0.1,
+    "training_stage": "shared_injection_pilot",
+    "writer_memory_control": "real"
+  },
+  "task": {
+    "benchmark_id": "narrativeqa",
+    "dataset_path": "/root/mydir/MemTOTAL/runs/review/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/eval.jsonl",
+    "domain": "narrative",
+    "evaluator": {
+      "type": "qa_f1"
+    },
+    "metric_name": "f1",
+    "name": "narrativeqa_real_smoke",
+    "narrativeqa_runtime": {
+      "segment_budget": 6,
+      "selector": "question_aware"
+    },
+    "pilot_split": "hf_real_smoke4_runtime_pool_qaware6x128",
+    "smoke_subset": "hf_real_smoke4_runtime_pool_qaware6x128",
+    "split": "eval",
+    "support_dataset_path": "/root/mydir/MemTOTAL/runs/review/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/support.jsonl",
+    "support_lookup_dataset_paths": [],
+    "train_dataset_path": "/root/mydir/MemTOTAL/runs/review/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/train.jsonl",
+    "train_support_dataset_path": "/root/mydir/MemTOTAL/runs/review/writer-weaver-qwen25-smoke/materialized-datasets/narrativeqa/support.jsonl",
+    "train_support_episode_bank_path": ""
+  }
+}

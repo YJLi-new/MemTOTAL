@@ -1,0 +1,14 @@
+includes:
+  - m4_fever_qwen25_phase2_val_common.yaml
+
+experiment:
+  name: m4_fever_qwen25_dynamics_recovery
+  stage: M4-shared-injection
+  method_variant: fever-dynamics-recovery
+
+backbone:
+  attn_implementation: eager
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl

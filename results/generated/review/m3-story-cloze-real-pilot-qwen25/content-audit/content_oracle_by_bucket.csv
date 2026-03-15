@@ -1,0 +1,5 @@
+B_plus_content_task_score,B_task_score,F_task_score,G_task_score,best_of_BF_flip_gain,best_of_B_plus_content_flip_gain,bucket,examples,oracle_best_of_BF_task_score,oracle_best_of_B_plus_content_task_score,oracle_per_case_alpha_content_flip_gain,oracle_per_case_alpha_content_task_score
+1.0,1.0,1.0,1.0,0,0,base_correct_control,20,1.0,1.0,0,1.0
+0.0,0.0,0.0,0.0,0,0,improving_but_unflipped,40,0.0,0.0,0,0.0
+0.0,0.0,0.0,0.0,0,0,stubborn_wrong_other,20,0.0,0.0,0,0.0
+0.0,0.0,0.0,0.0,0,0,stubborn_wrong_story_context,20,0.0,0.0,0,0.0

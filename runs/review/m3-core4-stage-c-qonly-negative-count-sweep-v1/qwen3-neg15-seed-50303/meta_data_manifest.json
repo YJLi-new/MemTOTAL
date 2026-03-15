@@ -1,0 +1,62 @@
+{
+  "benchmarks_by_domain": {
+    "code": "kodcode",
+    "math": "gsm8k",
+    "narrative": "story_cloze",
+    "qa": "gpqa"
+  },
+  "dataset_sha256": "e2277b95e3bafa221558e0832aa1a6515937cfaa841ea909cc78b17c7c41d82d",
+  "dataset_sha256s": {
+    "code:kodcode": "6527154de94fb8de384c72ffc2a251bbfdd03d2bc2590709ebe4706bae26d0f1",
+    "math:gsm8k": "393895c3f8a971425b012dcab6b6171dc4672819db54d78c12be463a31118ebe",
+    "narrative:story_cloze": "6a5a7a82965ac5ee2e566a9258eb9186cbec21a7e65c3498e6dc9596f1010486",
+    "qa:gpqa": "9ba227bebb3fc9369116f119e7644888acbd24bea7ae6b30bd134d4569e0ffb8"
+  },
+  "dataset_sources": [
+    {
+      "benchmark_id": "gsm8k",
+      "dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/gsm8k/eval-real-smoke8.jsonl",
+      "domain": "math",
+      "smoke_subset": "hf_real_smoke8"
+    },
+    {
+      "benchmark_id": "kodcode",
+      "dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/kodcode/eval-real-smoke8.jsonl",
+      "domain": "code",
+      "smoke_subset": "hf_real_smoke8"
+    },
+    {
+      "benchmark_id": "gpqa",
+      "dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/gpqa/eval-real-smoke8.jsonl",
+      "domain": "qa",
+      "smoke_subset": "hf_real_smoke8"
+    },
+    {
+      "benchmark_id": "story_cloze",
+      "dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl",
+      "domain": "narrative",
+      "smoke_subset": "hf_real_smoke8"
+    }
+  ],
+  "examples_per_domain": {
+    "code": 8,
+    "math": 8,
+    "narrative": 8,
+    "qa": 8
+  },
+  "general_domains": [
+    "math",
+    "code",
+    "qa",
+    "narrative"
+  ],
+  "query_size": 3,
+  "sampling_policy": "uniform_examples",
+  "source_domains": [
+    "math",
+    "code",
+    "qa"
+  ],
+  "support_size": 3,
+  "target_domain": "narrative"
+}

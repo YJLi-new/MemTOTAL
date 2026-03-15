@@ -1,0 +1,21 @@
+includes:
+  - ../tasks/benchmarks/gsm8k_smoke.yaml
+
+experiment:
+  name: baseline_vanilla_gsm8k_qwen25_smoke
+  stage: M5
+  method_variant: baseline-vanilla
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: prompting
+  mode: vanilla
+
+runtime:
+  eval_examples: 2
+  device: cpu

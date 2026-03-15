@@ -1,0 +1,25 @@
+{
+  "dataset_sha256": "e2277b95e3bafa221558e0832aa1a6515937cfaa841ea909cc78b17c7c41d82d",
+  "device": "cuda",
+  "event_name": "train",
+  "examples": 8,
+  "examples_seen": 8,
+  "final_loss": 8.406317710876465,
+  "general_domains": [
+    "math",
+    "code",
+    "qa",
+    "narrative"
+  ],
+  "mean_loss": 7.682887494564056,
+  "mode": "train",
+  "peak_device_memory_bytes": 4063915520,
+  "peak_device_memory_mib": 3875.651855,
+  "peak_rss_kb": 6177012,
+  "token_count": 569,
+  "tokens_per_sec": 382.793291,
+  "trainable_module": "writer",
+  "training_stage": "stage_a",
+  "wall_time_sec": 1.486442,
+  "writer_checkpoint": "/root/mydir/MemTOTAL/runs/verify/m3-story-cloze-real-pilot-qwen25/stage-a/writer.ckpt"
+}

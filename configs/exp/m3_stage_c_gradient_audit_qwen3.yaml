@@ -1,0 +1,10 @@
+includes:
+  - ./m3_stage_c_core4_qwen3_smoke.yaml
+
+experiment:
+  name: m3_stage_c_gradient_audit_qwen3
+  stage: M3-stage-c-gradient-audit
+  method_variant: analysis-stage-c-gradient-audit-qwen3
+
+runtime:
+  analysis_mode: m3_stage_c_gradient_audit

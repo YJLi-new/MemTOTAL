@@ -1,0 +1,412 @@
+{
+  "rows": [
+    {
+      "episode_index": 0,
+      "episode_seed": 50203,
+      "eval_query_set_ids": [
+        [
+          "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+          "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3"
+        ],
+        [
+          "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+          "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3"
+        ],
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+          "16ac16d6-41a4-49f4-a3e1-ec242ce8f921"
+        ]
+      ],
+      "query_candidate_ids": [
+        "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921"
+      ],
+      "shot": 0,
+      "support_candidate_ids": [
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+        "2758e7c5-6100-4182-99d3-e7d9e435a394",
+        "ced7d97e-c873-448c-bce0-30274ceac332"
+      ],
+      "support_ids": [],
+      "support_negative_pool_ids": [
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+        "2758e7c5-6100-4182-99d3-e7d9e435a394",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3",
+        "gsm8k-4",
+        "gsm8k-5",
+        "gsm8k-6",
+        "gsm8k-7",
+        "kodcode-0",
+        "kodcode-1",
+        "kodcode-2",
+        "kodcode-3",
+        "kodcode-4",
+        "kodcode-5",
+        "kodcode-6",
+        "kodcode-7",
+        "rec06pnAkLOr2t2mp",
+        "rec0Arme2jcXQZnAW",
+        "rec0wZvZgiz320KRs",
+        "rec0yTRmO1o1xCA6H",
+        "rec1zl5LvaatzGhFt",
+        "rec260hNUCEj109Dj",
+        "rec2UlKqC6RFHdcro",
+        "rec2ZTsqazBZ3LTWZ"
+      ],
+      "target_support_bank_size": 4,
+      "target_support_selection_policy": "plain"
+    },
+    {
+      "episode_index": 1,
+      "episode_seed": 66330,
+      "eval_query_set_ids": [
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "ced7d97e-c873-448c-bce0-30274ceac332",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+        ],
+        [
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "ced7d97e-c873-448c-bce0-30274ceac332"
+        ],
+        [
+          "ced7d97e-c873-448c-bce0-30274ceac332",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3"
+        ]
+      ],
+      "query_candidate_ids": [
+        "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+      ],
+      "shot": 0,
+      "support_candidate_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+        "b98c114b-d657-49d2-9bd1-912438fadd68"
+      ],
+      "support_ids": [],
+      "support_negative_pool_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3",
+        "gsm8k-4",
+        "gsm8k-5",
+        "gsm8k-6",
+        "gsm8k-7",
+        "kodcode-0",
+        "kodcode-1",
+        "kodcode-2",
+        "kodcode-3",
+        "kodcode-4",
+        "kodcode-5",
+        "kodcode-6",
+        "kodcode-7",
+        "rec06pnAkLOr2t2mp",
+        "rec0Arme2jcXQZnAW",
+        "rec0wZvZgiz320KRs",
+        "rec0yTRmO1o1xCA6H",
+        "rec1zl5LvaatzGhFt",
+        "rec260hNUCEj109Dj",
+        "rec2UlKqC6RFHdcro",
+        "rec2ZTsqazBZ3LTWZ"
+      ],
+      "target_support_bank_size": 4,
+      "target_support_selection_policy": "plain"
+    },
+    {
+      "episode_index": 2,
+      "episode_seed": 82457,
+      "eval_query_set_ids": [
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "2758e7c5-6100-4182-99d3-e7d9e435a394"
+        ],
+        [
+          "2758e7c5-6100-4182-99d3-e7d9e435a394",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+        ],
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "2758e7c5-6100-4182-99d3-e7d9e435a394"
+        ]
+      ],
+      "query_candidate_ids": [
+        "2758e7c5-6100-4182-99d3-e7d9e435a394",
+        "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+      ],
+      "shot": 0,
+      "support_candidate_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8"
+      ],
+      "support_ids": [],
+      "support_negative_pool_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3",
+        "gsm8k-4",
+        "gsm8k-5",
+        "gsm8k-6",
+        "gsm8k-7",
+        "kodcode-0",
+        "kodcode-1",
+        "kodcode-2",
+        "kodcode-3",
+        "kodcode-4",
+        "kodcode-5",
+        "kodcode-6",
+        "kodcode-7",
+        "rec06pnAkLOr2t2mp",
+        "rec0Arme2jcXQZnAW",
+        "rec0wZvZgiz320KRs",
+        "rec0yTRmO1o1xCA6H",
+        "rec1zl5LvaatzGhFt",
+        "rec260hNUCEj109Dj",
+        "rec2UlKqC6RFHdcro",
+        "rec2ZTsqazBZ3LTWZ"
+      ],
+      "target_support_bank_size": 4,
+      "target_support_selection_policy": "plain"
+    },
+    {
+      "episode_index": 0,
+      "episode_seed": 50203,
+      "eval_query_set_ids": [
+        [
+          "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+          "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3"
+        ],
+        [
+          "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+          "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3"
+        ],
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+          "16ac16d6-41a4-49f4-a3e1-ec242ce8f921"
+        ]
+      ],
+      "query_candidate_ids": [
+        "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921"
+      ],
+      "shot": 3,
+      "support_candidate_ids": [
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+        "2758e7c5-6100-4182-99d3-e7d9e435a394",
+        "ced7d97e-c873-448c-bce0-30274ceac332"
+      ],
+      "support_ids": [
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+        "2758e7c5-6100-4182-99d3-e7d9e435a394"
+      ],
+      "support_negative_pool_ids": [
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+        "2758e7c5-6100-4182-99d3-e7d9e435a394",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3",
+        "gsm8k-4",
+        "gsm8k-5",
+        "gsm8k-6",
+        "gsm8k-7",
+        "kodcode-0",
+        "kodcode-1",
+        "kodcode-2",
+        "kodcode-3",
+        "kodcode-4",
+        "kodcode-5",
+        "kodcode-6",
+        "kodcode-7",
+        "rec06pnAkLOr2t2mp",
+        "rec0Arme2jcXQZnAW",
+        "rec0wZvZgiz320KRs",
+        "rec0yTRmO1o1xCA6H",
+        "rec1zl5LvaatzGhFt",
+        "rec260hNUCEj109Dj",
+        "rec2UlKqC6RFHdcro",
+        "rec2ZTsqazBZ3LTWZ"
+      ],
+      "target_support_bank_size": 4,
+      "target_support_selection_policy": "plain"
+    },
+    {
+      "episode_index": 1,
+      "episode_seed": 66330,
+      "eval_query_set_ids": [
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "ced7d97e-c873-448c-bce0-30274ceac332",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+        ],
+        [
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "ced7d97e-c873-448c-bce0-30274ceac332"
+        ],
+        [
+          "ced7d97e-c873-448c-bce0-30274ceac332",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3"
+        ]
+      ],
+      "query_candidate_ids": [
+        "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+      ],
+      "shot": 3,
+      "support_candidate_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+        "b98c114b-d657-49d2-9bd1-912438fadd68"
+      ],
+      "support_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49"
+      ],
+      "support_negative_pool_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "f2420b66-049f-4615-b2ba-51a0f6d63c49",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3",
+        "gsm8k-4",
+        "gsm8k-5",
+        "gsm8k-6",
+        "gsm8k-7",
+        "kodcode-0",
+        "kodcode-1",
+        "kodcode-2",
+        "kodcode-3",
+        "kodcode-4",
+        "kodcode-5",
+        "kodcode-6",
+        "kodcode-7",
+        "rec06pnAkLOr2t2mp",
+        "rec0Arme2jcXQZnAW",
+        "rec0wZvZgiz320KRs",
+        "rec0yTRmO1o1xCA6H",
+        "rec1zl5LvaatzGhFt",
+        "rec260hNUCEj109Dj",
+        "rec2UlKqC6RFHdcro",
+        "rec2ZTsqazBZ3LTWZ"
+      ],
+      "target_support_bank_size": 4,
+      "target_support_selection_policy": "plain"
+    },
+    {
+      "episode_index": 2,
+      "episode_seed": 82457,
+      "eval_query_set_ids": [
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "2758e7c5-6100-4182-99d3-e7d9e435a394"
+        ],
+        [
+          "2758e7c5-6100-4182-99d3-e7d9e435a394",
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+        ],
+        [
+          "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+          "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969",
+          "2758e7c5-6100-4182-99d3-e7d9e435a394"
+        ]
+      ],
+      "query_candidate_ids": [
+        "2758e7c5-6100-4182-99d3-e7d9e435a394",
+        "0faf4829-3b27-42d3-a69f-2d6036b110f3",
+        "b73dcd4d-e4ad-498d-ac8f-a31a7e4bc969"
+      ],
+      "shot": 3,
+      "support_candidate_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8"
+      ],
+      "support_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "ced7d97e-c873-448c-bce0-30274ceac332"
+      ],
+      "support_negative_pool_ids": [
+        "16ac16d6-41a4-49f4-a3e1-ec242ce8f921",
+        "b98c114b-d657-49d2-9bd1-912438fadd68",
+        "ced7d97e-c873-448c-bce0-30274ceac332",
+        "81607ad0-83c4-4c23-ad7c-789a149d97c8",
+        "gsm8k-0",
+        "gsm8k-1",
+        "gsm8k-2",
+        "gsm8k-3",
+        "gsm8k-4",
+        "gsm8k-5",
+        "gsm8k-6",
+        "gsm8k-7",
+        "kodcode-0",
+        "kodcode-1",
+        "kodcode-2",
+        "kodcode-3",
+        "kodcode-4",
+        "kodcode-5",
+        "kodcode-6",
+        "kodcode-7",
+        "rec06pnAkLOr2t2mp",
+        "rec0Arme2jcXQZnAW",
+        "rec0wZvZgiz320KRs",
+        "rec0yTRmO1o1xCA6H",
+        "rec1zl5LvaatzGhFt",
+        "rec260hNUCEj109Dj",
+        "rec2UlKqC6RFHdcro",
+        "rec2ZTsqazBZ3LTWZ"
+      ],
+      "target_support_bank_size": 4,
+      "target_support_selection_policy": "plain"
+    }
+  ]
+}

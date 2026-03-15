@@ -1,0 +1,15 @@
+{
+  "analysis_mode": "m4_shared_injection_dynamics_recovery",
+  "attention_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/prefix_attention_consumption.csv",
+  "content_gap_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/content_gap_curve.csv",
+  "pairwise_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/dynamics_recovery_pairwise.csv",
+  "prefix_norm_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/prefix_norm_drift.csv",
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/val_selection_report.md",
+  "selected_step": null,
+  "selected_suite": null,
+  "selected_support_serialization": null,
+  "selection_json": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/selection.json",
+  "selection_passed": false,
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/dynamics_recovery_summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-dynamics-recovery-qwen25-v2/dynamics-recovery/summary.svg"
+}

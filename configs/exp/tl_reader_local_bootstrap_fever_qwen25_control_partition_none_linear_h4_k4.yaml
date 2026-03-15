@@ -1,0 +1,29 @@
+includes:
+  - m5_fever_qwen25_phase2_val_objective_dense_teacher_control_common.yaml
+  - ../method/memory_bootstrap_transformer_real_twolevel_h4_k4_slot_basis_ctxnone_linear_partition.yaml
+
+experiment:
+  name: tl_reader_local_bootstrap_fever_qwen25_control_partition_none_linear_h4_k4
+  stage: TL-Reader-Geometry-RG3
+  method_variant: fever-tl-reader-rg3-control-partition-none-linear-h4-k4
+
+runtime:
+  pilot_memory_path_variant: two_level
+  pilot_reader_context_mode: none
+  pilot_projector_token_source: short_slots
+  pilot_train_steps: 16
+  pilot_snapshot_steps:
+    - 0
+    - 2
+    - 4
+    - 8
+    - 12
+    - 16
+  pilot_memory_long_diversity_weight: 0.0
+  pilot_memory_short_diversity_weight: 0.0
+  pilot_reader_attention_diversity_weight: 0.0
+  pilot_reader_conditioned_query_orthogonality_weight: 0.0
+  pilot_reader_short_reconstruction_weight: 0.0
+  pilot_reader_fuser_bootstrap_steps: 0
+  pilot_writer_slot_basis_orthogonality_weight: 0.05
+  pilot_writer_orthogonalize_slot_basis: true

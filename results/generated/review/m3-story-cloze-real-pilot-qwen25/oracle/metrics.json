@@ -1,0 +1,9 @@
+{
+  "analysis_mode": "stage_c_real_pilot_oracle_audit",
+  "examples": 100,
+  "oracle_best_of_two_flip_gain": 0,
+  "oracle_by_bucket_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/oracle/oracle_by_bucket.csv",
+  "oracle_case_deltas_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/oracle/oracle_case_deltas.csv",
+  "oracle_per_case_alpha_flip_gain": 76,
+  "oracle_summary_csv": "/root/mydir/MemTOTAL/results/generated/m3-story-cloze-real-pilot-qwen25/oracle/oracle_summary.csv"
+}

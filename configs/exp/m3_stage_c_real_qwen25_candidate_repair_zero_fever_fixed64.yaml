@@ -1,0 +1,31 @@
+includes:
+  - ../tasks/benchmarks/pilots/fever_fixed64.yaml
+  - ../method/memory_bootstrap_transformer_real.yaml
+
+experiment:
+  name: m3_stage_c_real_qwen25_candidate_repair_zero_fever_fixed64
+  stage: M3-fever-real-fixed64
+  method_variant: stage-c-real-candidate-repair-zero-fever-fixed64
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+
+runtime:
+  training_stage: stage_c_real_pilot
+  stage_c_decision_mode: shared_plus_candidate_conditioned_late_fusion
+  stage_c_memory_control: real
+  stage_c_candidate_memory_control: zero
+  stage_c_choice_objective: choice_repair_ce_margin
+  stage_c_choice_residual_scale: 1.0
+  stage_c_candidate_residual_scale: 1.0
+  stage_c_choice_margin: 0.1
+  stage_c_repair_anchor_margin_threshold: 0.01
+  pilot_support_examples: 8
+  pilot_support_learning_rate: 0.2
+  pilot_adapt_steps: 3
+  expected_query_learning_mode: meta_trained
+  device: cuda

@@ -1,0 +1,9 @@
+alias,mode,primary_metric,primary_score,run_dir,task_margin,task_proxy_score,task_score
+A,analysis,task_score,0.2,A,-1.6377466678619386,0.2197556651326266,0.2
+B,analysis,task_score,0.2,B,-1.6379664707183839,0.21979337066179216,0.2
+F,analysis,task_score,0.2,F,-1.6373684120178222,0.21984277477533903,0.2
+G,analysis,task_score,0.2,G,-1.6373687076568604,0.21984276104152964,0.2
+B_plus_content,analysis,task_score,0.2,B_plus_content,-1.6379661750793457,0.2197933826432622,0.2
+oracle_best_of_BF,analysis,task_score,0.2,oracle_best_of_BF,-1.6379664707183839,0.21979337066179216,0.2
+oracle_best_of_B_plus_content,analysis,task_score,0.2,oracle_best_of_B_plus_content,-1.6379664707183839,0.21979337066179216,0.2
+oracle_per_case_alpha_content,analysis,task_score,0.2,oracle_per_case_alpha_content,-1.6339235019683838,0.21994237913093886,0.2

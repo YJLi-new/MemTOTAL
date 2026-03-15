@@ -1,0 +1,37 @@
+task:
+  name: story_cloze_real_fixed100
+  benchmark_id: story_cloze
+  domain: narrative
+  split: eval
+  smoke_subset: real_fixed100
+  pilot_split: fixed100
+  dataset_path: data/benchmarks/pilots/story_cloze/fixed100.jsonl
+  support_dataset_path: data/benchmarks/pilots/story_cloze/pilot-support8.jsonl
+  calibration_dataset_path: data/benchmarks/pilots/story_cloze/calibration-hard32.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/stage_c_real_pilot_content_audit_story.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/pilots/story_cloze_fixed100.yaml
+experiment:
+  name: stage_c_real_pilot_content_audit_story
+  stage: M3-story-cloze-real-pilot
+  method_variant: stage-c-real-pilot-content-audit-story
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+runtime:
+  analysis_mode: stage_c_real_pilot_content_audit
+  required_arm_aliases:
+  - A
+  - B
+  - F
+  - G
+  report_title: Story Cloze Real Pilot Content Audit
+  branch_fate_min_flip_gain: 2
+  branch_fate_min_alignment_rate: 0.6
+  primary_control_task: false

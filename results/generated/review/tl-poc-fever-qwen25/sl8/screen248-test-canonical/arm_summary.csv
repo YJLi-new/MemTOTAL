@@ -1,0 +1,6 @@
+case_rows,dominant_label_fraction,macro_f1,mean_margin,mode,primary_metric,primary_score,run_dir
+248,1.0,0.15160955347871236,-2.6674826049035594,A,accuracy,0.29435483870967744,/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/screen248-test-canonical/pilot-A-gate
+248,0.8870967741935484,0.21834729548040124,-2.117428994947864,I_real,accuracy,0.3064516129032258,/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/screen248-test-canonical/pilot-I-real-gate
+248,0.9112903225806451,0.21125975473801561,-2.1597882816868443,I_shuffle,accuracy,0.3064516129032258,/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/screen248-test-canonical/pilot-I-shuffle-gate
+248,1.0,0.15160955347871236,-1.8887559713855866,I_zero,accuracy,0.29435483870967744,/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/screen248-test-canonical/pilot-I-zero-gate
+248,0.7782258064516129,0.4679815480730813,0.5437737263498768,T,accuracy,0.5120967741935484,/root/autodl-tmp/runs/verify/tl-poc-fever-qwen25/sl8/screen248-test-canonical/pilot-T-gate

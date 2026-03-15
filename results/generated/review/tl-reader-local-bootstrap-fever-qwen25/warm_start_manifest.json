@@ -1,0 +1,4 @@
+{
+  "rg3-bootstrap-partition-none-linear-h4-k4": "/root/autodl-tmp/runs/verify/tl-reader-symmetry-break-fever-qwen25/rg2-partition-none-linear-h4-k4/phase2-selected/pilot-I-real/checkpoint.pt",
+  "rg3-bootstrap-reconstruction-partition-none-linear-h4-k4": "/root/autodl-tmp/runs/verify/tl-reader-symmetry-break-fever-qwen25/rg2-partition-none-linear-h4-k4/phase2-selected/pilot-I-real/checkpoint.pt"
+}

@@ -1,0 +1,4 @@
+method:
+  writer:
+    slot_conditioning_mode: shared_add_scaled
+    shared_state_scale: 0.02

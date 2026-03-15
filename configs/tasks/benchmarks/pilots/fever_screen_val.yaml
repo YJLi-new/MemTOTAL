@@ -1,0 +1,13 @@
+task:
+  name: fever_real_screen_val
+  benchmark_id: fever
+  domain: qa
+  split: eval
+  smoke_subset: real_screen_val
+  pilot_split: screen_val
+  dataset_path: data/benchmarks/pilots/fever/screen-val.jsonl
+  train_dataset_path: data/benchmarks/pilots/fever/screen-train.jsonl
+  support_dataset_path: data/benchmarks/pilots/fever/pilot-support8.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice

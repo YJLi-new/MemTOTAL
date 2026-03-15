@@ -1,0 +1,14 @@
+{
+  "rows": [
+    {
+      "alias": "C_MID",
+      "arm": "injected",
+      "macro_f1": 0.8044973544973545,
+      "subdir": "pilot-C_MID",
+      "task_score": 0.8125,
+      "writer_memory_control": "real"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "flat_raw8"
+}

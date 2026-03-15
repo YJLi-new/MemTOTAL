@@ -1,0 +1,60 @@
+task:
+  name: story_cloze_real_fixed100
+  benchmark_id: story_cloze
+  domain: narrative
+  split: eval
+  smoke_subset: real_fixed100
+  pilot_split: fixed100
+  dataset_path: data/benchmarks/pilots/story_cloze/fixed100.jsonl
+  support_dataset_path: data/benchmarks/pilots/story_cloze/pilot-support8.jsonl
+  calibration_dataset_path: data/benchmarks/pilots/story_cloze/calibration-hard32.jsonl
+  metric_name: accuracy
+  evaluator:
+    type: multiple_choice
+_meta:
+  config_path: /root/mydir/MemTOTAL/configs/exp/stage_c_real_pilot_oracle_audit.yaml
+  includes:
+  - /root/mydir/MemTOTAL/configs/tasks/benchmarks/pilots/story_cloze_fixed100.yaml
+experiment:
+  name: stage_c_real_pilot_oracle_audit
+  stage: M3-story-cloze-real-pilot
+  method_variant: stage-c-real-pilot-oracle-audit
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+runtime:
+  analysis_mode: stage_c_real_pilot_oracle_audit
+  stage_c_oracle_alpha_grid:
+  - 0.0
+  - 0.25
+  - -0.25
+  - 0.5
+  - -0.5
+  - 1.0
+  - -1.0
+  - 2.0
+  - -2.0
+  - 4.0
+  - -4.0
+  - 8.0
+  - -8.0
+  - 16.0
+  - -16.0
+  - 32.0
+  - -32.0
+  - 64.0
+  - -64.0
+  - 128.0
+  - -128.0
+  - 256.0
+  - -256.0
+  - 512.0
+  - -512.0
+  - 1024.0
+  - -1024.0
+  - 2048.0
+  - -2048.0
+  - 4096.0
+  - -4096.0

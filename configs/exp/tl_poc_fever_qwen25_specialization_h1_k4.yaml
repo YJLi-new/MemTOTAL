@@ -1,0 +1,15 @@
+includes:
+  - m5_fever_qwen25_phase2_val_objective_dense_teacher_control_common.yaml
+  - ../method/memory_bootstrap_transformer_real_twolevel_h1_k4.yaml
+
+experiment:
+  name: tl_poc_fever_qwen25_specialization_h1_k4
+  stage: TL-PoC
+  method_variant: fever-tl-poc-h1-k4
+
+runtime:
+  pilot_memory_path_variant: two_level
+  pilot_reader_context_mode: prompt_summary
+  pilot_projector_token_source: short_slots
+  pilot_init_checkpoint_path: /root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0008/checkpoint.pt
+

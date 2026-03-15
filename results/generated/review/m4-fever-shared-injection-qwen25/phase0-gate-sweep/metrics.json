@@ -1,0 +1,46 @@
+{
+  "a_winner": {
+    "accuracy": 0.29435483870967744,
+    "arm_type": "A",
+    "dominant_label_fraction": 1.0,
+    "label_recall_by_class": {
+      "NOT_ENOUGH_INFO": 0.0,
+      "REFUTES": 0.0,
+      "SUPPORTS": 1.0
+    },
+    "macro_f1": 0.15160955347871236,
+    "mean_margin": -2.738747815931997,
+    "prompt_variant": "answer_slot_labels",
+    "support_serialization_variant": "none",
+    "valid_prompt_surface": false
+  },
+  "analysis_mode": "m4_phase0_gate_sweep",
+  "phase0_gate_passed": true,
+  "report_path": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase0-gate-sweep/report.md",
+  "selected_pair": {
+    "accuracy_gain": 0.4274193548387097,
+    "macro_f1_gain": 0.5351999379825547,
+    "pair_gate_passed": true,
+    "prompt_variant": "answer_slot_labels",
+    "support_serialization_variant": "example_blocks_raw8"
+  },
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "example_blocks_raw8",
+  "summary_csv": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase0-gate-sweep/phase0_summary.csv",
+  "summary_plot": "/root/mydir/MemTOTAL/results/generated/m4-fever-shared-injection-qwen25-v5/phase0-gate-sweep/phase0_summary.svg",
+  "t_winner": {
+    "accuracy": 0.7217741935483871,
+    "arm_type": "T",
+    "dominant_label_fraction": 0.5241935483870968,
+    "label_recall_by_class": {
+      "NOT_ENOUGH_INFO": 0.9139784946236559,
+      "REFUTES": 0.2926829268292683,
+      "SUPPORTS": 0.958904109589041
+    },
+    "macro_f1": 0.6868094914612671,
+    "mean_margin": 0.8683166873581227,
+    "prompt_variant": "answer_slot_labels",
+    "support_serialization_variant": "example_blocks_raw8",
+    "valid_support_surface": true
+  }
+}

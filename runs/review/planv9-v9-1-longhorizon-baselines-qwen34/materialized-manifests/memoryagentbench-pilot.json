@@ -1,0 +1,219 @@
+{
+  "benchmark_id": "memoryagentbench",
+  "context_token_budget_short_window": 512,
+  "dataset_files": {
+    "b0_short_window_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b0_short_window_eval.jsonl",
+    "b1_full_history_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b1_full_history_eval.jsonl",
+    "b2_text_summary_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b2_text_summary_eval.jsonl",
+    "b3_rag_eval": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b3_rag_eval.jsonl",
+    "b3_rag_support": "/root/autodl-tmp/runs/verify/planv9-v9-1-longhorizon-baselines-qwen34/materialized-datasets/memoryagentbench/b3_rag_support.jsonl"
+  },
+  "examples_per_capability": 25,
+  "notes": "V9-1 promotes MemoryAgentBench to a governed pilot by preserving full context for B1, retaining a short-window control for B0, generating deterministic text summaries for B2, and chunking per-episode support notes for B3 retrieval with a bounded, evenly spread bank.",
+  "pilot_examples_total": 100,
+  "rag_support_chunk_stride_words": 320,
+  "rag_support_chunk_words": 384,
+  "rag_support_chunks_per_group_cap": 48,
+  "selected_capabilities": {
+    "AR": {
+      "display_name": "Accurate Retrieval",
+      "examples_materialized": 25,
+      "preferred_source": "ruler_qa1_197K",
+      "primary_metric": "exact_match",
+      "rows_used": [
+        {
+          "preferred_source_match": true,
+          "questions_available": 100,
+          "questions_selected": 25,
+          "source": "ruler_qa1_197K"
+        }
+      ]
+    },
+    "CR": {
+      "display_name": "Conflict Resolution",
+      "examples_materialized": 25,
+      "preferred_source": "factconsolidation_mh_6k",
+      "primary_metric": "exact_match",
+      "rows_used": [
+        {
+          "preferred_source_match": true,
+          "questions_available": 100,
+          "questions_selected": 25,
+          "source": "factconsolidation_mh_6k"
+        }
+      ]
+    },
+    "LRU": {
+      "display_name": "Long-Range Understanding",
+      "examples_materialized": 25,
+      "preferred_source": "infbench_sum_eng_shots2",
+      "primary_metric": "rougeLsum_f1",
+      "rows_used": [
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        },
+        {
+          "preferred_source_match": true,
+          "questions_available": 1,
+          "questions_selected": 1,
+          "source": "infbench_sum_eng_shots2"
+        }
+      ]
+    },
+    "TTL": {
+      "display_name": "Test-Time Learning",
+      "examples_materialized": 25,
+      "preferred_source": "icl_trec_coarse_6600shot_balance",
+      "primary_metric": "exact_match",
+      "rows_used": [
+        {
+          "preferred_source_match": true,
+          "questions_available": 100,
+          "questions_selected": 25,
+          "source": "icl_trec_coarse_6600shot_balance"
+        }
+      ]
+    }
+  }
+}

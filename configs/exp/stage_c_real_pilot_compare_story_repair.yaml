@@ -1,0 +1,41 @@
+includes:
+  - ../tasks/benchmarks/pilots/story_cloze_fixed100.yaml
+
+experiment:
+  name: stage_c_real_pilot_compare_story_repair
+  stage: M3-story-real-pilot
+  method_variant: stage-c-real-pilot-compare-story-repair
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  analysis_mode: stage_c_real_pilot_compare
+  pilot_split_name: fixed100
+  required_arm_aliases:
+    - B_old
+    - B_new
+    - R_real
+    - R_shuffle
+    - R_zero
+  pair_specs:
+    - B_old->B_new
+    - B_new->R_real
+    - R_shuffle->R_real
+    - R_zero->R_real
+  flip_compare_aliases: B_new->R_real
+  memory_control_pair: R_shuffle->R_real
+  zero_control_pair: R_zero->R_real
+  gate_primary_alias: R_real
+  gate_shuffle_alias: R_shuffle
+  gate_zero_alias: R_zero
+  gate_anchor_alias: B_new
+  gate_min_flip_gain: 2
+  gate_max_regression_count: 1
+  gate_min_alignment_rate: 0.6
+  import_arm_runs:
+    B_old: /root/mydir/MemTOTAL/runs/review/m3-story-cloze-real-pilot-qwen25/pilot-B-shared
+  report_title: Story Cloze Real Pilot Compare (Repair Objective)

@@ -1,0 +1,27 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: baseline_lora_story_cloze_qwen3_real_smoke
+  stage: M5
+  method_variant: baseline-lora
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: adapter
+  mode: lora
+  support_examples: 2
+  lora:
+    rank: 4
+    alpha: 8.0
+
+runtime:
+  train_steps: 4
+  eval_examples: 4
+  learning_rate: 0.05
+  device: cpu

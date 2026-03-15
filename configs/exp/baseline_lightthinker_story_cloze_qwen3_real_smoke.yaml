@@ -1,0 +1,23 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: baseline_lightthinker_story_cloze_qwen3_real_smoke
+  stage: M5
+  method_variant: baseline-lightthinker
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+baseline:
+  family: lightthinker
+  mode: compress_then_answer
+  lightthinker:
+    max_sketch_tokens: 16
+
+runtime:
+  eval_examples: 4
+  device: cpu

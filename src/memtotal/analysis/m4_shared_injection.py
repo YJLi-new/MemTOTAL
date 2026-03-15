@@ -1,0 +1,4563 @@
+from __future__ import annotations
+
+import hashlib
+import csv
+import itertools
+import json
+import math
+from pathlib import Path
+from typing import Any
+
+import torch
+from torch import nn
+
+from memtotal.analysis.reporting import write_sanity_plot, write_summary_csv
+from memtotal.models import BackboneWrapper, MemoryWriter
+from memtotal.tasks import load_task_dataset
+from memtotal.training.m3 import _resolve_artifact_path
+from memtotal.training.m4_shared_injection import (
+    FEVER_LABEL_ORDER,
+    FEVER_PROMPT_VARIANTS,
+    FEVER_SUPPORT_SERIALIZATION_VARIANTS,
+    SharedInjectionPilotRuntime,
+    _build_example_caches,
+    _build_support_text_block,
+    _classification_metrics_from_rows,
+    _evaluate_examples,
+    _merge_example_lookup,
+    _prefix_stats,
+    _prefix_scalar_summary,
+    _resolve_support_rows_for_memory_control,
+    _resolve_support_lookup_dataset_paths,
+)
+from memtotal.training.m4_shared_injection import _load_task_dataset_with_path
+from memtotal.utils.io import write_json, write_jsonl
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = sorted({key for row in rows for key in row.keys()})
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def _load_case_rows(run_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    metrics = json.loads((run_dir / "metrics.json").read_text())
+    case_rows = [
+        json.loads(line)
+        for line in (run_dir / "task_case_dump.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    return metrics, case_rows
+
+
+def _collect_shared_injection_runs(root: Path) -> dict[str, tuple[dict[str, Any], Path]]:
+    runs: dict[str, tuple[dict[str, Any], Path]] = {}
+    for metrics_path in sorted(root.rglob("metrics.json")):
+        metrics = json.loads(metrics_path.read_text())
+        if metrics.get("training_stage") != "shared_injection_pilot":
+            continue
+        alias = str(metrics.get("pilot_arm_alias", "")).strip()
+        if not alias:
+            continue
+        runs[alias] = (metrics, metrics_path.parent)
+    return runs
+
+
+def _load_snapshot_eval_rows(
+    run_dir: Path,
+) -> dict[int, tuple[dict[str, Any], list[dict[str, Any]]]]:
+    snapshot_root = run_dir / "snapshot_evals"
+    snapshots: dict[int, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    if not snapshot_root.exists():
+        return snapshots
+    for metrics_path in sorted(snapshot_root.glob("step_*/metrics.json")):
+        metrics = json.loads(metrics_path.read_text())
+        case_path = metrics_path.parent / "task_case_dump.jsonl"
+        case_rows = [
+            json.loads(line)
+            for line in case_path.read_text().splitlines()
+            if line.strip()
+        ]
+        snapshots[int(metrics["step"])] = (metrics, case_rows)
+    return snapshots
+
+
+def _load_train_events(run_dir: Path) -> list[dict[str, Any]]:
+    events_path = run_dir / "train_events.json"
+    if not events_path.exists():
+        return []
+    payload = json.loads(events_path.read_text())
+    return list(payload.get("events", []))
+
+
+def _resolve_phase2_suite_roots(root: Path) -> dict[str, Path]:
+    suites: dict[str, Path] = {}
+
+    def register(path: Path, suite_name: str) -> None:
+        if not path.exists():
+            return
+        direct_runs = []
+        for child in path.iterdir():
+            if not child.is_dir():
+                continue
+            metrics_path = child / "metrics.json"
+            if not metrics_path.exists():
+                continue
+            metrics = json.loads(metrics_path.read_text())
+            if metrics.get("training_stage") == "shared_injection_pilot":
+                direct_runs.append(child.name)
+        if direct_runs:
+            suites[suite_name] = path
+
+    if root.exists():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            register(child, child.name)
+            register(child / "phase2-selected", child.name)
+    return suites
+
+
+def _stable_hash_rank(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _label_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {label: 0 for label in FEVER_LABEL_ORDER}
+    for row in rows:
+        label = str(row.get("label", "")).strip()
+        if label in counts:
+            counts[label] += 1
+    return counts
+
+
+def _selection_bucket(case_row: dict[str, Any]) -> str:
+    if bool(case_row["predicted_correct"]):
+        return "A_correct"
+    if abs(float(case_row["final_margin"])) < 0.25:
+        return "A_near_threshold"
+    return "A_wrong"
+
+
+def _build_writer(config: dict[str, Any], resume: str, seed: int) -> tuple[BackboneWrapper, MemoryWriter]:
+    backbone_cfg = config["backbone"]
+    runtime_device = str(config["runtime"].get("device", "cpu"))
+    backbone_hidden_size = backbone_cfg.get("stub_hidden_size")
+    backbone = BackboneWrapper(
+        name=backbone_cfg["name"],
+        load_mode=backbone_cfg["load_mode"],
+        hidden_size=int(backbone_hidden_size) if backbone_hidden_size is not None else None,
+        seed=seed,
+        model_id=backbone_cfg.get("model_id"),
+        device=runtime_device,
+        dtype=str(backbone_cfg.get("dtype", "float32")),
+        cache_dir=backbone_cfg.get("cache_dir"),
+        attn_implementation=backbone_cfg.get("attn_implementation"),
+        max_new_tokens=int(backbone_cfg.get("max_new_tokens", 32)),
+    )
+    writer_cfg = config["method"]["writer"]
+    writer = MemoryWriter(
+        embed_dim=backbone.hidden_size,
+        memory_slots=int(writer_cfg["memory_slots"]),
+        arch=str(writer_cfg.get("arch", "mlp")),
+        hidden_dim=writer_cfg.get("hidden_dim"),
+        num_heads=int(writer_cfg.get("num_heads", 4)),
+        transformer_layers=int(writer_cfg.get("transformer_layers", 1)),
+        dropout=float(writer_cfg.get("dropout", 0.0)),
+    )
+    writer.load_from(_resolve_artifact_path(resume, "writer.ckpt"), map_location="cpu")
+    writer.to(backbone.device)
+    writer.eval()
+    for parameter in writer.parameters():
+        parameter.requires_grad_(False)
+    return backbone, writer
+
+
+def run_m4_prepare_fever_validation_splits(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_rows = _load_task_dataset_with_path(config, str(config["task"]["dataset_path"]))
+    by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for row in source_rows:
+        label = str(row.get("label", "")).strip()
+        if label in by_label:
+            by_label[label].append(dict(row))
+    train_rows: list[dict[str, Any]] = []
+    val_rows: list[dict[str, Any]] = []
+    for label in FEVER_LABEL_ORDER:
+        ordered = sorted(by_label[label], key=lambda row: _stable_hash_rank(str(row["id"])))
+        val_count = max(1, round(len(ordered) * 0.25))
+        val_ids = {str(row["id"]) for row in ordered[:val_count]}
+        for row in ordered:
+            if str(row["id"]) in val_ids:
+                row["m4_split"] = "screen_val"
+                val_rows.append(row)
+            else:
+                row["m4_split"] = "screen_train"
+                train_rows.append(row)
+    val_by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for row in val_rows:
+        val_by_label[str(row["label"])].append(row)
+    audit_rows: list[dict[str, Any]] = []
+    for label in FEVER_LABEL_ORDER:
+        ordered = sorted(val_by_label[label], key=lambda row: _stable_hash_rank(f"audit::{row['id']}"))
+        audit_rows.extend(ordered[:4])
+
+    data_root = Path(config["runtime"].get("split_output_root", "data/benchmarks/pilots/fever"))
+    data_root.mkdir(parents=True, exist_ok=True)
+    train_path = data_root / "screen-train.jsonl"
+    val_path = data_root / "screen-val.jsonl"
+    audit_path = data_root / "screen-val-audit12.jsonl"
+    manifest_path = data_root / "screen-train-val-manifest.json"
+    write_jsonl(train_path, train_rows)
+    write_jsonl(val_path, val_rows)
+    write_jsonl(audit_path, audit_rows)
+    metrics = {
+        "analysis_mode": "m4_prepare_fever_validation_splits",
+        "source_dataset_path": str(Path(config["task"]["dataset_path"]).resolve()),
+        "train_dataset_path": str(train_path.resolve()),
+        "val_dataset_path": str(val_path.resolve()),
+        "audit_dataset_path": str(audit_path.resolve()),
+        "train_examples": len(train_rows),
+        "val_examples": len(val_rows),
+        "audit_examples": len(audit_rows),
+        "train_label_distribution": _label_distribution(train_rows),
+        "val_label_distribution": _label_distribution(val_rows),
+        "audit_label_distribution": _label_distribution(audit_rows),
+        "manifest_path": str(manifest_path.resolve()),
+    }
+    write_json(manifest_path, metrics)
+    write_json(output_dir / "metrics.json", metrics)
+
+
+def _ordered_label_pairs(
+    rows: list[dict[str, Any]],
+    *,
+    namespace: str,
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    if len(rows) < 2:
+        raise ValueError(f"Need at least two rows to build support pairs for namespace={namespace}.")
+    ranked_rows = sorted(rows, key=lambda row: _stable_hash_rank(f"{namespace}::row::{row['id']}"))
+    pairs = list(itertools.combinations(ranked_rows, 2))
+    pairs.sort(
+        key=lambda pair: _stable_hash_rank(
+            f"{namespace}::pair::{pair[0]['id']}::{pair[1]['id']}"
+        )
+    )
+    return pairs
+
+
+def _episode_from_pair_lookup(
+    pair_lookup: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    *,
+    pair_index: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for label in FEVER_LABEL_ORDER:
+        pairs = pair_lookup[label]
+        if pair_index >= len(pairs):
+            raise ValueError(
+                f"Pair index {pair_index} is out of range for label {label}; only {len(pairs)} pairs available."
+            )
+        for row in pairs[pair_index]:
+            row_copy = dict(row)
+            row_id = str(row_copy["id"])
+            if row_id in seen_ids:
+                raise ValueError(f"Duplicate support id {row_id} encountered in pair_index={pair_index}.")
+            seen_ids.add(row_id)
+            rows.append(row_copy)
+    return rows
+
+
+def _support_bank_signature(rows: list[dict[str, Any]]) -> str:
+    return "|".join(sorted(str(row["id"]) for row in rows))
+
+
+def run_m4_prepare_fever_support_banks(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    train_dataset_path = str(config["task"].get("train_dataset_path", config["task"]["dataset_path"]))
+    train_rows = _load_task_dataset_with_path(config, train_dataset_path)
+    train_rows = [dict(row) for row in train_rows]
+    by_label: dict[str, list[dict[str, Any]]] = {label: [] for label in FEVER_LABEL_ORDER}
+    for row in train_rows:
+        label = str(row.get("label", "")).strip()
+        if label in by_label:
+            by_label[label].append(row)
+    pair_lookup = {
+        label: _ordered_label_pairs(rows, namespace=f"m46::{label}")
+        for label, rows in by_label.items()
+    }
+    episode_count = int(config["runtime"].get("support_bank_episode_count", 32))
+    reserved_banks = (
+        ("screen_val_canonical", 0),
+        ("screen248_test_canonical", 1),
+        ("screen248_test_heldout_a", 2),
+        ("screen248_test_heldout_b", 3),
+    )
+    required_pair_count = len(reserved_banks) + episode_count
+    for label, pairs in pair_lookup.items():
+        if len(pairs) < required_pair_count:
+            raise ValueError(
+                f"Not enough unique pairs for label {label}; need {required_pair_count}, got {len(pairs)}."
+            )
+    data_root = Path(config["runtime"].get("support_bank_output_root", "data/benchmarks/pilots/fever"))
+    data_root.mkdir(parents=True, exist_ok=True)
+    train_episode_bank_path = data_root / "m46-train-triad-episode-bank32.json"
+    val_canonical_path = data_root / "m46-screen-val-canonical-support6.jsonl"
+    test_canonical_path = data_root / "m46-screen248-test-canonical-support6.jsonl"
+    heldout_a_path = data_root / "m46-screen248-test-heldout-a-support6.jsonl"
+    heldout_b_path = data_root / "m46-screen248-test-heldout-b-support6.jsonl"
+    manifest_path = data_root / "m46-support-bank-manifest.json"
+    path_by_bank = {
+        "screen_val_canonical": val_canonical_path,
+        "screen248_test_canonical": test_canonical_path,
+        "screen248_test_heldout_a": heldout_a_path,
+        "screen248_test_heldout_b": heldout_b_path,
+    }
+    seen_signatures: set[str] = set()
+    bank_rows: dict[str, list[dict[str, Any]]] = {}
+    for bank_name, pair_index in reserved_banks:
+        rows = _episode_from_pair_lookup(pair_lookup, pair_index=pair_index)
+        signature = _support_bank_signature(rows)
+        if signature in seen_signatures:
+            raise ValueError(f"Duplicate support bank signature detected for {bank_name}.")
+        seen_signatures.add(signature)
+        bank_rows[bank_name] = rows
+        write_jsonl(path_by_bank[bank_name], rows)
+    train_episodes: list[dict[str, Any]] = []
+    for episode_offset in range(episode_count):
+        pair_index = len(reserved_banks) + episode_offset
+        rows = _episode_from_pair_lookup(pair_lookup, pair_index=pair_index)
+        signature = _support_bank_signature(rows)
+        if signature in seen_signatures:
+            raise ValueError(f"Duplicate train support episode signature detected at pair_index={pair_index}.")
+        seen_signatures.add(signature)
+        train_episodes.append(
+            {
+                "episode_id": f"train_ep_{episode_offset:03d}",
+                "source_split": "screen_train",
+                "label_counts": {label: 2 for label in FEVER_LABEL_ORDER},
+                "support_rows": rows,
+            }
+        )
+    write_json(
+        train_episode_bank_path,
+        {
+            "analysis_mode": "m4_prepare_fever_support_banks",
+            "source_dataset_path": str(Path(train_dataset_path).resolve()),
+            "episode_count": episode_count,
+            "episodes": train_episodes,
+        },
+    )
+    manifest = {
+        "analysis_mode": "m4_prepare_fever_support_banks",
+        "source_dataset_path": str(Path(train_dataset_path).resolve()),
+        "train_label_distribution": _label_distribution(train_rows),
+        "train_episode_bank_path": str(train_episode_bank_path.resolve()),
+        "train_episode_count": len(train_episodes),
+        "screen_val_canonical_bank_path": str(val_canonical_path.resolve()),
+        "screen248_test_canonical_bank_path": str(test_canonical_path.resolve()),
+        "screen248_test_heldout_a_bank_path": str(heldout_a_path.resolve()),
+        "screen248_test_heldout_b_bank_path": str(heldout_b_path.resolve()),
+        "screen_val_canonical_ids": [str(row["id"]) for row in bank_rows["screen_val_canonical"]],
+        "screen248_test_canonical_ids": [str(row["id"]) for row in bank_rows["screen248_test_canonical"]],
+        "screen248_test_heldout_a_ids": [str(row["id"]) for row in bank_rows["screen248_test_heldout_a"]],
+        "screen248_test_heldout_b_ids": [str(row["id"]) for row in bank_rows["screen248_test_heldout_b"]],
+        "train_episode_ids": [str(episode["episode_id"]) for episode in train_episodes],
+        "train_episode_label_counts": {label: 2 for label in FEVER_LABEL_ORDER},
+    }
+    write_json(manifest_path, manifest)
+    write_json(
+        output_dir / "metrics.json",
+        {
+            **manifest,
+            "manifest_path": str(manifest_path.resolve()),
+        },
+    )
+
+
+def _example_text(example: dict[str, Any]) -> str:
+    claim = str(example.get("claim", "")).strip()
+    evidence = str(example.get("evidence", "")).strip()
+    return f"Claim: {claim} || Evidence: {evidence}"
+
+
+def _extract_writer_features(
+    *,
+    backbone: BackboneWrapper,
+    writer: MemoryWriter,
+    examples: list[dict[str, Any]],
+    example_lookup: dict[str, dict[str, Any]],
+    mode: str,
+) -> torch.Tensor:
+    if mode == "zero":
+        return torch.zeros(
+            len(examples),
+            writer.memory_slots * writer.embed_dim,
+            dtype=torch.float32,
+        )
+    texts: list[str] = []
+    for example in examples:
+        if mode == "real":
+            source = example
+        else:
+            shuffled_id = str(example.get("shuffled_memory_example_id", "")).strip()
+            if not shuffled_id:
+                raise ValueError(
+                    f"Example {example['id']} is missing shuffled_memory_example_id for writer information audit."
+                )
+            source = example_lookup[shuffled_id]
+        texts.append(_example_text(source))
+    with torch.inference_mode():
+        states = backbone.summarize_texts(texts)
+        memory = writer.write(states).detach().to(dtype=torch.float32).cpu()
+    return memory.flatten(start_dim=1)
+
+
+def _standardize(train_x: torch.Tensor, eval_x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    mean = train_x.mean(dim=0, keepdim=True)
+    std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
+    return (train_x - mean) / std, (eval_x - mean) / std
+
+
+def _binary_auc(scores: list[float], labels: list[int]) -> float:
+    positives = sum(labels)
+    negatives = len(labels) - positives
+    if positives == 0 or negatives == 0:
+        return float("nan")
+    ranked = sorted(zip(scores, labels), key=lambda item: item[0])
+    rank_sum = 0.0
+    for rank, (_, label) in enumerate(ranked, start=1):
+        if label == 1:
+            rank_sum += rank
+    return float((rank_sum - positives * (positives + 1) / 2.0) / (positives * negatives))
+
+
+def _macro_f1(y_true: list[int], y_pred: list[int], labels: list[int]) -> float:
+    f1_values: list[float] = []
+    for label in labels:
+        tp = sum(1 for truth, pred in zip(y_true, y_pred) if truth == label and pred == label)
+        fp = sum(1 for truth, pred in zip(y_true, y_pred) if truth != label and pred == label)
+        fn = sum(1 for truth, pred in zip(y_true, y_pred) if truth == label and pred != label)
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        if precision + recall == 0.0:
+            f1 = 0.0
+        else:
+            f1 = 2.0 * precision * recall / (precision + recall)
+        f1_values.append(f1)
+    return float(sum(f1_values) / max(1, len(f1_values)))
+
+
+def _balanced_accuracy(y_true: list[int], y_pred: list[int]) -> float:
+    positives = [index for index, label in enumerate(y_true) if label == 1]
+    negatives = [index for index, label in enumerate(y_true) if label == 0]
+    if not positives or not negatives:
+        return float("nan")
+    tpr = sum(int(y_pred[index] == 1) for index in positives) / len(positives)
+    tnr = sum(int(y_pred[index] == 0) for index in negatives) / len(negatives)
+    return float((tpr + tnr) / 2.0)
+
+
+def _build_probe_model(
+    *,
+    input_dim: int,
+    output_dim: int,
+    model_kind: str,
+) -> nn.Module:
+    if model_kind == "linear":
+        return nn.Linear(input_dim, output_dim)
+    if model_kind == "mlp":
+        hidden_dim = min(128, max(32, input_dim // 8))
+        return nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+    raise ValueError(f"Unsupported probe model_kind={model_kind}")
+
+
+def _fit_probe_cv(
+    *,
+    features: torch.Tensor,
+    targets: list[int],
+    task_kind: str,
+    model_kind: str,
+    seed: int,
+    labels: list[int] | None = None,
+) -> dict[str, float]:
+    if len(targets) != features.shape[0]:
+        raise ValueError("features and targets must have the same number of rows.")
+    indices = list(range(features.shape[0]))
+    num_folds = min(4, len(indices))
+    fold_splits = [indices[fold::num_folds] for fold in range(num_folds)]
+    accuracies: list[float] = []
+    macro_f1s: list[float] = []
+    balanced_accuracies: list[float] = []
+    aucs: list[float] = []
+    for fold_index, eval_indices in enumerate(fold_splits):
+        train_indices = [index for index in indices if index not in eval_indices]
+        train_x = features[train_indices]
+        eval_x = features[eval_indices]
+        train_y = torch.tensor([targets[index] for index in train_indices], dtype=torch.long)
+        eval_y = torch.tensor([targets[index] for index in eval_indices], dtype=torch.long)
+        train_x, eval_x = _standardize(train_x, eval_x)
+        output_dim = len(labels) if task_kind == "multiclass" else 1
+        model = _build_probe_model(
+            input_dim=int(features.shape[1]),
+            output_dim=output_dim,
+            model_kind=model_kind,
+        )
+        torch.manual_seed(seed + fold_index)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-4)
+        for _ in range(200):
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(train_x)
+            if task_kind == "multiclass":
+                loss = nn.functional.cross_entropy(logits, train_y)
+            else:
+                loss = nn.functional.binary_cross_entropy_with_logits(
+                    logits.squeeze(-1),
+                    train_y.to(dtype=torch.float32),
+                )
+            loss.backward()
+            optimizer.step()
+        with torch.inference_mode():
+            logits = model(eval_x)
+            if task_kind == "multiclass":
+                predictions = torch.argmax(logits, dim=-1)
+                predicted = predictions.tolist()
+                gold = eval_y.tolist()
+                accuracies.append(float((predictions == eval_y).to(dtype=torch.float32).mean().item()))
+                macro_f1s.append(_macro_f1(gold, predicted, labels=labels or sorted(set(targets))))
+            else:
+                probabilities = torch.sigmoid(logits.squeeze(-1))
+                predictions = (probabilities >= 0.5).to(dtype=torch.long)
+                predicted = predictions.tolist()
+                gold = eval_y.tolist()
+                accuracies.append(float((predictions == eval_y).to(dtype=torch.float32).mean().item()))
+                balanced_accuracies.append(_balanced_accuracy(gold, predicted))
+                aucs.append(_binary_auc(probabilities.tolist(), gold))
+    auc_values = [value for value in aucs if not math.isnan(value)]
+    bal_values = [value for value in balanced_accuracies if not math.isnan(value)]
+    return {
+        "accuracy": sum(accuracies) / max(1, len(accuracies)),
+        "macro_f1": float("nan") if not macro_f1s else sum(macro_f1s) / len(macro_f1s),
+        "balanced_accuracy": float("nan") if not bal_values else sum(bal_values) / len(bal_values),
+        "auroc": float("nan") if not auc_values else sum(auc_values) / len(auc_values),
+    }
+
+
+def _label_recall_count(metrics: dict[str, Any]) -> int:
+    recalls = metrics.get("label_recall_by_class", {})
+    return sum(int(float(value) >= 0.10) for value in recalls.values())
+
+
+def _valid_prompt_surface(metrics: dict[str, Any]) -> bool:
+    return bool(
+        float(metrics["dominant_label_fraction"]) <= 0.85
+        and _label_recall_count(metrics) >= 2
+    )
+
+
+def run_m4_phase0_gate_sweep(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    dry_run: bool,
+) -> None:
+    support_dataset_path = str(config["task"]["support_dataset_path"])
+    support_examples = _load_task_dataset_with_path(config, support_dataset_path)
+    eval_examples = load_task_dataset(config)
+    if dry_run:
+        eval_examples = eval_examples[: min(24, len(eval_examples))]
+    example_lookup = {str(example["id"]): dict(example) for example in [*support_examples, *eval_examples]}
+    base_runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=int(config["runtime"].get("phase0_seed", 0)),
+        arm="base_only",
+        writer_memory_control="real",
+    )
+    teacher_runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=int(config["runtime"].get("phase0_seed", 0)) + 1,
+        arm="teacher_text",
+        writer_memory_control="real",
+    )
+    arm_summary_rows: list[dict[str, Any]] = []
+    arm_case_dump_dir = output_dir / "arm_case_dumps"
+    arm_case_dump_dir.mkdir(parents=True, exist_ok=True)
+    selected_a_rows: list[dict[str, Any]] = []
+    selected_t_rows: list[dict[str, Any]] = []
+    for prompt_variant in FEVER_PROMPT_VARIANTS:
+        eval_caches = _build_example_caches(eval_examples, prompt_variant=prompt_variant)
+        a_eval = _evaluate_examples(
+            runtime=base_runtime,
+            eval_examples=eval_caches,
+            arm_alias=f"A::{prompt_variant}",
+            arm="base_only",
+            writer_memory_control="real",
+            prompt_variant=prompt_variant,
+            support_serialization_variant="none",
+            support_text_block="",
+            teacher_support_text_block="",
+            prefix_embeddings=None,
+            layer_prefix_hidden_by_layer=None,
+            prefix_stats=_prefix_stats(),
+            profiler=None,
+        )
+        a_case_rows = a_eval[0] if isinstance(a_eval, tuple) else a_eval
+        a_metrics = _classification_metrics_from_rows(a_case_rows)
+        arm_summary_rows.append(
+            {
+                "arm_type": "A",
+                "prompt_variant": prompt_variant,
+                "support_serialization_variant": "none",
+                **a_metrics,
+            }
+        )
+        write_jsonl(arm_case_dump_dir / f"A__{prompt_variant}.jsonl", a_case_rows)
+        for support_variant in FEVER_SUPPORT_SERIALIZATION_VARIANTS:
+            support_text_block = _build_support_text_block(
+                support_examples,
+                memory_control="real",
+                example_lookup=example_lookup,
+                support_serialization_variant=support_variant,
+            )
+            t_eval = _evaluate_examples(
+                runtime=teacher_runtime,
+                eval_examples=eval_caches,
+                arm_alias=f"T::{prompt_variant}::{support_variant}",
+                arm="teacher_text",
+                writer_memory_control="real",
+                prompt_variant=prompt_variant,
+                support_serialization_variant=support_variant,
+                support_text_block=support_text_block,
+                teacher_support_text_block=support_text_block,
+                prefix_embeddings=None,
+                layer_prefix_hidden_by_layer=None,
+                prefix_stats=_prefix_stats(),
+                profiler=None,
+            )
+            t_case_rows = t_eval[0] if isinstance(t_eval, tuple) else t_eval
+            t_metrics = _classification_metrics_from_rows(t_case_rows)
+            arm_summary_rows.append(
+                {
+                    "arm_type": "T",
+                    "prompt_variant": prompt_variant,
+                    "support_serialization_variant": support_variant,
+                    **t_metrics,
+                }
+            )
+            write_jsonl(
+                arm_case_dump_dir / f"T__{prompt_variant}__{support_variant}.jsonl",
+                t_case_rows,
+            )
+
+    a_rows_by_prompt = {
+        str(row["prompt_variant"]): dict(row)
+        for row in arm_summary_rows
+        if row["arm_type"] == "A"
+    }
+    prompt_pair_rows: list[dict[str, Any]] = []
+    for prompt_variant in FEVER_PROMPT_VARIANTS:
+        a_row = dict(a_rows_by_prompt[prompt_variant])
+        a_row["valid_prompt_surface"] = _valid_prompt_surface(a_row)
+        t_rows = [
+            dict(row)
+            for row in arm_summary_rows
+            if row["arm_type"] == "T" and row["prompt_variant"] == prompt_variant
+        ]
+        t_rows_sorted = sorted(
+            t_rows,
+            key=lambda row: (
+                float(row["macro_f1"]),
+                float(row["accuracy"]),
+                -float(row["dominant_label_fraction"]),
+            ),
+            reverse=True,
+        )
+        t_row = dict(t_rows_sorted[0])
+        t_row["valid_support_surface"] = _valid_prompt_surface(t_row)
+        accuracy_gain = float(t_row["accuracy"]) - float(a_row["accuracy"])
+        macro_f1_gain = float(t_row["macro_f1"]) - float(a_row["macro_f1"])
+        prompt_pair_rows.append(
+            {
+                "prompt_variant": prompt_variant,
+                "a_row": a_row,
+                "t_row": t_row,
+                "a_valid_prompt_surface": bool(a_row["valid_prompt_surface"]),
+                "t_valid_support_surface": bool(t_row["valid_support_surface"]),
+                "accuracy_gain": accuracy_gain,
+                "macro_f1_gain": macro_f1_gain,
+                "pair_gate_passed": bool(
+                    t_row["valid_support_surface"]
+                    and accuracy_gain >= (2.0 / max(1, len(eval_examples)))
+                    and macro_f1_gain >= 0.05
+                    and float(t_row["dominant_label_fraction"]) <= float(a_row["dominant_label_fraction"])
+                ),
+            }
+        )
+
+    prompt_pair_rows_sorted = sorted(
+        prompt_pair_rows,
+        key=lambda row: (
+            int(bool(row["pair_gate_passed"])),
+            int(bool(row["t_valid_support_surface"])),
+            float(row["macro_f1_gain"]),
+            float(row["accuracy_gain"]),
+            float(row["t_row"]["macro_f1"]),
+            float(row["t_row"]["accuracy"]),
+            -float(row["t_row"]["dominant_label_fraction"]),
+        ),
+        reverse=True,
+    )
+    prompt_pair_winner = prompt_pair_rows_sorted[0]
+    a_winner = dict(prompt_pair_winner["a_row"])
+    t_winner = dict(prompt_pair_winner["t_row"])
+    phase0_gate_passed = bool(prompt_pair_winner["pair_gate_passed"])
+    summary_csv = output_dir / "phase0_summary.csv"
+    summary_plot = output_dir / "phase0_summary.svg"
+    write_summary_csv(
+        summary_csv,
+        [
+            {
+                "mode": f"{row['arm_type']}:{row['prompt_variant']}:{row['support_serialization_variant']}",
+                "run_dir": output_dir,
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+                "accuracy": float(row["accuracy"]),
+                "dominant_label_fraction": float(row["dominant_label_fraction"]),
+            }
+            for row in arm_summary_rows
+        ],
+    )
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['arm_type']}:{row['prompt_variant']}:{row['support_serialization_variant']}",
+                "run_dir": f"{row['arm_type']}-{row['prompt_variant']}-{row['support_serialization_variant']}",
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+            }
+            for row in arm_summary_rows
+        ],
+    )
+    _write_csv(output_dir / "phase0_arm_summary.csv", arm_summary_rows)
+    _write_csv(
+        output_dir / "phase0_prompt_pairs.csv",
+        [
+            {
+                "prompt_variant": row["prompt_variant"],
+                "selected_support_serialization_variant": row["t_row"]["support_serialization_variant"],
+                "a_accuracy": float(row["a_row"]["accuracy"]),
+                "a_macro_f1": float(row["a_row"]["macro_f1"]),
+                "a_dominant_label_fraction": float(row["a_row"]["dominant_label_fraction"]),
+                "a_valid_prompt_surface": bool(row["a_valid_prompt_surface"]),
+                "t_accuracy": float(row["t_row"]["accuracy"]),
+                "t_macro_f1": float(row["t_row"]["macro_f1"]),
+                "t_dominant_label_fraction": float(row["t_row"]["dominant_label_fraction"]),
+                "t_valid_support_surface": bool(row["t_valid_support_surface"]),
+                "accuracy_gain": float(row["accuracy_gain"]),
+                "macro_f1_gain": float(row["macro_f1_gain"]),
+                "pair_gate_passed": bool(row["pair_gate_passed"]),
+            }
+            for row in prompt_pair_rows
+        ],
+    )
+    report_lines = [
+        "# M4 Phase 0 Gate Sweep",
+        "",
+        f"- phase0_gate_passed: {phase0_gate_passed}",
+        f"- a_winner_prompt_variant: {a_winner['prompt_variant']}",
+        f"- t_winner_support_serialization: {t_winner['support_serialization_variant']}",
+        (
+            f"- selected_pair_accuracy_gain={float(prompt_pair_winner['accuracy_gain']):.4f}, "
+            f"selected_pair_macro_f1_gain={float(prompt_pair_winner['macro_f1_gain']):.4f}"
+        ),
+        "",
+        "## A Winner",
+        (
+            f"- macro_f1={float(a_winner['macro_f1']):.4f}, accuracy={float(a_winner['accuracy']):.4f}, "
+            f"dominant_label_fraction={float(a_winner['dominant_label_fraction']):.4f}, "
+            f"label_recall_by_class={json.dumps(a_winner['label_recall_by_class'], sort_keys=True)}"
+        ),
+        "",
+        "## T Winner",
+        (
+            f"- macro_f1={float(t_winner['macro_f1']):.4f}, accuracy={float(t_winner['accuracy']):.4f}, "
+            f"dominant_label_fraction={float(t_winner['dominant_label_fraction']):.4f}, "
+            f"label_recall_by_class={json.dumps(t_winner['label_recall_by_class'], sort_keys=True)}"
+        ),
+    ]
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_phase0_gate_sweep",
+            "phase0_gate_passed": phase0_gate_passed,
+            "a_winner": a_winner,
+            "t_winner": t_winner,
+            "selected_pair": {
+                "prompt_variant": str(prompt_pair_winner["prompt_variant"]),
+                "support_serialization_variant": str(t_winner["support_serialization_variant"]),
+                "accuracy_gain": float(prompt_pair_winner["accuracy_gain"]),
+                "macro_f1_gain": float(prompt_pair_winner["macro_f1_gain"]),
+                "pair_gate_passed": bool(prompt_pair_winner["pair_gate_passed"]),
+            },
+            "selected_prompt_variant": str(a_winner["prompt_variant"]),
+            "selected_support_serialization": str(t_winner["support_serialization_variant"]),
+            "summary_csv": str(summary_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "report_path": str((output_dir / "report.md").resolve()),
+        },
+    )
+
+
+def run_m4_writer_information_audit(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    input_root: str,
+    resume: str | None,
+    dry_run: bool,
+) -> None:
+    if resume is None:
+        raise ValueError("Writer information audit requires --resume pointing at a writer checkpoint root.")
+    phase0_metrics = json.loads((Path(input_root).resolve() / "metrics.json").read_text())
+    phase0_gate_passed = bool(phase0_metrics.get("phase0_gate_passed", False))
+    full_examples = load_task_dataset(config)
+    examples = full_examples[: min(32, len(full_examples))] if dry_run else list(full_examples)
+    example_lookup = {str(example["id"]): example for example in full_examples}
+    backbone, writer = _build_writer(config, resume, seed=int(config["runtime"].get("probe_seed", 0)))
+    feature_modes = {
+        "real": _extract_writer_features(
+            backbone=backbone,
+            writer=writer,
+            examples=examples,
+            example_lookup=example_lookup,
+            mode="real",
+        ),
+        "shuffle": _extract_writer_features(
+            backbone=backbone,
+            writer=writer,
+            examples=examples,
+            example_lookup=example_lookup,
+            mode="shuffled",
+        ),
+        "zero": _extract_writer_features(
+            backbone=backbone,
+            writer=writer,
+            examples=examples,
+            example_lookup=example_lookup,
+            mode="zero",
+        ),
+    }
+
+    label_names = list(FEVER_LABEL_ORDER)
+    label_to_index = {label: index for index, label in enumerate(label_names)}
+    verifiability_targets = [int(str(example["label"]) == "NOT_ENOUGH_INFO") for example in examples]
+    polarity_indices = [index for index, example in enumerate(examples) if str(example["label"]) != "NOT_ENOUGH_INFO"]
+    polarity_targets = [
+        int(str(examples[index]["label"]) == "SUPPORTS")
+        for index in polarity_indices
+    ]
+
+    probe_specs = {
+        "label_probe_3way": {
+            "task_kind": "multiclass",
+            "targets": [label_to_index[str(example["label"])] for example in examples],
+            "labels": list(range(len(label_names))),
+            "primary_metric": "macro_f1",
+        },
+        "verifiability_probe": {
+            "task_kind": "binary",
+            "targets": verifiability_targets,
+            "labels": None,
+            "primary_metric": "auroc",
+        },
+        "polarity_probe": {
+            "task_kind": "binary",
+            "targets": polarity_targets,
+            "labels": None,
+            "primary_metric": "auroc",
+            "subset_indices": polarity_indices,
+        },
+    }
+
+    rows: list[dict[str, Any]] = []
+    base_seed = int(config["runtime"].get("probe_seed", 0))
+    for probe_offset, (probe_name, probe_spec) in enumerate(probe_specs.items()):
+        for mode_offset, (feature_mode, features) in enumerate(feature_modes.items()):
+            active_features = features
+            active_targets = probe_spec["targets"]
+            if "subset_indices" in probe_spec:
+                subset_indices = list(probe_spec["subset_indices"])
+                active_features = features[subset_indices]
+                active_targets = [int(str(examples[index]["label"]) == "SUPPORTS") for index in subset_indices]
+            for model_offset, model_kind in enumerate(("linear", "mlp")):
+                probe_metrics = _fit_probe_cv(
+                    features=active_features,
+                    targets=active_targets,
+                    task_kind=str(probe_spec["task_kind"]),
+                    model_kind=model_kind,
+                    seed=base_seed + (100 * probe_offset) + (10 * mode_offset) + model_offset,
+                    labels=probe_spec.get("labels"),
+                )
+                rows.append(
+                    {
+                        "probe_name": probe_name,
+                        "feature_mode": feature_mode,
+                        "model_kind": model_kind,
+                        "primary_metric": str(probe_spec["primary_metric"]),
+                        "accuracy": probe_metrics["accuracy"],
+                        "macro_f1": probe_metrics["macro_f1"],
+                        "balanced_accuracy": probe_metrics["balanced_accuracy"],
+                        "auroc": probe_metrics["auroc"],
+                    }
+                )
+
+    def best_metric(probe_name: str, feature_mode: str, metric_name: str) -> float:
+        values = [
+            float(row[metric_name])
+            for row in rows
+            if row["probe_name"] == probe_name and row["feature_mode"] == feature_mode and not math.isnan(float(row[metric_name]))
+        ]
+        return max(values, default=float("-inf"))
+
+    label_real = best_metric("label_probe_3way", "real", "macro_f1")
+    label_control = max(
+        best_metric("label_probe_3way", "shuffle", "macro_f1"),
+        best_metric("label_probe_3way", "zero", "macro_f1"),
+    )
+    verif_real = best_metric("verifiability_probe", "real", "auroc")
+    verif_control = max(
+        best_metric("verifiability_probe", "shuffle", "auroc"),
+        best_metric("verifiability_probe", "zero", "auroc"),
+    )
+    polarity_real = best_metric("polarity_probe", "real", "auroc")
+    polarity_control = max(
+        best_metric("polarity_probe", "shuffle", "auroc"),
+        best_metric("polarity_probe", "zero", "auroc"),
+    )
+
+    label_probe_passed = bool(
+        label_real >= float(config["runtime"].get("audit_label_macro_f1_min", 0.40))
+        and (label_real - label_control) >= float(config["runtime"].get("audit_label_macro_f1_gap", 0.05))
+    )
+    semantic_probe_passed = bool(
+        (
+            verif_real >= float(config["runtime"].get("audit_binary_auroc_min", 0.60))
+            and (verif_real - verif_control) >= float(config["runtime"].get("audit_binary_auroc_gap", 0.05))
+        )
+        or (
+            polarity_real >= float(config["runtime"].get("audit_binary_auroc_min", 0.60))
+            and (polarity_real - polarity_control) >= float(config["runtime"].get("audit_binary_auroc_gap", 0.05))
+        )
+    )
+    phase1_probe_passed = bool(label_probe_passed and semantic_probe_passed)
+    phase1_gate_passed = bool(phase0_gate_passed and phase1_probe_passed)
+
+    summary_csv = output_dir / "summary.csv"
+    summary_plot = output_dir / "summary.svg"
+    probe_csv = output_dir / "probe_results.csv"
+    write_summary_csv(
+        summary_csv,
+        [
+            {
+                "mode": f"{row['probe_name']}:{row['feature_mode']}:{row['model_kind']}",
+                "run_dir": output_dir,
+                "primary_metric": str(row["primary_metric"]),
+                "primary_score": float(row[str(row["primary_metric"])]),
+            }
+            for row in rows
+        ],
+    )
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['probe_name']}:{row['feature_mode']}:{row['model_kind']}",
+                "run_dir": f"{row['probe_name']}-{row['feature_mode']}-{row['model_kind']}",
+                "primary_metric": str(row["primary_metric"]),
+                "primary_score": float(row[str(row["primary_metric"])]),
+            }
+            for row in rows
+        ],
+    )
+    _write_csv(probe_csv, rows)
+    report_lines = [
+        "# M4 Writer Information Audit",
+        "",
+        f"- phase0_gate_passed: {phase0_gate_passed}",
+        f"- label_probe_passed: {label_probe_passed}",
+        f"- semantic_probe_passed: {semantic_probe_passed}",
+        f"- phase1_probe_passed: {phase1_probe_passed}",
+        f"- phase1_gate_passed: {phase1_gate_passed}",
+        "",
+        f"- label_real_macro_f1: {label_real:.4f}",
+        f"- label_control_macro_f1: {label_control:.4f}",
+        f"- verifiability_real_auroc: {verif_real:.4f}",
+        f"- verifiability_control_auroc: {verif_control:.4f}",
+        f"- polarity_real_auroc: {polarity_real:.4f}",
+        f"- polarity_control_auroc: {polarity_control:.4f}",
+    ]
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_writer_information_audit",
+            "phase0_gate_passed": phase0_gate_passed,
+            "label_probe_passed": label_probe_passed,
+            "semantic_probe_passed": semantic_probe_passed,
+            "phase1_probe_passed": phase1_probe_passed,
+            "phase1_gate_passed": phase1_gate_passed,
+            "probe_results_csv": str(probe_csv.resolve()),
+            "summary_csv": str(summary_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "report_path": str((output_dir / "report.md").resolve()),
+        },
+    )
+
+
+def _pairwise_compare(left_rows: dict[str, dict[str, Any]], right_rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    shared_ids = sorted(set(left_rows) & set(right_rows))
+    if not shared_ids:
+        raise ValueError("Pairwise compare requires overlapping example ids.")
+    left_correct_to_right_wrong = 0
+    left_wrong_to_right_correct = 0
+    margin_gains: list[float] = []
+    for example_id in shared_ids:
+        left_row = left_rows[example_id]
+        right_row = right_rows[example_id]
+        left_correct = bool(left_row["predicted_correct"])
+        right_correct = bool(right_row["predicted_correct"])
+        if left_correct and not right_correct:
+            left_correct_to_right_wrong += 1
+        if not left_correct and right_correct:
+            left_wrong_to_right_correct += 1
+        margin_gains.append(float(right_row["final_margin"]) - float(left_row["final_margin"]))
+    return {
+        "example_count": len(shared_ids),
+        "left_wrong_to_right_correct": left_wrong_to_right_correct,
+        "left_correct_to_right_wrong": left_correct_to_right_wrong,
+        "flip_count_delta": left_wrong_to_right_correct - left_correct_to_right_wrong,
+        "mean_margin_gain": sum(margin_gains) / max(1, len(margin_gains)),
+    }
+
+
+def run_m4_shared_injection_compare(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    input_root: str,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    runtime_cfg = dict(config.get("runtime", {}))
+    flip_gain_min = int(runtime_cfg.get("pilot_compare_flip_gain_min", 2))
+    macro_f1_gap_min = float(runtime_cfg.get("pilot_compare_macro_f1_gap_min", 0.05))
+    regressions_max = int(runtime_cfg.get("pilot_compare_regressions_max", 1))
+    runs = _collect_shared_injection_runs(Path(input_root).resolve())
+    required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
+    missing = sorted(required - set(runs))
+    if missing:
+        raise ValueError(f"M4 shared injection compare is missing run aliases: {', '.join(missing)}")
+    arm_rows: dict[str, dict[str, dict[str, Any]]] = {}
+    arm_summaries: list[dict[str, Any]] = []
+    for alias in sorted(required):
+        metrics, run_dir = runs[alias]
+        _, case_rows = _load_case_rows(run_dir)
+        class_metrics = _classification_metrics_from_rows(case_rows)
+        arm_rows[alias] = {str(row["example_id"]): row for row in case_rows}
+        arm_summaries.append(
+            {
+                "mode": alias,
+                "run_dir": str(run_dir.resolve()),
+                "primary_metric": str(metrics.get("task_metric_name", "accuracy")),
+                "primary_score": float(metrics.get("best_adapt_task_score", 0.0)),
+                "macro_f1": float(class_metrics["macro_f1"]),
+                "mean_margin": float(class_metrics["mean_margin"]),
+                "dominant_label_fraction": float(class_metrics["dominant_label_fraction"]),
+                "case_rows": len(case_rows),
+            }
+        )
+    pairwise_rows: list[dict[str, Any]] = []
+    for left_alias, right_alias in [
+        ("A", "T"),
+        ("A", "I_real"),
+        ("I_shuffle", "I_real"),
+        ("I_zero", "I_real"),
+    ]:
+        compare = _pairwise_compare(arm_rows[left_alias], arm_rows[right_alias])
+        pairwise_rows.append({"left_alias": left_alias, "right_alias": right_alias, **compare})
+    pairwise_lookup = {(row["left_alias"], row["right_alias"]): row for row in pairwise_rows}
+    real_vs_shuffle_path = output_dir / "real_vs_shuffle_gap.csv"
+    real_vs_zero_path = output_dir / "real_vs_zero_gap.csv"
+    _write_csv(
+        real_vs_shuffle_path,
+        [
+            {
+                "example_id": example_id,
+                "real_margin": float(arm_rows["I_real"][example_id]["final_margin"]),
+                "shuffle_margin": float(arm_rows["I_shuffle"][example_id]["final_margin"]),
+                "margin_gap": float(arm_rows["I_real"][example_id]["final_margin"])
+                - float(arm_rows["I_shuffle"][example_id]["final_margin"]),
+            }
+            for example_id in sorted(set(arm_rows["I_real"]) & set(arm_rows["I_shuffle"]))
+        ],
+    )
+    _write_csv(
+        real_vs_zero_path,
+        [
+            {
+                "example_id": example_id,
+                "real_margin": float(arm_rows["I_real"][example_id]["final_margin"]),
+                "zero_margin": float(arm_rows["I_zero"][example_id]["final_margin"]),
+                "margin_gap": float(arm_rows["I_real"][example_id]["final_margin"])
+                - float(arm_rows["I_zero"][example_id]["final_margin"]),
+            }
+            for example_id in sorted(set(arm_rows["I_real"]) & set(arm_rows["I_zero"]))
+        ],
+    )
+    summary_csv = output_dir / "arm_summary.csv"
+    summary_plot = output_dir / "summary.svg"
+    pairwise_csv = output_dir / "arm_pairwise_compare.csv"
+    write_summary_csv(summary_csv, arm_summaries)
+    write_sanity_plot(summary_plot, arm_summaries)
+    _write_csv(pairwise_csv, pairwise_rows)
+    summary_lookup = {row["mode"]: row for row in arm_summaries}
+    regressions_vs_base = int(pairwise_lookup[("A", "I_real")]["left_correct_to_right_wrong"])
+    flip_gain_vs_shuffle = int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"])
+    flip_gain_vs_zero = int(pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"])
+    macro_f1_gap_vs_shuffle = float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_shuffle"]["macro_f1"])
+    macro_f1_gap_vs_zero = float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["I_zero"]["macro_f1"])
+    gate_passed = bool(
+        flip_gain_vs_shuffle >= flip_gain_min
+        and macro_f1_gap_vs_shuffle >= macro_f1_gap_min
+        and flip_gain_vs_zero >= flip_gain_min
+        and macro_f1_gap_vs_zero >= macro_f1_gap_min
+        and float(summary_lookup["I_real"]["primary_score"]) >= float(summary_lookup["A"]["primary_score"])
+        and regressions_vs_base <= regressions_max
+    )
+    report_lines = [
+        "# M4 Shared Injection Compare",
+        "",
+        f"- gate_passed: {gate_passed}",
+        f"- regressions_vs_base: {regressions_vs_base}",
+        f"- flip_gain_vs_shuffle: {flip_gain_vs_shuffle}",
+        f"- flip_gain_vs_zero: {flip_gain_vs_zero}",
+        f"- macro_f1_gap_vs_shuffle: {macro_f1_gap_vs_shuffle:.4f}",
+        f"- macro_f1_gap_vs_zero: {macro_f1_gap_vs_zero:.4f}",
+        "",
+        "## Arm Summary",
+    ]
+    for row in arm_summaries:
+        report_lines.append(
+            f"- {row['mode']}: task_score={row['primary_score']:.4f}, "
+            f"macro_f1={row['macro_f1']:.4f}, mean_margin={row['mean_margin']:.4f}, "
+            f"dominant_label_fraction={row['dominant_label_fraction']:.4f}"
+        )
+    report_lines.append("")
+    report_lines.append("## Pairwise Compare")
+    for row in pairwise_rows:
+        report_lines.append(
+            f"- {row['left_alias']} -> {row['right_alias']}: "
+            f"flip_delta={row['flip_count_delta']}, "
+            f"left_wrong_to_right_correct={row['left_wrong_to_right_correct']}, "
+            f"left_correct_to_right_wrong={row['left_correct_to_right_wrong']}, "
+            f"mean_margin_gain={row['mean_margin_gain']:.4f}"
+        )
+    (output_dir / "report.md").write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_shared_injection_compare",
+            "gate_passed": gate_passed,
+            "regressions_vs_base": regressions_vs_base,
+            "flip_gain_vs_shuffle": flip_gain_vs_shuffle,
+            "flip_gain_vs_zero": flip_gain_vs_zero,
+            "macro_f1_gap_vs_shuffle": macro_f1_gap_vs_shuffle,
+            "macro_f1_gap_vs_zero": macro_f1_gap_vs_zero,
+            "i_real_task_score": float(summary_lookup["I_real"]["primary_score"]),
+            "a_task_score": float(summary_lookup["A"]["primary_score"]),
+            "i_shuffle_task_score": float(summary_lookup["I_shuffle"]["primary_score"]),
+            "i_zero_task_score": float(summary_lookup["I_zero"]["primary_score"]),
+            "i_real_macro_f1": float(summary_lookup["I_real"]["macro_f1"]),
+            "a_macro_f1": float(summary_lookup["A"]["macro_f1"]),
+            "i_shuffle_macro_f1": float(summary_lookup["I_shuffle"]["macro_f1"]),
+            "i_zero_macro_f1": float(summary_lookup["I_zero"]["macro_f1"]),
+            "compare_flip_gain_min": flip_gain_min,
+            "compare_macro_f1_gap_min": macro_f1_gap_min,
+            "compare_regressions_max": regressions_max,
+            "summary_csv": str(summary_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "pairwise_compare_csv": str(pairwise_csv.resolve()),
+            "real_vs_shuffle_gap_csv": str(real_vs_shuffle_path.resolve()),
+            "real_vs_zero_gap_csv": str(real_vs_zero_path.resolve()),
+            "report_path": str((output_dir / "report.md").resolve()),
+            "task_score_gap_to_T": float(summary_lookup["I_real"]["primary_score"]) - float(summary_lookup["T"]["primary_score"]),
+            "macro_f1_gap_to_T": float(summary_lookup["I_real"]["macro_f1"]) - float(summary_lookup["T"]["macro_f1"]),
+            "mean_margin_gap_to_T": float(summary_lookup["I_real"]["mean_margin"]) - float(summary_lookup["T"]["mean_margin"]),
+        },
+    )
+
+
+def run_m4_shared_injection_dynamics_audit(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    input_root: str,
+    dry_run: bool,
+) -> None:
+    del config, dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suite_roots = _resolve_phase2_suite_roots(Path(input_root).resolve())
+    if not suite_roots:
+        raise ValueError(f"No phase2-selected suite roots found under {input_root}.")
+
+    summary_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+    best_suite_metrics: dict[str, Any] = {}
+    report_lines = ["# M4 Shared Injection Dynamics Audit", ""]
+
+    for suite_name, suite_root in sorted(suite_roots.items()):
+        runs = _collect_shared_injection_runs(suite_root)
+        required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
+        missing = sorted(required - set(runs))
+        if missing:
+            raise ValueError(
+                f"Suite {suite_name} is missing required shared injection runs: {', '.join(missing)}"
+            )
+        snapshots = {
+            alias: _load_snapshot_eval_rows(run_dir)
+            for alias, (_, run_dir) in runs.items()
+        }
+        static_rows: dict[str, list[dict[str, Any]]] = {}
+        for alias in ("A", "T", "I_zero"):
+            if 0 in snapshots[alias]:
+                static_rows[alias] = snapshots[alias][0][1]
+            else:
+                _, static_rows[alias] = _load_case_rows(runs[alias][1])
+        common_steps = sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"]))
+        if not common_steps:
+            raise ValueError(f"Suite {suite_name} has no overlapping I_real/I_shuffle snapshot steps.")
+
+        suite_i_real_rows: list[dict[str, Any]] = []
+        for step in common_steps:
+            step_case_rows = {
+                "A": static_rows["A"],
+                "T": static_rows["T"],
+                "I_zero": static_rows["I_zero"],
+                "I_real": snapshots["I_real"][step][1],
+                "I_shuffle": snapshots["I_shuffle"][step][1],
+            }
+            step_metrics = {
+                alias: _classification_metrics_from_rows(rows)
+                for alias, rows in step_case_rows.items()
+            }
+            for alias, metrics in step_metrics.items():
+                summary_rows.append(
+                    {
+                        "suite": suite_name,
+                        "step": int(step),
+                        "alias": alias,
+                        "task_score": float(metrics["accuracy"]),
+                        "macro_f1": float(metrics["macro_f1"]),
+                        "mean_margin": float(metrics["mean_margin"]),
+                        "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
+                    }
+                )
+            for left_alias, right_alias in [("A", "I_real"), ("I_shuffle", "I_real"), ("I_zero", "I_real")]:
+                compare = _pairwise_compare(
+                    {str(row["example_id"]): row for row in step_case_rows[left_alias]},
+                    {str(row["example_id"]): row for row in step_case_rows[right_alias]},
+                )
+                pairwise_rows.append(
+                    {
+                        "suite": suite_name,
+                        "step": int(step),
+                        "left_alias": left_alias,
+                        "right_alias": right_alias,
+                        **compare,
+                    }
+                )
+            pairwise_lookup = {
+                (row["left_alias"], row["right_alias"]): row
+                for row in pairwise_rows
+                if row["suite"] == suite_name and int(row["step"]) == int(step)
+            }
+            suite_i_real_rows.append(
+                {
+                    "step": int(step),
+                    "task_score": float(step_metrics["I_real"]["accuracy"]),
+                    "macro_f1": float(step_metrics["I_real"]["macro_f1"]),
+                    "mean_margin": float(step_metrics["I_real"]["mean_margin"]),
+                    "flip_gain_vs_shuffle": int(pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]),
+                    "flip_gain_vs_zero": int(pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]),
+                }
+            )
+
+        best_row = max(
+            suite_i_real_rows,
+            key=lambda row: (
+                float(row["macro_f1"]),
+                float(row["task_score"]),
+                float(row["mean_margin"]),
+            ),
+        )
+        final_step = max(common_steps)
+        final_row = next(row for row in suite_i_real_rows if int(row["step"]) == int(final_step))
+        best_suite_metrics[suite_name] = {
+            "best_step": int(best_row["step"]),
+            "best_macro_f1": float(best_row["macro_f1"]),
+            "best_task_score": float(best_row["task_score"]),
+            "best_mean_margin": float(best_row["mean_margin"]),
+            "final_step": int(final_row["step"]),
+            "final_macro_f1": float(final_row["macro_f1"]),
+            "final_task_score": float(final_row["task_score"]),
+            "final_mean_margin": float(final_row["mean_margin"]),
+            "overshoot_detected": bool(int(best_row["step"]) != int(final_row["step"])),
+        }
+        report_lines.extend(
+            [
+                f"## {suite_name}",
+                f"- best_step_by_macro_f1: {best_row['step']}",
+                (
+                    f"- best_real: task_score={best_row['task_score']:.4f}, "
+                    f"macro_f1={best_row['macro_f1']:.4f}, mean_margin={best_row['mean_margin']:.4f}, "
+                    f"flip_gain_vs_shuffle={best_row['flip_gain_vs_shuffle']}, "
+                    f"flip_gain_vs_zero={best_row['flip_gain_vs_zero']}"
+                ),
+                (
+                    f"- final_real: task_score={final_row['task_score']:.4f}, "
+                    f"macro_f1={final_row['macro_f1']:.4f}, mean_margin={final_row['mean_margin']:.4f}"
+                ),
+                f"- overshoot_detected: {best_suite_metrics[suite_name]['overshoot_detected']}",
+                "",
+            ]
+        )
+
+    summary_csv = output_dir / "dynamics_summary.csv"
+    pairwise_csv = output_dir / "dynamics_pairwise.csv"
+    summary_plot = output_dir / "dynamics_summary.svg"
+    _write_csv(summary_csv, summary_rows)
+    _write_csv(pairwise_csv, pairwise_rows)
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['suite']}:{row['alias']}:step{int(row['step']):04d}",
+                "run_dir": f"{row['suite']}-{row['alias']}-step{int(row['step']):04d}",
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+            }
+            for row in summary_rows
+            if row["alias"] == "I_real"
+        ],
+    )
+    report_path = output_dir / "report.md"
+    report_path.write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_shared_injection_dynamics_audit",
+            "suite_count": len(suite_roots),
+            "summary_csv": str(summary_csv.resolve()),
+            "pairwise_csv": str(pairwise_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "report_path": str(report_path.resolve()),
+            "suite_best_metrics": best_suite_metrics,
+        },
+    )
+
+
+def _build_case_lookup(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(row["example_id"]): row for row in rows}
+
+
+def _stage_case_bucket(a_rows: dict[str, dict[str, Any]], example_id: str) -> str:
+    row = a_rows[example_id]
+    if bool(row["predicted_correct"]):
+        return "A_correct"
+    if abs(float(row["final_margin"])) < 0.25:
+        return "A_near_threshold"
+    return "A_wrong"
+
+
+def _mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return float(sum(values) / len(values))
+
+
+def _collect_content_gap_rows(
+    *,
+    suite_name: str,
+    step: int,
+    a_rows: dict[str, dict[str, Any]],
+    real_rows: dict[str, dict[str, Any]],
+    shuffle_rows: dict[str, dict[str, Any]],
+    zero_rows: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    shared_ids = sorted(set(a_rows) & set(real_rows) & set(shuffle_rows) & set(zero_rows))
+    for bucket_name in ("overall", "A_wrong", "A_near_threshold", "SUPPORTS", "REFUTES", "NOT_ENOUGH_INFO"):
+        if bucket_name == "overall":
+            bucket_ids = shared_ids
+        elif bucket_name in {"A_wrong", "A_near_threshold"}:
+            bucket_ids = [example_id for example_id in shared_ids if _stage_case_bucket(a_rows, example_id) == bucket_name]
+        else:
+            bucket_ids = [
+                example_id
+                for example_id in shared_ids
+                if str(real_rows[example_id]["gold_label"]) == bucket_name
+            ]
+        if not bucket_ids:
+            continue
+        real_minus_shuffle = [
+            float(real_rows[example_id]["final_margin"]) - float(shuffle_rows[example_id]["final_margin"])
+            for example_id in bucket_ids
+        ]
+        real_minus_zero = [
+            float(real_rows[example_id]["final_margin"]) - float(zero_rows[example_id]["final_margin"])
+            for example_id in bucket_ids
+        ]
+        rows.append(
+            {
+                "suite": suite_name,
+                "step": int(step),
+                "bucket": bucket_name,
+                "example_count": len(bucket_ids),
+                "mean_margin_gap_real_vs_shuffle": _mean(real_minus_shuffle),
+                "mean_margin_gap_real_vs_zero": _mean(real_minus_zero),
+            }
+        )
+    return rows
+
+
+def _load_audit_examples(config: dict[str, Any], dataset_path: str, prompt_variant: str) -> list[SharedInjectionExampleCache]:
+    rows = _load_task_dataset_with_path(config, dataset_path)
+    return _build_example_caches(rows, prompt_variant=prompt_variant)
+
+
+def _attention_rows_for_snapshot(
+    *,
+    config: dict[str, Any],
+    support_examples: list[dict[str, Any]],
+    audit_examples: list[SharedInjectionExampleCache],
+    example_lookup: dict[str, dict[str, Any]],
+    support_serialization_variant: str,
+    writer_memory_control: str,
+    checkpoint_path: str | None,
+    step: int,
+    suite_name: str,
+    arm_alias: str,
+) -> list[dict[str, Any]]:
+    runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=0,
+        arm="injected",
+        writer_memory_control=writer_memory_control,
+    )
+    if checkpoint_path:
+        runtime.load_injection_checkpoint(checkpoint_path)
+    support_text_block = _build_support_text_block(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    support_rows = _resolve_support_rows_for_memory_control(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    rows: list[dict[str, Any]] = []
+    for cache in audit_examples:
+        if runtime.memory_path_variant == "two_level":
+            prefix_artifacts = runtime.build_prefix_artifacts(
+                support_text_block,
+                support_rows=support_rows,
+                prompt_text=cache.prompt_text,
+            )
+        else:
+            prefix_artifacts = runtime.build_prefix_artifacts(
+                support_text_block,
+                support_rows=support_rows,
+            )
+        prefix_stats = prefix_artifacts.prefix_stats
+        scores, diagnostics = runtime.score_example(
+            cache,
+            support_text_block=support_text_block,
+            prefix_embeddings=prefix_artifacts.prefix_embeddings,
+            layer_prefix_hidden_by_layer=prefix_artifacts.layer_prefix_hidden_by_layer,
+            return_diagnostics=True,
+        )
+        scores_cpu = scores.detach().to(dtype=torch.float32).cpu()
+        competitor_index = max(
+            [index for index in range(len(cache.candidate_labels)) if index != cache.gold_index],
+            key=lambda index: float(scores_cpu[index].item()),
+        )
+        masses = [float(value) for value in diagnostics["prefix_attention_mass_by_candidate"]]
+        masses_by_layer = {
+            int(layer_index): [float(value) for value in values]
+            for layer_index, values in diagnostics.get("prefix_attention_mass_by_candidate_by_layer", {}).items()
+        }
+        for layer_index in diagnostics.get("diagnostic_layers", []):
+            layer_masses = masses_by_layer.get(int(layer_index), masses)
+            rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": arm_alias,
+                    "layer_index": int(layer_index),
+                    "example_id": str(cache.example["id"]),
+                    "gold_label": cache.candidate_labels[cache.gold_index],
+                    "predicted_label": cache.candidate_labels[int(torch.argmax(scores_cpu).item())],
+                    "mean_prefix_attention_mass": _mean(layer_masses),
+                    "gold_prefix_attention_mass": layer_masses[cache.gold_index],
+                    "competitor_prefix_attention_mass": layer_masses[competitor_index],
+                    "prefix_tokens": int(prefix_stats["prefix_tokens"]),
+                    "prefix_l2": float(prefix_stats["prefix_l2"]),
+                }
+            )
+    return rows
+
+
+def _reader_query_rows_for_snapshot(
+    *,
+    config: dict[str, Any],
+    support_examples: list[dict[str, Any]],
+    audit_examples: list[SharedInjectionExampleCache],
+    example_lookup: dict[str, dict[str, Any]],
+    support_serialization_variant: str,
+    writer_memory_control: str,
+    checkpoint_path: str | None,
+    step: int,
+    suite_name: str,
+    arm_alias: str,
+) -> list[dict[str, Any]]:
+    runtime = SharedInjectionPilotRuntime(
+        config=config,
+        seed=0,
+        arm="injected",
+        writer_memory_control=writer_memory_control,
+    )
+    if runtime.memory_path_variant != "two_level":
+        return []
+    if checkpoint_path:
+        runtime.load_injection_checkpoint(checkpoint_path)
+    support_text_block = _build_support_text_block(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    support_rows = _resolve_support_rows_for_memory_control(
+        support_examples,
+        memory_control=writer_memory_control,
+        example_lookup=example_lookup,
+        support_serialization_variant=support_serialization_variant,
+    )
+    rows: list[dict[str, Any]] = []
+    for cache in audit_examples:
+        prefix_artifacts = runtime.build_prefix_artifacts(
+            support_text_block,
+            support_rows=support_rows,
+            prompt_text=cache.prompt_text,
+        )
+        reader_attention = prefix_artifacts.reader_attention
+        if reader_attention is None or reader_attention.numel() == 0:
+            continue
+        attention = reader_attention.detach().to(dtype=torch.float32, device="cpu")[0]
+        slot_count = attention.shape[1]
+        coverage_threshold = max(0.05, 1.0 / max(1, slot_count))
+        for query_index in range(attention.shape[0]):
+            query_attention = attention[query_index]
+            query_probs = query_attention.clamp_min(1e-8)
+            entropy = float((-(query_probs * query_probs.log()).sum()).item())
+            max_slot = int(torch.argmax(query_attention).item())
+            rows.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "arm_alias": arm_alias,
+                    "example_id": str(cache.example["id"]),
+                    "query_index": int(query_index),
+                    "memory_long_slots": int(slot_count),
+                    "reader_attention_entropy": entropy,
+                    "reader_slot_coverage_fraction": float(
+                        (query_attention > coverage_threshold).to(dtype=torch.float32).mean().item()
+                    ),
+                    "reader_argmax_slot": max_slot,
+                    "reader_argmax_mass": float(query_attention[max_slot].item()),
+                }
+            )
+    return rows
+
+
+def _collect_prefix_norm_rows_for_metrics(
+    *,
+    suite_name: str,
+    step: int,
+    arm_alias: str,
+    metrics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    prefix_stats = dict(metrics.get("prefix_artifact_stats", {}))
+    rows: list[dict[str, Any]] = [
+        {
+            "suite": suite_name,
+            "step": int(step),
+            "arm_alias": arm_alias,
+            "row_type": "snapshot_aggregate",
+            "layer_index": "",
+            "pilot_memory_path_variant": str(metrics.get("pilot_memory_path_variant", "single_level")),
+            "pilot_reader_context_mode": str(metrics.get("pilot_reader_context_mode", "prompt_summary")),
+            "pilot_projector_token_source": str(metrics.get("pilot_projector_token_source", "writer_slots")),
+            "pilot_reader_num_queries": float(metrics.get("pilot_reader_num_queries", 0.0)),
+            "pilot_fuser_short_slots": float(metrics.get("pilot_fuser_short_slots", 0.0)),
+            "pilot_support_encoder_mode": str(metrics.get("pilot_support_encoder_mode", "pooled_block")),
+            "prefix_tokens": float(metrics.get("prefix_tokens", 0.0)),
+            "prefix_l2": float(metrics.get("prefix_l2", 0.0)),
+            "prefix_slot_norm_mean": float(metrics.get("prefix_slot_norm_mean", 0.0)),
+            "prefix_slot_norm_std": float(metrics.get("prefix_slot_norm_std", 0.0)),
+            "prefix_slot_norm_max": float(metrics.get("prefix_slot_norm_max", 0.0)),
+            "writer_memory_l2": float(metrics.get("writer_memory_l2", 0.0)),
+            "writer_slot_norm_mean": float(metrics.get("writer_slot_norm_mean", 0.0)),
+            "writer_slot_norm_std": float(metrics.get("writer_slot_norm_std", 0.0)),
+            "writer_slot_norm_max": float(metrics.get("writer_slot_norm_max", 0.0)),
+            "memory_long_l2": float(metrics.get("memory_long_l2", 0.0)),
+            "memory_long_slots": float(metrics.get("memory_long_slots", 0.0)),
+            "memory_long_slot_norm_mean": float(metrics.get("memory_long_slot_norm_mean", 0.0)),
+            "memory_long_slot_norm_std": float(metrics.get("memory_long_slot_norm_std", 0.0)),
+            "memory_long_slot_norm_max": float(metrics.get("memory_long_slot_norm_max", 0.0)),
+            "memory_short_l2": float(metrics.get("memory_short_l2", 0.0)),
+            "memory_short_slots": float(metrics.get("memory_short_slots", 0.0)),
+            "memory_short_slot_norm_mean": float(metrics.get("memory_short_slot_norm_mean", 0.0)),
+            "memory_short_slot_norm_std": float(metrics.get("memory_short_slot_norm_std", 0.0)),
+            "memory_short_slot_norm_max": float(metrics.get("memory_short_slot_norm_max", 0.0)),
+            "memory_short_pairwise_cosine_mean": float(
+                metrics.get("memory_short_pairwise_cosine_mean", 0.0)
+            ),
+            "reader_num_queries": float(metrics.get("reader_num_queries", 0.0)),
+            "reader_slot_count": float(metrics.get("reader_slot_count", 0.0)),
+            "reader_attention_entropy_mean": float(metrics.get("reader_attention_entropy_mean", 0.0)),
+            "reader_attention_entropy_min": float(metrics.get("reader_attention_entropy_min", 0.0)),
+            "reader_attention_entropy_max": float(metrics.get("reader_attention_entropy_max", 0.0)),
+            "reader_attention_pairwise_cosine_mean": float(
+                metrics.get("reader_attention_pairwise_cosine_mean", 0.0)
+            ),
+            "reader_slot_coverage_fraction": float(metrics.get("reader_slot_coverage_fraction", 0.0)),
+            "support_item_count": float(metrics.get("support_item_count", 0.0)),
+            "support_item_hidden_l2": float(metrics.get("support_item_hidden_l2", 0.0)),
+            "support_item_hidden_norm_mean": float(metrics.get("support_item_hidden_norm_mean", 0.0)),
+            "support_item_hidden_norm_std": float(metrics.get("support_item_hidden_norm_std", 0.0)),
+            "support_item_hidden_norm_max": float(metrics.get("support_item_hidden_norm_max", 0.0)),
+            **_prefix_scalar_summary(metrics),
+        }
+    ]
+    layer_indices = sorted(
+        {
+            *prefix_stats.get("layer_hidden_l2_by_layer", {}).keys(),
+            *prefix_stats.get("layer_key_l2_by_layer", {}).keys(),
+            *prefix_stats.get("layer_value_l2_by_layer", {}).keys(),
+        },
+        key=int,
+    )
+    for layer_index in layer_indices:
+        rows.append(
+            {
+                "suite": suite_name,
+                "step": int(step),
+                "arm_alias": arm_alias,
+                "row_type": "snapshot_layer",
+                "layer_index": int(layer_index),
+                "prefix_tokens": float(metrics.get("prefix_tokens", 0.0)),
+                "prefix_hidden_l2": float(prefix_stats.get("layer_hidden_l2_by_layer", {}).get(layer_index, 0.0)),
+                "prefix_hidden_slot_norm_mean": float(
+                    prefix_stats.get("layer_slot_norm_mean_by_layer", {}).get(layer_index, 0.0)
+                ),
+                "prefix_hidden_slot_norm_std": float(
+                    prefix_stats.get("layer_slot_norm_std_by_layer", {}).get(layer_index, 0.0)
+                ),
+                "prefix_hidden_slot_norm_max": float(
+                    prefix_stats.get("layer_slot_norm_max_by_layer", {}).get(layer_index, 0.0)
+                ),
+                "projected_k_l2": float(prefix_stats.get("layer_key_l2_by_layer", {}).get(layer_index, 0.0)),
+                "projected_v_l2": float(prefix_stats.get("layer_value_l2_by_layer", {}).get(layer_index, 0.0)),
+            }
+        )
+    return rows
+
+
+def _collect_train_event_norm_rows(
+    *,
+    suite_name: str,
+    arm_alias: str,
+    train_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in train_events:
+        rows.append(
+            {
+                "suite": suite_name,
+                "step": int(event.get("step", 0)),
+                "arm_alias": arm_alias,
+                "row_type": "train_event",
+                "layer_index": "",
+                "prefix_tokens": float(event.get("prefix_tokens", 0.0)),
+                "prefix_l2": float(event.get("prefix_l2", 0.0)),
+                "writer_memory_l2": float(event.get("writer_memory_l2", 0.0)),
+                "writer_slot_norm_mean": float(event.get("writer_slot_norm_mean", 0.0)),
+                "writer_slot_norm_std": float(event.get("writer_slot_norm_std", 0.0)),
+                "writer_slot_norm_max": float(event.get("writer_slot_norm_max", 0.0)),
+                "memory_long_l2": float(event.get("memory_long_l2", 0.0)),
+                "memory_long_slots": float(event.get("memory_long_slots", 0.0)),
+                "memory_long_slot_norm_mean": float(event.get("memory_long_slot_norm_mean", 0.0)),
+                "memory_long_slot_norm_std": float(event.get("memory_long_slot_norm_std", 0.0)),
+                "memory_long_slot_norm_max": float(event.get("memory_long_slot_norm_max", 0.0)),
+                "memory_short_l2": float(event.get("memory_short_l2", 0.0)),
+                "memory_short_slots": float(event.get("memory_short_slots", 0.0)),
+                "memory_short_slot_norm_mean": float(event.get("memory_short_slot_norm_mean", 0.0)),
+                "memory_short_slot_norm_std": float(event.get("memory_short_slot_norm_std", 0.0)),
+                "memory_short_slot_norm_max": float(event.get("memory_short_slot_norm_max", 0.0)),
+                "memory_short_pairwise_cosine_mean": float(
+                    event.get("memory_short_pairwise_cosine_mean", 0.0)
+                ),
+                "reader_num_queries": float(event.get("reader_num_queries", 0.0)),
+                "reader_slot_count": float(event.get("reader_slot_count", 0.0)),
+                "reader_attention_entropy_mean": float(event.get("reader_attention_entropy_mean", 0.0)),
+                "reader_attention_entropy_min": float(event.get("reader_attention_entropy_min", 0.0)),
+                "reader_attention_entropy_max": float(event.get("reader_attention_entropy_max", 0.0)),
+                "reader_attention_pairwise_cosine_mean": float(
+                    event.get("reader_attention_pairwise_cosine_mean", 0.0)
+                ),
+                "reader_slot_coverage_fraction": float(event.get("reader_slot_coverage_fraction", 0.0)),
+                "support_item_count": float(event.get("support_item_count", 0.0)),
+                "support_item_hidden_l2": float(event.get("support_item_hidden_l2", 0.0)),
+                "support_item_hidden_norm_mean": float(event.get("support_item_hidden_norm_mean", 0.0)),
+                "support_item_hidden_norm_std": float(event.get("support_item_hidden_norm_std", 0.0)),
+                "support_item_hidden_norm_max": float(event.get("support_item_hidden_norm_max", 0.0)),
+                "pilot_memory_path_variant": str(event.get("pilot_memory_path_variant", "single_level")),
+                "pilot_reader_context_mode": str(event.get("pilot_reader_context_mode", "prompt_summary")),
+                "pilot_projector_token_source": str(event.get("pilot_projector_token_source", "writer_slots")),
+                "pilot_reader_num_queries": float(event.get("pilot_reader_num_queries", 0.0)),
+                "pilot_fuser_short_slots": float(event.get("pilot_fuser_short_slots", 0.0)),
+                "pilot_support_encoder_mode": str(event.get("pilot_support_encoder_mode", "pooled_block")),
+                "pilot_trainable_variant": str(event.get("pilot_trainable_variant", "")),
+                "alignment_aux_mode": str(event.get("alignment_aux_mode", "off")),
+                "alignment_aux_active": bool(event.get("alignment_aux_active", False)),
+                "alignment_aux_loss": float(event.get("alignment_aux_loss", 0.0)),
+                "memory_long_diversity_loss": float(event.get("memory_long_diversity_loss", 0.0)),
+                "memory_long_diversity_weight": float(event.get("memory_long_diversity_weight", 0.0)),
+                "memory_short_diversity_loss": float(event.get("memory_short_diversity_loss", 0.0)),
+                "memory_short_diversity_weight": float(event.get("memory_short_diversity_weight", 0.0)),
+                "reader_attention_diversity_loss": float(
+                    event.get("reader_attention_diversity_loss", 0.0)
+                ),
+                "reader_attention_diversity_weight": float(
+                    event.get("reader_attention_diversity_weight", 0.0)
+                ),
+                "writer_slot_basis_orthogonality_loss": float(
+                    event.get("writer_slot_basis_orthogonality_loss", 0.0)
+                ),
+                "writer_slot_basis_orthogonality_weight": float(
+                    event.get("writer_slot_basis_orthogonality_weight", 0.0)
+                ),
+                "writer_slot_basis_pairwise_cosine_mean": float(
+                    event.get("writer_slot_basis_pairwise_cosine_mean", 0.0)
+                ),
+                "support_encoder_grad_norm": float(event.get("support_encoder_grad_norm", 0.0)),
+                "prefix_projector_grad_norm": float(event.get("prefix_projector_grad_norm", 0.0)),
+                "reader_grad_norm": float(event.get("reader_grad_norm", 0.0)),
+                "fuser_grad_norm": float(event.get("fuser_grad_norm", 0.0)),
+                "writer_grad_norm": float(event.get("writer_grad_norm", 0.0)),
+                "memory_long_effective_rank": float(event.get("memory_long_effective_rank", 0.0)),
+                "memory_short_effective_rank": float(event.get("memory_short_effective_rank", 0.0)),
+                "writer_to_projector_grad_ratio": float(event.get("writer_to_projector_grad_ratio", 0.0)),
+                "total_grad_norm_pre_clip": float(event.get("total_grad_norm_pre_clip", 0.0)),
+                "loss": float(event.get("loss", 0.0)),
+                **_prefix_scalar_summary(event),
+            }
+        )
+    return rows
+
+
+def run_m4_shared_injection_dynamics_recovery(
+    *,
+    config: dict[str, Any],
+    output_dir: Path,
+    input_root: str,
+    dry_run: bool,
+) -> None:
+    del dry_run
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suite_roots = _resolve_phase2_suite_roots(Path(input_root).resolve())
+    if not suite_roots:
+        raise ValueError(f"No phase2-selected suite roots found under {input_root}.")
+
+    summary_rows: list[dict[str, Any]] = []
+    pairwise_rows: list[dict[str, Any]] = []
+    content_gap_rows: list[dict[str, Any]] = []
+    prefix_norm_rows: list[dict[str, Any]] = []
+    reader_query_rows: list[dict[str, Any]] = []
+    candidate_selections: list[dict[str, Any]] = []
+    suite_support_variant: dict[str, str] = {}
+    report_lines = ["# M4 Shared Injection Dynamics Recovery", ""]
+
+    for suite_name, suite_root in sorted(suite_roots.items()):
+        runs = _collect_shared_injection_runs(suite_root)
+        required = {"A", "T", "I_real", "I_shuffle", "I_zero"}
+        missing = sorted(required - set(runs))
+        if missing:
+            raise ValueError(f"Suite {suite_name} is missing required runs: {', '.join(missing)}")
+        snapshots = {alias: _load_snapshot_eval_rows(run_dir) for alias, (_, run_dir) in runs.items()}
+        train_events_by_alias = {
+            alias: _load_train_events(run_dir)
+            for alias, (_, run_dir) in runs.items()
+            if alias in {"I_real", "I_shuffle"}
+        }
+        static_rows: dict[str, list[dict[str, Any]]] = {}
+        for alias in ("A", "T", "I_zero"):
+            if 0 in snapshots[alias]:
+                static_rows[alias] = snapshots[alias][0][1]
+            else:
+                _, static_rows[alias] = _load_case_rows(runs[alias][1])
+        common_steps = sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"]))
+        if not common_steps:
+            raise ValueError(f"Suite {suite_name} has no overlapping snapshot steps.")
+        suite_support_variant[suite_name] = str(runs["I_real"][0].get("support_serialization_variant", suite_name))
+        for step in common_steps:
+            step_case_rows = {
+                "A": static_rows["A"],
+                "T": static_rows["T"],
+                "I_zero": static_rows["I_zero"],
+                "I_real": snapshots["I_real"][step][1],
+                "I_shuffle": snapshots["I_shuffle"][step][1],
+            }
+            step_metrics = {
+                alias: _classification_metrics_from_rows(rows)
+                for alias, rows in step_case_rows.items()
+            }
+            for alias, metrics in step_metrics.items():
+                summary_rows.append(
+                    {
+                        "suite": suite_name,
+                        "step": int(step),
+                        "alias": alias,
+                        "task_score": float(metrics["accuracy"]),
+                        "macro_f1": float(metrics["macro_f1"]),
+                        "mean_margin": float(metrics["mean_margin"]),
+                        "dominant_label_fraction": float(metrics["dominant_label_fraction"]),
+                    }
+                )
+            step_pairwise_lookup: dict[tuple[str, str], dict[str, Any]] = {}
+            for left_alias, right_alias in [("A", "I_real"), ("I_shuffle", "I_real"), ("I_zero", "I_real")]:
+                compare = _pairwise_compare(
+                    _build_case_lookup(step_case_rows[left_alias]),
+                    _build_case_lookup(step_case_rows[right_alias]),
+                )
+                row = {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "left_alias": left_alias,
+                    "right_alias": right_alias,
+                    **compare,
+                }
+                pairwise_rows.append(row)
+                step_pairwise_lookup[(left_alias, right_alias)] = row
+            content_gap_rows.extend(
+                _collect_content_gap_rows(
+                    suite_name=suite_name,
+                    step=int(step),
+                    a_rows=_build_case_lookup(step_case_rows["A"]),
+                    real_rows=_build_case_lookup(step_case_rows["I_real"]),
+                    shuffle_rows=_build_case_lookup(step_case_rows["I_shuffle"]),
+                    zero_rows=_build_case_lookup(step_case_rows["I_zero"]),
+                )
+            )
+            snapshot_metrics = snapshots["I_real"][step][0]
+            prefix_norm_rows.extend(
+                _collect_prefix_norm_rows_for_metrics(
+                    suite_name=suite_name,
+                    step=int(step),
+                    arm_alias="I_real",
+                    metrics=snapshot_metrics,
+                )
+            )
+            shuffle_snapshot_metrics = snapshots["I_shuffle"][step][0]
+            prefix_norm_rows.extend(
+                _collect_prefix_norm_rows_for_metrics(
+                    suite_name=suite_name,
+                    step=int(step),
+                    arm_alias="I_shuffle",
+                    metrics=shuffle_snapshot_metrics,
+                )
+            )
+            zero_metrics = snapshots["I_zero"].get(0, (runs["I_zero"][0], static_rows["I_zero"]))[0]
+            prefix_norm_rows.extend(
+                _collect_prefix_norm_rows_for_metrics(
+                    suite_name=suite_name,
+                    step=int(step),
+                    arm_alias="I_zero",
+                    metrics=zero_metrics,
+                )
+            )
+            real_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_real")
+            shuffle_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_shuffle")
+            zero_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "I_zero")
+            a_summary = next(row for row in summary_rows if row["suite"] == suite_name and row["step"] == step and row["alias"] == "A")
+            regressions_vs_base = int(step_pairwise_lookup[("A", "I_real")]["left_correct_to_right_wrong"])
+            passes = bool(
+                int(step_pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]) >= 2
+                and (float(real_summary["macro_f1"]) - float(shuffle_summary["macro_f1"])) >= 0.03
+                and int(step_pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]) >= 2
+                and (float(real_summary["macro_f1"]) - float(zero_summary["macro_f1"])) >= 0.03
+                and float(real_summary["task_score"]) >= float(a_summary["task_score"])
+                and regressions_vs_base <= 1
+            )
+            candidate_selections.append(
+                {
+                    "suite": suite_name,
+                    "step": int(step),
+                    "support_serialization_variant": suite_support_variant[suite_name],
+                    "passes_selection": passes,
+                    "task_score": float(real_summary["task_score"]),
+                    "macro_f1": float(real_summary["macro_f1"]),
+                    "regressions_vs_base": regressions_vs_base,
+                    "flip_gain_vs_shuffle": int(step_pairwise_lookup[("I_shuffle", "I_real")]["flip_count_delta"]),
+                    "flip_gain_vs_zero": int(step_pairwise_lookup[("I_zero", "I_real")]["flip_count_delta"]),
+                    "i_real_checkpoint_path": str(snapshots["I_real"][step][0].get("checkpoint_path", "")),
+                    "i_shuffle_checkpoint_path": str(snapshots["I_shuffle"][step][0].get("checkpoint_path", "")),
+                }
+            )
+        for arm_alias, train_events in sorted(train_events_by_alias.items()):
+            prefix_norm_rows.extend(
+                _collect_train_event_norm_rows(
+                    suite_name=suite_name,
+                    arm_alias=arm_alias,
+                    train_events=train_events,
+                )
+            )
+
+    passed_candidates = [row for row in candidate_selections if bool(row["passes_selection"])]
+    selected = None
+    if passed_candidates:
+        selected = sorted(
+            passed_candidates,
+            key=lambda row: (
+                int(row["step"]),
+                -float(row["macro_f1"]),
+                int(row["regressions_vs_base"]),
+            ),
+        )[0]
+    selection_payload = {
+        "selection_passed": selected is not None,
+        "selected_suite": None if selected is None else str(selected["suite"]),
+        "selected_step": None if selected is None else int(selected["step"]),
+        "selected_support_serialization": None if selected is None else str(selected["support_serialization_variant"]),
+        "selected_prompt_variant": None,
+        "screen248_test_gate_passed": False,
+        "support_bank_brittle": False,
+        "heldout_sane_bank_count": 0,
+        "fixed64_report_generated": False,
+        "fixed64_gate_passed": False,
+        "milestone_gate_passed": False,
+        "i_real_checkpoint_path": "" if selected is None else str(selected["i_real_checkpoint_path"]),
+        "i_shuffle_checkpoint_path": "" if selected is None else str(selected["i_shuffle_checkpoint_path"]),
+        "candidate_rows": candidate_selections,
+    }
+    if selected is not None:
+        selected_suite_root = suite_roots[str(selected["suite"])]
+        selected_runs = _collect_shared_injection_runs(selected_suite_root)
+        selection_payload["selected_prompt_variant"] = str(selected_runs["I_real"][0].get("prompt_variant", ""))
+
+    attention_rows: list[dict[str, Any]] = []
+    audit_dataset_path = str(config["runtime"].get("pilot_val_audit_dataset_path", "")).strip()
+    if audit_dataset_path:
+        support_examples = _load_task_dataset_with_path(config, str(config["task"]["support_dataset_path"]))
+        lookup_paths = _resolve_support_lookup_dataset_paths(
+            config,
+            default_paths=[
+                str(config["task"]["support_dataset_path"]),
+                str(config["task"].get("train_dataset_path", config["task"]["support_dataset_path"])),
+                str(config["task"]["dataset_path"]),
+            ],
+        )
+        lookup_examples: list[dict[str, Any]] = []
+        for lookup_path in lookup_paths:
+            lookup_examples.extend(_load_task_dataset_with_path(config, lookup_path))
+        for suite_name, suite_root in sorted(suite_roots.items()):
+            runs = _collect_shared_injection_runs(suite_root)
+            prompt_variant = str(runs["I_real"][0].get("prompt_variant", ""))
+            audit_examples = _load_audit_examples(
+                config,
+                audit_dataset_path,
+                prompt_variant=prompt_variant,
+            )
+            attention_lookup = _merge_example_lookup(
+                support_examples,
+                [cache.example for cache in audit_examples],
+                lookup_examples,
+            )
+            snapshots = {alias: _load_snapshot_eval_rows(run_dir) for alias, (_, run_dir) in runs.items()}
+            for step in sorted(set(snapshots["I_real"]) & set(snapshots["I_shuffle"])):
+                for arm_alias, memory_control in (("I_real", "real"), ("I_shuffle", "shuffled"), ("I_zero", "zero")):
+                    checkpoint_path = ""
+                    if arm_alias in {"I_real", "I_shuffle"}:
+                        checkpoint_path = str(snapshots[arm_alias][step][0].get("checkpoint_path", ""))
+                    attention_rows.extend(
+                        _attention_rows_for_snapshot(
+                            config=config,
+                            support_examples=support_examples,
+                            audit_examples=audit_examples,
+                            example_lookup=attention_lookup,
+                            support_serialization_variant=suite_support_variant[suite_name],
+                            writer_memory_control=memory_control,
+                            checkpoint_path=checkpoint_path,
+                            step=int(step),
+                            suite_name=suite_name,
+                            arm_alias=arm_alias,
+                        )
+                    )
+                    reader_query_rows.extend(
+                        _reader_query_rows_for_snapshot(
+                            config=config,
+                            support_examples=support_examples,
+                            audit_examples=audit_examples,
+                            example_lookup=attention_lookup,
+                            support_serialization_variant=suite_support_variant[suite_name],
+                            writer_memory_control=memory_control,
+                            checkpoint_path=checkpoint_path,
+                            step=int(step),
+                            suite_name=suite_name,
+                            arm_alias=arm_alias,
+                        )
+                    )
+
+    summary_csv = output_dir / "dynamics_recovery_summary.csv"
+    pairwise_csv = output_dir / "dynamics_recovery_pairwise.csv"
+    content_gap_csv = output_dir / "content_gap_curve.csv"
+    prefix_norm_csv = output_dir / "prefix_norm_drift.csv"
+    attention_csv = output_dir / "prefix_attention_consumption.csv"
+    reader_query_csv = output_dir / "reader_query_diagnostics.csv"
+    summary_plot = output_dir / "summary.svg"
+    selection_json = output_dir / "selection.json"
+    dual_gate_summary_json = output_dir / "dual_gate_summary.json"
+    _write_csv(summary_csv, summary_rows)
+    _write_csv(pairwise_csv, pairwise_rows)
+    _write_csv(content_gap_csv, content_gap_rows)
+    _write_csv(prefix_norm_csv, prefix_norm_rows)
+    _write_csv(attention_csv, attention_rows)
+    _write_csv(reader_query_csv, reader_query_rows)
+    write_sanity_plot(
+        summary_plot,
+        [
+            {
+                "mode": f"{row['suite']}:I_real:step{int(row['step']):04d}",
+                "run_dir": f"{row['suite']}-I_real-step{int(row['step']):04d}",
+                "primary_metric": "macro_f1",
+                "primary_score": float(row["macro_f1"]),
+            }
+            for row in summary_rows
+            if row["alias"] == "I_real"
+        ],
+    )
+    write_json(selection_json, selection_payload)
+    write_json(
+        dual_gate_summary_json,
+        {
+            "selection_passed": bool(selection_payload["selection_passed"]),
+            "screen248_test_gate_passed": bool(selection_payload["screen248_test_gate_passed"]),
+            "support_bank_brittle": bool(selection_payload["support_bank_brittle"]),
+            "heldout_sane_bank_count": int(selection_payload["heldout_sane_bank_count"]),
+            "fixed64_report_generated": bool(selection_payload["fixed64_report_generated"]),
+            "fixed64_gate_passed": bool(selection_payload["fixed64_gate_passed"]),
+            "milestone_gate_passed": bool(selection_payload["milestone_gate_passed"]),
+        },
+    )
+    report_lines.extend(
+        [
+            f"- selection_passed: {selection_payload['selection_passed']}",
+            f"- selected_suite: {selection_payload['selected_suite']}",
+            f"- selected_step: {selection_payload['selected_step']}",
+            f"- selected_support_serialization: {selection_payload['selected_support_serialization']}",
+            f"- screen248_test_gate_passed: {selection_payload['screen248_test_gate_passed']}",
+            f"- support_bank_brittle: {selection_payload['support_bank_brittle']}",
+            f"- heldout_sane_bank_count: {selection_payload['heldout_sane_bank_count']}",
+            f"- fixed64_report_generated: {selection_payload['fixed64_report_generated']}",
+            f"- fixed64_gate_passed: {selection_payload['fixed64_gate_passed']}",
+            f"- milestone_gate_passed: {selection_payload['milestone_gate_passed']}",
+            "",
+            "## Candidate Checkpoints",
+        ]
+    )
+    for row in candidate_selections:
+        report_lines.append(
+            f"- {row['suite']} step{int(row['step']):04d}: passes={row['passes_selection']}, "
+            f"macro_f1={row['macro_f1']:.4f}, flip_gain_vs_shuffle={row['flip_gain_vs_shuffle']}, "
+            f"flip_gain_vs_zero={row['flip_gain_vs_zero']}, regressions_vs_base={row['regressions_vs_base']}"
+        )
+    report_path = output_dir / "val_selection_report.md"
+    report_path.write_text("\n".join(report_lines) + "\n")
+    write_json(
+        output_dir / "metrics.json",
+        {
+            "analysis_mode": "m4_shared_injection_dynamics_recovery",
+            "selection_passed": bool(selection_payload["selection_passed"]),
+            "selected_suite": selection_payload["selected_suite"],
+            "selected_step": selection_payload["selected_step"],
+            "selected_support_serialization": selection_payload["selected_support_serialization"],
+            "support_bank_brittle": bool(selection_payload["support_bank_brittle"]),
+            "heldout_sane_bank_count": int(selection_payload["heldout_sane_bank_count"]),
+            "fixed64_report_generated": bool(selection_payload["fixed64_report_generated"]),
+            "summary_csv": str(summary_csv.resolve()),
+            "pairwise_csv": str(pairwise_csv.resolve()),
+            "content_gap_csv": str(content_gap_csv.resolve()),
+            "prefix_norm_csv": str(prefix_norm_csv.resolve()),
+            "attention_csv": str(attention_csv.resolve()),
+            "reader_query_csv": str(reader_query_csv.resolve()),
+            "summary_plot": str(summary_plot.resolve()),
+            "selection_json": str(selection_json.resolve()),
+            "dual_gate_summary_json": str(dual_gate_summary_json.resolve()),
+            "report_path": str(report_path.resolve()),
+        },
+    )
+
+
+def _load_optional_metrics(path: str | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    return json.loads(Path(path).read_text())
+
+
+def _load_csv_rows(path: str) -> list[dict[str, Any]]:
+    with Path(path).open(newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _onset_step_from_prefix_norm_csv(prefix_norm_csv: str, *, total_cap: float) -> int | None:
+    if total_cap <= 0.0:
+        return None
+    threshold = total_cap * 0.95
+    rows = _load_csv_rows(prefix_norm_csv)
+    matching_steps = sorted(
+        {
+            int(row["step"])
+            for row in rows
+            if row.get("row_type") == "snapshot_aggregate"
+            and row.get("arm_alias") == "I_real"
+            and float(row.get("prefix_l2", 0.0) or 0.0) >= threshold
+        }
+    )
+    return None if not matching_steps else matching_steps[0]
+
+
+def _onset_step_from_dominant_label_csv(summary_csv: str) -> int | None:
+    rows = _load_csv_rows(summary_csv)
+    matching_steps = sorted(
+        {
+            int(row["step"])
+            for row in rows
+            if row.get("alias") == "I_real"
+            and float(row.get("dominant_label_fraction", 0.0) or 0.0) >= 0.99
+        }
+    )
+    return None if not matching_steps else matching_steps[0]
+
+
+def _heldout_bank_is_sane(compare_metrics: dict[str, Any]) -> bool:
+    if not compare_metrics:
+        return False
+    return bool(
+        float(compare_metrics.get("i_real_task_score", 0.0)) >= float(compare_metrics.get("a_task_score", 0.0))
+        and int(compare_metrics.get("flip_gain_vs_shuffle", -10**9)) >= 0
+        and int(compare_metrics.get("flip_gain_vs_zero", -10**9)) >= 0
+        and int(compare_metrics.get("regressions_vs_base", 10**9)) <= 4
+    )
+
+
+def summarize_m4_support_bank_run(
+    *,
+    selection_json: str,
+    run_metrics_json: str,
+    dynamics_summary_csv: str,
+    prefix_norm_csv: str,
+    screen248_test_metrics_json: str | None = None,
+    heldout_metrics_by_name: dict[str, str] | None = None,
+    fixed64_metrics_json: str | None = None,
+) -> dict[str, Any]:
+    selection = json.loads(Path(selection_json).read_text())
+    run_metrics = json.loads(Path(run_metrics_json).read_text())
+    screen248_test_metrics = _load_optional_metrics(screen248_test_metrics_json)
+    heldout_results: dict[str, Any] = {}
+    sane_count = 0
+    for name, path in sorted((heldout_metrics_by_name or {}).items()):
+        compare_metrics = _load_optional_metrics(path)
+        sane = _heldout_bank_is_sane(compare_metrics)
+        sane_count += int(sane)
+        heldout_results[name] = {
+            "metrics_path": str(Path(path).resolve()),
+            "gate_passed": bool(compare_metrics.get("gate_passed", False)),
+            "sane": sane,
+            "regressions_vs_base": int(compare_metrics.get("regressions_vs_base", 0)),
+            "flip_gain_vs_shuffle": int(compare_metrics.get("flip_gain_vs_shuffle", 0)),
+            "flip_gain_vs_zero": int(compare_metrics.get("flip_gain_vs_zero", 0)),
+            "i_real_task_score": float(compare_metrics.get("i_real_task_score", 0.0)),
+            "a_task_score": float(compare_metrics.get("a_task_score", 0.0)),
+        }
+    screen248_test_gate_passed = bool(screen248_test_metrics.get("gate_passed", False))
+    support_bank_brittle = bool(
+        screen248_test_gate_passed and heldout_results and sane_count == 0
+    )
+    fixed64_metrics = _load_optional_metrics(fixed64_metrics_json)
+    fixed64_report_generated = bool(fixed64_metrics_json)
+    total_cap = float(run_metrics.get("pilot_prefix_total_max_norm", 0.0))
+    forensics_summary = _v0_forensics_summary(run_metrics)
+    summary = {
+        "selection_passed": bool(selection.get("selection_passed", False)),
+        "selected_suite": selection.get("selected_suite"),
+        "selected_step": selection.get("selected_step"),
+        "selected_support_serialization": selection.get("selected_support_serialization"),
+        "selected_prompt_variant": selection.get("selected_prompt_variant"),
+        "screen248_test_gate_passed": screen248_test_gate_passed,
+        "screen248_test_metrics_path": (
+            "" if not screen248_test_metrics_json else str(Path(screen248_test_metrics_json).resolve())
+        ),
+        "heldout_results": heldout_results,
+        "heldout_sane_bank_count": sane_count,
+        "support_bank_brittle": support_bank_brittle,
+        "fixed64_report_generated": fixed64_report_generated,
+        "fixed64_gate_passed": bool(fixed64_metrics.get("gate_passed", False)),
+        "fixed64_metrics_path": "" if not fixed64_metrics_json else str(Path(fixed64_metrics_json).resolve()),
+        "milestone_gate_passed": bool(
+            selection.get("selection_passed", False)
+            and screen248_test_gate_passed
+            and not support_bank_brittle
+        ),
+        "cap_saturation_onset_step": _onset_step_from_prefix_norm_csv(prefix_norm_csv, total_cap=total_cap),
+        "dominant_label_collapse_onset_step": _onset_step_from_dominant_label_csv(dynamics_summary_csv),
+        "pilot_prefix_total_max_norm": total_cap,
+        **forensics_summary,
+    }
+    return summary
+
+
+def compare_m4_anti_shortcut_runs(
+    *,
+    run_a_summary_json: str,
+    run_b_summary_json: str,
+) -> dict[str, Any]:
+    run_a = json.loads(Path(run_a_summary_json).read_text())
+    run_b = json.loads(Path(run_b_summary_json).read_text())
+    conclusion = "run_a_equals_run_b"
+    if bool(run_a.get("milestone_gate_passed")) and not bool(run_b.get("milestone_gate_passed")):
+        conclusion = "run_a_passes_run_b_fails"
+    elif not bool(run_a.get("milestone_gate_passed")) and not bool(run_b.get("milestone_gate_passed")):
+        a_cap = run_a.get("cap_saturation_onset_step")
+        b_cap = run_b.get("cap_saturation_onset_step")
+        a_collapse = run_a.get("dominant_label_collapse_onset_step")
+        b_collapse = run_b.get("dominant_label_collapse_onset_step")
+        a_less_saturated = a_cap is None or (b_cap is not None and int(a_cap) > int(b_cap))
+        a_less_collapsed = a_collapse is None or (b_collapse is not None and int(a_collapse) > int(b_collapse))
+        if a_less_saturated or a_less_collapsed:
+            conclusion = "both_fail_run_a_less_collapsed"
+    return {
+        "run_a_selection_passed": bool(run_a.get("selection_passed", False)),
+        "run_b_selection_passed": bool(run_b.get("selection_passed", False)),
+        "run_a_primary_gate_passed": bool(run_a.get("screen248_test_gate_passed", False)),
+        "run_b_primary_gate_passed": bool(run_b.get("screen248_test_gate_passed", False)),
+        "run_a_support_bank_brittle": bool(run_a.get("support_bank_brittle", False)),
+        "run_b_support_bank_brittle": bool(run_b.get("support_bank_brittle", False)),
+        "run_a_fixed64_gate_passed": bool(run_a.get("fixed64_gate_passed", False)),
+        "run_b_fixed64_gate_passed": bool(run_b.get("fixed64_gate_passed", False)),
+        "run_a_selected_step": run_a.get("selected_step"),
+        "run_b_selected_step": run_b.get("selected_step"),
+        "run_a_cap_saturation_onset_step": run_a.get("cap_saturation_onset_step"),
+        "run_b_cap_saturation_onset_step": run_b.get("cap_saturation_onset_step"),
+        "run_a_dominant_label_collapse_onset_step": run_a.get("dominant_label_collapse_onset_step"),
+        "run_b_dominant_label_collapse_onset_step": run_b.get("dominant_label_collapse_onset_step"),
+        "comparison_conclusion": conclusion,
+    }
+
+
+def compare_m4_alignment_runs(
+    *,
+    canonical_summary_json: str,
+    freeze_writer_summary_json: str,
+    pooled_block_summary_json: str,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    freeze_writer = json.loads(Path(freeze_writer_summary_json).read_text())
+    pooled_block = json.loads(Path(pooled_block_summary_json).read_text())
+
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_not_brittle = not bool(canonical.get("support_bank_brittle", False))
+    freeze_primary = bool(freeze_writer.get("screen248_test_gate_passed", False))
+    pooled_primary = bool(pooled_block.get("screen248_test_gate_passed", False))
+    alignment_claim_supported = bool(
+        canonical_primary
+        and canonical_not_brittle
+        and not freeze_primary
+        and not pooled_primary
+    )
+    if alignment_claim_supported:
+        conclusion = "canonical_passes_both_ablations_fail"
+    elif canonical_primary and (freeze_primary or pooled_primary):
+        conclusion = "canonical_pass_ambiguous"
+    elif bool(canonical.get("selection_passed", False)):
+        conclusion = "canonical_selected_but_primary_gate_failed"
+    else:
+        conclusion = "canonical_failed_selection"
+
+    return {
+        "canonical_selection_passed": bool(canonical.get("selection_passed", False)),
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": bool(canonical.get("support_bank_brittle", False)),
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "freeze_writer_selection_passed": bool(freeze_writer.get("selection_passed", False)),
+        "freeze_writer_selected_step": freeze_writer.get("selected_step"),
+        "freeze_writer_primary_gate_passed": freeze_primary,
+        "pooled_block_selection_passed": bool(pooled_block.get("selection_passed", False)),
+        "pooled_block_selected_step": pooled_block.get("selected_step"),
+        "pooled_block_primary_gate_passed": pooled_primary,
+        "alignment_claim_supported": alignment_claim_supported,
+        "comparison_conclusion": conclusion,
+    }
+
+
+def compare_m5_alignment_runs(
+    *,
+    canonical_summary_json: str,
+    freeze_writer_summary_json: str,
+    pooled_block_summary_json: str,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    freeze_writer = json.loads(Path(freeze_writer_summary_json).read_text())
+    pooled_block = json.loads(Path(pooled_block_summary_json).read_text())
+
+    canonical_selection = bool(canonical.get("selection_passed", False))
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_brittle = bool(canonical.get("support_bank_brittle", False))
+    freeze_primary = bool(freeze_writer.get("screen248_test_gate_passed", False))
+    pooled_primary = bool(pooled_block.get("screen248_test_gate_passed", False))
+    success = bool(
+        canonical_primary
+        and not canonical_brittle
+        and not freeze_primary
+        and not pooled_primary
+    )
+    ambiguous = bool(
+        canonical_primary
+        and not canonical_brittle
+        and (freeze_primary or pooled_primary)
+    )
+    if success:
+        conclusion = "success"
+        failure_reason = ""
+    elif ambiguous:
+        conclusion = "ambiguous_pass"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not canonical_selection:
+            failure_reason = "canonical_failed_selection"
+        elif not canonical_primary:
+            failure_reason = "canonical_selected_but_primary_gate_failed"
+        elif canonical_brittle:
+            failure_reason = "canonical_support_bank_brittle"
+        else:
+            failure_reason = "canonical_did_not_beat_ablations"
+
+    return {
+        "canonical_selection_passed": canonical_selection,
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": canonical_brittle,
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "freeze_writer_selection_passed": bool(freeze_writer.get("selection_passed", False)),
+        "freeze_writer_selected_step": freeze_writer.get("selected_step"),
+        "freeze_writer_primary_gate_passed": freeze_primary,
+        "pooled_block_selection_passed": bool(pooled_block.get("selection_passed", False)),
+        "pooled_block_selected_step": pooled_block.get("selected_step"),
+        "pooled_block_primary_gate_passed": pooled_primary,
+        "alignment_claim_supported": success,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def compare_m5_objective_runs(
+    *,
+    canonical_summary_json: str,
+    anchor_only_summary_json: str,
+    task_only_control_summary_json: str,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    anchor_only = json.loads(Path(anchor_only_summary_json).read_text())
+    task_only_control = json.loads(Path(task_only_control_summary_json).read_text())
+
+    canonical_selection = bool(canonical.get("selection_passed", False))
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_brittle = bool(canonical.get("support_bank_brittle", False))
+    anchor_primary = bool(anchor_only.get("screen248_test_gate_passed", False))
+    task_only_primary = bool(task_only_control.get("screen248_test_gate_passed", False))
+    objective_rewrite_supported = bool(canonical_primary and not task_only_primary)
+    teacher_margin_increment_supported = bool(canonical_primary and not anchor_primary)
+    if objective_rewrite_supported and teacher_margin_increment_supported:
+        conclusion = "success"
+        failure_reason = ""
+    elif objective_rewrite_supported and anchor_primary:
+        conclusion = "anchor_supported_teacher_optional"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not canonical_selection:
+            failure_reason = "canonical_failed_selection"
+        elif not canonical_primary:
+            failure_reason = "canonical_selected_but_primary_gate_failed"
+        elif canonical_brittle:
+            failure_reason = "canonical_support_bank_brittle"
+        elif task_only_primary:
+            failure_reason = "task_only_control_also_passed"
+        else:
+            failure_reason = "anchor_only_or_teacher_margin_did_not_improve"
+
+    return {
+        "canonical_selection_passed": canonical_selection,
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": canonical_brittle,
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "anchor_only_selection_passed": bool(anchor_only.get("selection_passed", False)),
+        "anchor_only_selected_step": anchor_only.get("selected_step"),
+        "anchor_only_primary_gate_passed": anchor_primary,
+        "task_only_control_selection_passed": bool(task_only_control.get("selection_passed", False)),
+        "task_only_control_selected_step": task_only_control.get("selected_step"),
+        "task_only_control_primary_gate_passed": task_only_primary,
+        "objective_rewrite_supported": objective_rewrite_supported,
+        "teacher_margin_increment_supported": teacher_margin_increment_supported,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def compare_m5_dense_teacher_runs(
+    *,
+    canonical_summary_json: str,
+    control_summary_json: str,
+    hinge_off_audit_summary_json: str | None = None,
+) -> dict[str, Any]:
+    canonical = json.loads(Path(canonical_summary_json).read_text())
+    control = json.loads(Path(control_summary_json).read_text())
+    hinge_off_audit = (
+        None if not hinge_off_audit_summary_json else json.loads(Path(hinge_off_audit_summary_json).read_text())
+    )
+
+    canonical_selection = bool(canonical.get("selection_passed", False))
+    canonical_primary = bool(canonical.get("screen248_test_gate_passed", False))
+    canonical_brittle = bool(canonical.get("support_bank_brittle", False))
+    control_selection = bool(control.get("selection_passed", False))
+    control_primary = bool(control.get("screen248_test_gate_passed", False))
+    control_brittle = bool(control.get("support_bank_brittle", False))
+    canonical_collapse = canonical.get("dominant_label_collapse_onset_step")
+    control_collapse = control.get("dominant_label_collapse_onset_step")
+    canonical_cap = canonical.get("cap_saturation_onset_step")
+    control_cap = control.get("cap_saturation_onset_step")
+    canonical_less_collapsed = bool(
+        (canonical_collapse is None and control_collapse is not None)
+        or (
+            canonical_collapse is not None
+            and control_collapse is not None
+            and int(canonical_collapse) > int(control_collapse)
+        )
+    )
+    canonical_less_saturated = bool(
+        (canonical_cap is None and control_cap is not None)
+        or (
+            canonical_cap is not None
+            and control_cap is not None
+            and int(canonical_cap) > int(control_cap)
+        )
+    )
+    informative_success = bool(
+        not canonical_primary
+        and not control_primary
+        and (canonical_less_collapsed or canonical_less_saturated or (canonical_selection and not control_selection))
+    )
+    hinge_off_primary = bool(hinge_off_audit.get("screen248_test_gate_passed", False)) if hinge_off_audit else False
+    hinge_off_selection = bool(hinge_off_audit.get("selection_passed", False)) if hinge_off_audit else False
+
+    if canonical_primary and not control_primary:
+        conclusion = "success"
+        failure_reason = ""
+    elif hinge_off_audit and hinge_off_primary and not canonical_primary and not control_primary:
+        conclusion = "hinge_off_better"
+        failure_reason = ""
+    elif informative_success:
+        conclusion = "informative_success"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not canonical_selection:
+            failure_reason = "canonical_failed_selection"
+        elif not canonical_primary:
+            failure_reason = "canonical_selected_but_primary_gate_failed"
+        elif canonical_brittle:
+            failure_reason = "canonical_support_bank_brittle"
+        elif control_primary:
+            failure_reason = "control_also_passed"
+        else:
+            failure_reason = "dense_teacher_did_not_help"
+
+    return {
+        "canonical_selection_passed": canonical_selection,
+        "canonical_selected_step": canonical.get("selected_step"),
+        "canonical_primary_gate_passed": canonical_primary,
+        "canonical_support_bank_brittle": canonical_brittle,
+        "canonical_fixed64_report_generated": bool(canonical.get("fixed64_report_generated", False)),
+        "canonical_fixed64_gate_passed": bool(canonical.get("fixed64_gate_passed", False)),
+        "canonical_cap_saturation_onset_step": canonical_cap,
+        "canonical_dominant_label_collapse_onset_step": canonical_collapse,
+        "control_selection_passed": control_selection,
+        "control_selected_step": control.get("selected_step"),
+        "control_primary_gate_passed": control_primary,
+        "control_support_bank_brittle": control_brittle,
+        "control_cap_saturation_onset_step": control_cap,
+        "control_dominant_label_collapse_onset_step": control_collapse,
+        "canonical_less_collapsed": canonical_less_collapsed,
+        "canonical_less_saturated": canonical_less_saturated,
+        "informative_success": informative_success,
+        "hinge_off_audit_present": hinge_off_audit is not None,
+        "hinge_off_audit_selection_passed": hinge_off_selection,
+        "hinge_off_audit_primary_gate_passed": hinge_off_primary,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def _later_onset(candidate_step: Any, reference_step: Any) -> bool:
+    if candidate_step is None and reference_step is not None:
+        return True
+    if candidate_step is None or reference_step is None:
+        return False
+    return int(candidate_step) > int(reference_step)
+
+
+def _reader_query_summary(reader_query_csv: str | None) -> dict[str, float]:
+    if not reader_query_csv:
+        return {
+            "reader_query_rows": 0.0,
+            "reader_query_argmax_unique_mean": 0.0,
+            "reader_query_entropy_mean": 0.0,
+            "reader_query_coverage_mean": 0.0,
+        }
+    path = Path(reader_query_csv)
+    if not path.exists():
+        return {
+            "reader_query_rows": 0.0,
+            "reader_query_argmax_unique_mean": 0.0,
+            "reader_query_entropy_mean": 0.0,
+            "reader_query_coverage_mean": 0.0,
+        }
+    with path.open() as handle:
+        rows = list(csv.DictReader(handle))
+    rows = [row for row in rows if str(row.get("arm_alias", "")) == "I_real"]
+    if not rows:
+        return {
+            "reader_query_rows": 0.0,
+            "reader_query_argmax_unique_mean": 0.0,
+            "reader_query_entropy_mean": 0.0,
+            "reader_query_coverage_mean": 0.0,
+        }
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
+    for row in rows:
+        grouped.setdefault((str(row.get("step", "")), str(row.get("example_id", ""))), []).append(row)
+    unique_fractions: list[float] = []
+    entropies: list[float] = []
+    coverages: list[float] = []
+    for group_rows in grouped.values():
+        argmax_slots = [int(float(row.get("reader_argmax_slot", 0) or 0.0)) for row in group_rows]
+        query_count = max(1, len(argmax_slots))
+        unique_fractions.append(len(set(argmax_slots)) / query_count)
+        entropies.extend(float(row.get("reader_attention_entropy", 0.0) or 0.0) for row in group_rows)
+        coverages.extend(float(row.get("reader_slot_coverage_fraction", 0.0) or 0.0) for row in group_rows)
+    return {
+        "reader_query_rows": float(len(rows)),
+        "reader_query_argmax_unique_mean": float(sum(unique_fractions) / max(1, len(unique_fractions))),
+        "reader_query_entropy_mean": float(sum(entropies) / max(1, len(entropies))),
+        "reader_query_coverage_mean": float(sum(coverages) / max(1, len(coverages))),
+    }
+
+
+def _train_geometry_summary(train_events_json: str | None) -> dict[str, float]:
+    events = _load_train_events(train_events_json)
+    if not events:
+        return {
+            "final_memory_long_effective_rank": 0.0,
+            "final_memory_long_common_mode_energy_ratio": 0.0,
+            "final_memory_long_centered_effective_rank": 0.0,
+            "final_memory_long_top1_top2_ratio": 0.0,
+            "final_memory_short_effective_rank": 0.0,
+            "final_reader_attention_pairwise_cosine_mean": 0.0,
+            "final_writer_slot_basis_pairwise_cosine_mean": 0.0,
+            "final_reader_context_overwrite_ratio": 0.0,
+            "final_reader_value_projected_effective_rank": 0.0,
+            "final_reader_value_projected_pairwise_cosine_mean": 0.0,
+            "final_reader_readout_effective_rank": 0.0,
+            "final_reader_readout_centered_effective_rank": 0.0,
+            "final_fuser_output_effective_rank": 0.0,
+            "final_fuser_rank_gain_over_readout": 0.0,
+            "final_fuser_diversity_without_semantic_gain_flag": 0.0,
+            "final_reader_to_support_grad_ratio": 0.0,
+            "final_fuser_to_support_grad_ratio": 0.0,
+            "final_receiver_lora_to_reader_grad_ratio": 0.0,
+        }
+    event = events[-1]
+    return {
+        "final_memory_long_effective_rank": float(event.get("memory_long_effective_rank", 0.0)),
+        "final_memory_long_common_mode_energy_ratio": float(
+            event.get("memory_long_common_mode_energy_ratio", 0.0)
+        ),
+        "final_memory_long_centered_effective_rank": float(
+            event.get("memory_long_centered_effective_rank", 0.0)
+        ),
+        "final_memory_long_top1_top2_ratio": float(event.get("memory_long_top1_top2_ratio", 0.0)),
+        "final_memory_short_effective_rank": float(event.get("memory_short_effective_rank", 0.0)),
+        "final_reader_attention_pairwise_cosine_mean": float(
+            event.get("reader_attention_pairwise_cosine_mean", 0.0)
+        ),
+        "final_writer_slot_basis_pairwise_cosine_mean": float(
+            event.get("writer_slot_basis_pairwise_cosine_mean", 0.0)
+        ),
+        "final_reader_context_overwrite_ratio": float(
+            event.get("reader_context_overwrite_ratio", 0.0)
+        ),
+        "final_reader_value_projected_effective_rank": float(
+            event.get("reader_value_projected_effective_rank", 0.0)
+        ),
+        "final_reader_value_projected_pairwise_cosine_mean": float(
+            event.get("reader_value_projected_pairwise_cosine_mean", 0.0)
+        ),
+        "final_reader_readout_effective_rank": float(
+            event.get("reader_readout_effective_rank", 0.0)
+        ),
+        "final_reader_readout_centered_effective_rank": float(
+            event.get("reader_readout_centered_effective_rank", 0.0)
+        ),
+        "final_fuser_output_effective_rank": float(
+            event.get("fuser_output_effective_rank", 0.0)
+        ),
+        "final_fuser_rank_gain_over_readout": float(event.get("fuser_rank_gain_over_readout", 0.0)),
+        "final_fuser_diversity_without_semantic_gain_flag": float(
+            event.get("fuser_diversity_without_semantic_gain_flag", 0.0)
+        ),
+        "final_reader_to_support_grad_ratio": float(event.get("reader_to_support_grad_ratio", 0.0)),
+        "final_fuser_to_support_grad_ratio": float(event.get("fuser_to_support_grad_ratio", 0.0)),
+        "final_receiver_lora_to_reader_grad_ratio": float(
+            event.get("receiver_lora_to_reader_grad_ratio", 0.0)
+        ),
+    }
+
+
+def _load_train_events(train_events_json: str | None) -> list[dict[str, Any]]:
+    if not train_events_json:
+        return []
+    path = Path(train_events_json)
+    if path.is_dir():
+        candidate = path / "train_events.json"
+        if not candidate.exists():
+            return []
+        path = candidate
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text())
+    if isinstance(payload, dict):
+        events = payload.get("events", [])
+    else:
+        events = payload
+    if not isinstance(events, list):
+        return []
+    return [event for event in events if isinstance(event, dict)]
+
+
+def _v0_forensics_summary(run_metrics: dict[str, Any]) -> dict[str, Any]:
+    memory_long_top1_top2_ratio = float(run_metrics.get("memory_long_top1_top2_ratio", 0.0))
+    memory_long_common_mode_energy_ratio = float(
+        run_metrics.get("memory_long_common_mode_energy_ratio", 0.0)
+    )
+    memory_long_centered_effective_rank = float(
+        run_metrics.get("memory_long_centered_effective_rank", 0.0)
+    )
+    reader_value_projected_effective_rank = float(
+        run_metrics.get("reader_value_projected_effective_rank", 0.0)
+    )
+    reader_value_projected_pairwise_cosine_mean = float(
+        run_metrics.get("reader_value_projected_pairwise_cosine_mean", 0.0)
+    )
+    reader_readout_pairwise_cosine_mean = float(
+        run_metrics.get("reader_readout_pairwise_cosine_mean", 0.0)
+    )
+    reader_readout_effective_rank = float(run_metrics.get("reader_readout_effective_rank", 0.0))
+    reader_readout_centered_effective_rank = float(
+        run_metrics.get("reader_readout_centered_effective_rank", 0.0)
+    )
+    early_reader_to_support_grad_ratio = float(
+        run_metrics.get("train_reader_to_support_grad_ratio_steps_1_4_median", 0.0)
+    )
+    early_fuser_to_support_grad_ratio = float(
+        run_metrics.get("train_fuser_to_support_grad_ratio_steps_1_4_median", 0.0)
+    )
+
+    value_diversity_gate_passed = bool(
+        memory_long_top1_top2_ratio < 15.0
+        and memory_long_centered_effective_rank >= 3.0
+        and reader_readout_pairwise_cosine_mean < 0.95
+        and reader_readout_effective_rank > 2.0
+    )
+    common_mode_domination_flag = bool(
+        memory_long_common_mode_energy_ratio >= 0.55
+        or (
+            memory_long_top1_top2_ratio >= 15.0
+            and memory_long_centered_effective_rank >= 2.0
+        )
+    )
+    value_projected_homogenization_flag = bool(
+        not common_mode_domination_flag
+        and reader_value_projected_effective_rank < 2.0
+        and reader_value_projected_pairwise_cosine_mean >= 0.95
+        and reader_readout_pairwise_cosine_mean >= 0.95
+        and reader_readout_centered_effective_rank < 2.0
+    )
+    receiver_starvation_flag = bool(
+        not common_mode_domination_flag
+        and not value_projected_homogenization_flag
+        and memory_long_centered_effective_rank >= 3.0
+        and early_reader_to_support_grad_ratio < 0.25
+        and early_fuser_to_support_grad_ratio < 0.25
+    )
+
+    if common_mode_domination_flag:
+        primary_bottleneck = "common_mode_domination"
+        primary_bottleneck_note = (
+            "M_long remains dominated by a shared slot-wise component; writer value diversification is still the first fix."
+        )
+    elif value_projected_homogenization_flag:
+        primary_bottleneck = "value_projected_homogenization"
+        primary_bottleneck_note = (
+            "Value-projected slots and centered readouts are still too similar even when common-mode domination is not the leading failure."
+        )
+    elif receiver_starvation_flag:
+        primary_bottleneck = "receiver_starvation"
+        primary_bottleneck_note = (
+            "Writer-side value diversity is no longer the main bottleneck, but early reader/fuser gradient routing remains too weak."
+        )
+    else:
+        primary_bottleneck = "mixed_or_unclear"
+        primary_bottleneck_note = (
+            "The current metrics do not isolate a single dominant blocker; treat the failure as mixed and inspect the full diagnostics."
+        )
+
+    return {
+        "v0_value_diversity_gate_passed": value_diversity_gate_passed,
+        "v0_common_mode_domination_flag": common_mode_domination_flag,
+        "v0_value_projected_homogenization_flag": value_projected_homogenization_flag,
+        "v0_receiver_starvation_flag": receiver_starvation_flag,
+        "v0_primary_bottleneck": primary_bottleneck,
+        "v0_primary_bottleneck_note": primary_bottleneck_note,
+    }
+
+
+def _rg2_geometry_gate_summary(
+    *,
+    summary_json: str,
+    train_events_json: str | None = None,
+) -> dict[str, float | bool | int | None]:
+    summary = json.loads(Path(summary_json).read_text())
+    events = _load_train_events(train_events_json)
+    if not events:
+        return {
+            "selection_passed": bool(summary.get("selection_passed", False)),
+            "selected_step": summary.get("selected_step"),
+            "dominant_label_collapse_onset_step": summary.get("dominant_label_collapse_onset_step"),
+            "g1_query_specialization": False,
+            "g2_noncollapsed_memory_short": False,
+            "g3_no_early_label_collapse": False,
+            "geometry_alive": False,
+            "geometry_alive_step": None,
+            "best_reader_attention_pairwise_cosine_mean": 0.0,
+            "best_reader_attention_entropy_mean": 0.0,
+            "best_memory_short_effective_rank": 0.0,
+            "best_memory_short_pairwise_cosine_mean": 0.0,
+            "best_reader_readout_effective_rank": 0.0,
+            "best_fuser_output_effective_rank": 0.0,
+        }
+    dominant_label_collapse_onset_step = summary.get("dominant_label_collapse_onset_step")
+    g3_no_early_label_collapse = (
+        dominant_label_collapse_onset_step is None
+        or int(dominant_label_collapse_onset_step) >= 8
+    )
+    best_event = min(
+        events,
+        key=lambda event: (
+            float(event.get("reader_attention_pairwise_cosine_mean", 1.0)),
+            float(event.get("reader_attention_entropy_mean", 999.0)),
+            -float(event.get("memory_short_effective_rank", 0.0)),
+        ),
+    )
+    g1_query_specialization = False
+    g2_noncollapsed_memory_short = False
+    geometry_alive = False
+    geometry_alive_step: int | None = None
+    best_memory_short_slots = max(1, int(best_event.get("memory_short_slots", 4) or 4))
+    rank_threshold = 1.8 if best_memory_short_slots <= 4 else 2.0
+    for event in events:
+        pairwise = float(event.get("reader_attention_pairwise_cosine_mean", 1.0))
+        entropy = float(event.get("reader_attention_entropy_mean", 999.0))
+        short_rank = float(event.get("memory_short_effective_rank", 0.0))
+        short_pairwise = float(event.get("memory_short_pairwise_cosine_mean", 1.0))
+        event_g1 = pairwise <= 0.90 and entropy <= 1.95
+        event_g2 = short_rank >= rank_threshold and short_pairwise <= 0.98
+        g1_query_specialization = g1_query_specialization or event_g1
+        g2_noncollapsed_memory_short = g2_noncollapsed_memory_short or event_g2
+        if event_g1 and event_g2 and g3_no_early_label_collapse:
+            geometry_alive = True
+            geometry_alive_step = int(event.get("step", 0))
+            best_event = event
+            break
+    return {
+        "selection_passed": bool(summary.get("selection_passed", False)),
+        "selected_step": summary.get("selected_step"),
+        "dominant_label_collapse_onset_step": dominant_label_collapse_onset_step,
+        "g1_query_specialization": g1_query_specialization,
+        "g2_noncollapsed_memory_short": g2_noncollapsed_memory_short,
+        "g3_no_early_label_collapse": g3_no_early_label_collapse,
+        "geometry_alive": geometry_alive,
+        "geometry_alive_step": geometry_alive_step,
+        "best_reader_attention_pairwise_cosine_mean": float(
+            best_event.get("reader_attention_pairwise_cosine_mean", 0.0)
+        ),
+        "best_reader_attention_entropy_mean": float(
+            best_event.get("reader_attention_entropy_mean", 0.0)
+        ),
+        "best_memory_short_effective_rank": float(best_event.get("memory_short_effective_rank", 0.0)),
+        "best_memory_short_pairwise_cosine_mean": float(
+            best_event.get("memory_short_pairwise_cosine_mean", 0.0)
+        ),
+        "best_reader_readout_effective_rank": float(
+            best_event.get("reader_readout_effective_rank", 0.0)
+        ),
+        "best_fuser_output_effective_rank": float(
+            best_event.get("fuser_output_effective_rank", 0.0)
+        ),
+    }
+
+
+def compare_tl_poc_runs(
+    *,
+    sl8_summary_json: str,
+    tl_h4_k8_summary_json: str,
+    tl_h4_k4_summary_json: str,
+    tl_h1_k4_summary_json: str,
+    tl_h4_k8_reader_query_csv: str | None = None,
+    tl_h4_k4_reader_query_csv: str | None = None,
+    tl_h1_k4_reader_query_csv: str | None = None,
+) -> dict[str, Any]:
+    sl8 = json.loads(Path(sl8_summary_json).read_text())
+    tl_h4_k8 = json.loads(Path(tl_h4_k8_summary_json).read_text())
+    tl_h4_k4 = json.loads(Path(tl_h4_k4_summary_json).read_text())
+    tl_h1_k4 = json.loads(Path(tl_h1_k4_summary_json).read_text())
+    h4_k8_reader = _reader_query_summary(tl_h4_k8_reader_query_csv)
+    h4_k4_reader = _reader_query_summary(tl_h4_k4_reader_query_csv)
+    h1_k4_reader = _reader_query_summary(tl_h1_k4_reader_query_csv)
+
+    bridge_supported = bool(
+        bool(tl_h4_k8.get("screen248_test_gate_passed", False))
+        or (
+            not bool(sl8.get("screen248_test_gate_passed", False))
+            and (
+                _later_onset(
+                    tl_h4_k8.get("dominant_label_collapse_onset_step"),
+                    sl8.get("dominant_label_collapse_onset_step"),
+                )
+                or _later_onset(
+                    tl_h4_k8.get("cap_saturation_onset_step"),
+                    sl8.get("cap_saturation_onset_step"),
+                )
+                or (
+                    bool(tl_h4_k8.get("selection_passed", False))
+                    and not bool(sl8.get("selection_passed", False))
+                )
+            )
+        )
+    )
+    bottleneck_supported = bool(
+        bool(tl_h4_k4.get("screen248_test_gate_passed", False))
+        or _later_onset(
+            tl_h4_k4.get("dominant_label_collapse_onset_step"),
+            tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            tl_h4_k4.get("cap_saturation_onset_step"),
+            tl_h4_k8.get("cap_saturation_onset_step"),
+        )
+    )
+    specialization_supported = bool(
+        (
+            bool(tl_h4_k4.get("screen248_test_gate_passed", False))
+            and not bool(tl_h1_k4.get("screen248_test_gate_passed", False))
+        )
+        or _later_onset(
+            tl_h4_k4.get("dominant_label_collapse_onset_step"),
+            tl_h1_k4.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            tl_h4_k4.get("cap_saturation_onset_step"),
+            tl_h1_k4.get("cap_saturation_onset_step"),
+        )
+    )
+    specialization_supported = bool(
+        specialization_supported
+        and h4_k4_reader["reader_query_argmax_unique_mean"] >= h1_k4_reader["reader_query_argmax_unique_mean"]
+    )
+
+    if bridge_supported and bottleneck_supported and specialization_supported:
+        conclusion = "strong_success"
+        failure_reason = ""
+    elif bridge_supported or bottleneck_supported or specialization_supported:
+        conclusion = "medium_success"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        if not bridge_supported:
+            failure_reason = "bridge_not_alive"
+        elif not bottleneck_supported:
+            failure_reason = "compression_not_helpful"
+        else:
+            failure_reason = "multi_query_specialization_not_supported"
+
+    return {
+        "sl8_selection_passed": bool(sl8.get("selection_passed", False)),
+        "sl8_selected_step": sl8.get("selected_step"),
+        "sl8_primary_gate_passed": bool(sl8.get("screen248_test_gate_passed", False)),
+        "sl8_cap_saturation_onset_step": sl8.get("cap_saturation_onset_step"),
+        "sl8_dominant_label_collapse_onset_step": sl8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_selection_passed": bool(tl_h4_k8.get("selection_passed", False)),
+        "tl_h4_k8_selected_step": tl_h4_k8.get("selected_step"),
+        "tl_h4_k8_primary_gate_passed": bool(tl_h4_k8.get("screen248_test_gate_passed", False)),
+        "tl_h4_k8_cap_saturation_onset_step": tl_h4_k8.get("cap_saturation_onset_step"),
+        "tl_h4_k8_dominant_label_collapse_onset_step": tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k4_selection_passed": bool(tl_h4_k4.get("selection_passed", False)),
+        "tl_h4_k4_selected_step": tl_h4_k4.get("selected_step"),
+        "tl_h4_k4_primary_gate_passed": bool(tl_h4_k4.get("screen248_test_gate_passed", False)),
+        "tl_h4_k4_cap_saturation_onset_step": tl_h4_k4.get("cap_saturation_onset_step"),
+        "tl_h4_k4_dominant_label_collapse_onset_step": tl_h4_k4.get("dominant_label_collapse_onset_step"),
+        "tl_h1_k4_selection_passed": bool(tl_h1_k4.get("selection_passed", False)),
+        "tl_h1_k4_selected_step": tl_h1_k4.get("selected_step"),
+        "tl_h1_k4_primary_gate_passed": bool(tl_h1_k4.get("screen248_test_gate_passed", False)),
+        "tl_h1_k4_cap_saturation_onset_step": tl_h1_k4.get("cap_saturation_onset_step"),
+        "tl_h1_k4_dominant_label_collapse_onset_step": tl_h1_k4.get("dominant_label_collapse_onset_step"),
+        "bridge_supported": bridge_supported,
+        "bottleneck_supported": bottleneck_supported,
+        "specialization_supported": specialization_supported,
+        "tl_h4_k8_reader_query_argmax_unique_mean": h4_k8_reader["reader_query_argmax_unique_mean"],
+        "tl_h4_k4_reader_query_argmax_unique_mean": h4_k4_reader["reader_query_argmax_unique_mean"],
+        "tl_h1_k4_reader_query_argmax_unique_mean": h1_k4_reader["reader_query_argmax_unique_mean"],
+        "tl_h4_k8_reader_query_entropy_mean": h4_k8_reader["reader_query_entropy_mean"],
+        "tl_h4_k4_reader_query_entropy_mean": h4_k4_reader["reader_query_entropy_mean"],
+        "tl_h1_k4_reader_query_entropy_mean": h1_k4_reader["reader_query_entropy_mean"],
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def compare_tl_bridge_rescue_runs(
+    *,
+    sl8_summary_json: str,
+    tl_h4_k8_summary_json: str,
+    tl_h4_k8_rescue_summary_json: str,
+    tl_h4_k8_reader_query_csv: str | None = None,
+    tl_h4_k8_rescue_reader_query_csv: str | None = None,
+) -> dict[str, Any]:
+    sl8 = json.loads(Path(sl8_summary_json).read_text())
+    tl_h4_k8 = json.loads(Path(tl_h4_k8_summary_json).read_text())
+    rescue = json.loads(Path(tl_h4_k8_rescue_summary_json).read_text())
+    baseline_reader = _reader_query_summary(tl_h4_k8_reader_query_csv)
+    rescue_reader = _reader_query_summary(tl_h4_k8_rescue_reader_query_csv)
+
+    rescue_selection_improved = bool(
+        bool(rescue.get("selection_passed", False)) and not bool(tl_h4_k8.get("selection_passed", False))
+    )
+    rescue_primary_gate_improved = bool(
+        bool(rescue.get("screen248_test_gate_passed", False))
+        and not bool(tl_h4_k8.get("screen248_test_gate_passed", False))
+    )
+    rescue_collapse_delayed = bool(
+        _later_onset(
+            rescue.get("dominant_label_collapse_onset_step"),
+            tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            rescue.get("cap_saturation_onset_step"),
+            tl_h4_k8.get("cap_saturation_onset_step"),
+        )
+    )
+    rescue_reader_specialization_improved = bool(
+        rescue_reader["reader_query_argmax_unique_mean"]
+        > baseline_reader["reader_query_argmax_unique_mean"] + 1e-6
+        or rescue_reader["reader_query_entropy_mean"] + 1e-6
+        < baseline_reader["reader_query_entropy_mean"]
+    )
+    rescue_bridge_supported_vs_sl8 = bool(
+        bool(rescue.get("screen248_test_gate_passed", False))
+        or _later_onset(
+            rescue.get("dominant_label_collapse_onset_step"),
+            sl8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            rescue.get("cap_saturation_onset_step"),
+            sl8.get("cap_saturation_onset_step"),
+        )
+    )
+    rescue_improves_over_baseline = bool(
+        rescue_selection_improved
+        or rescue_primary_gate_improved
+        or rescue_collapse_delayed
+        or rescue_reader_specialization_improved
+    )
+    if rescue_primary_gate_improved or (
+        rescue_bridge_supported_vs_sl8 and rescue_improves_over_baseline
+    ):
+        conclusion = "success"
+        failure_reason = ""
+    elif rescue_improves_over_baseline:
+        conclusion = "informative"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        failure_reason = "no_bridge_geometry_gain"
+
+    return {
+        "sl8_selection_passed": bool(sl8.get("selection_passed", False)),
+        "sl8_selected_step": sl8.get("selected_step"),
+        "sl8_primary_gate_passed": bool(sl8.get("screen248_test_gate_passed", False)),
+        "sl8_cap_saturation_onset_step": sl8.get("cap_saturation_onset_step"),
+        "sl8_dominant_label_collapse_onset_step": sl8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_selection_passed": bool(tl_h4_k8.get("selection_passed", False)),
+        "tl_h4_k8_selected_step": tl_h4_k8.get("selected_step"),
+        "tl_h4_k8_primary_gate_passed": bool(tl_h4_k8.get("screen248_test_gate_passed", False)),
+        "tl_h4_k8_cap_saturation_onset_step": tl_h4_k8.get("cap_saturation_onset_step"),
+        "tl_h4_k8_dominant_label_collapse_onset_step": tl_h4_k8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_rescue_selection_passed": bool(rescue.get("selection_passed", False)),
+        "tl_h4_k8_rescue_selected_step": rescue.get("selected_step"),
+        "tl_h4_k8_rescue_primary_gate_passed": bool(rescue.get("screen248_test_gate_passed", False)),
+        "tl_h4_k8_rescue_cap_saturation_onset_step": rescue.get("cap_saturation_onset_step"),
+        "tl_h4_k8_rescue_dominant_label_collapse_onset_step": rescue.get(
+            "dominant_label_collapse_onset_step"
+        ),
+        "tl_h4_k8_reader_query_argmax_unique_mean": baseline_reader["reader_query_argmax_unique_mean"],
+        "tl_h4_k8_reader_query_entropy_mean": baseline_reader["reader_query_entropy_mean"],
+        "tl_h4_k8_rescue_reader_query_argmax_unique_mean": rescue_reader[
+            "reader_query_argmax_unique_mean"
+        ],
+        "tl_h4_k8_rescue_reader_query_entropy_mean": rescue_reader["reader_query_entropy_mean"],
+        "rescue_selection_improved": rescue_selection_improved,
+        "rescue_primary_gate_improved": rescue_primary_gate_improved,
+        "rescue_collapse_delayed": rescue_collapse_delayed,
+        "rescue_reader_specialization_improved": rescue_reader_specialization_improved,
+        "rescue_bridge_supported_vs_sl8": rescue_bridge_supported_vs_sl8,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def compare_tl_slot_basis_runs(
+    *,
+    sl8_summary_json: str,
+    tl_h4_k8_summary_json: str,
+    tl_bridge_rescue_summary_json: str,
+    tl_slot_basis_summary_json: str,
+    tl_h4_k8_reader_query_csv: str | None = None,
+    tl_bridge_rescue_reader_query_csv: str | None = None,
+    tl_slot_basis_reader_query_csv: str | None = None,
+    tl_h4_k8_train_events_json: str | None = None,
+    tl_bridge_rescue_train_events_json: str | None = None,
+    tl_slot_basis_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    sl8 = json.loads(Path(sl8_summary_json).read_text())
+    tl_h4_k8 = json.loads(Path(tl_h4_k8_summary_json).read_text())
+    bridge_rescue = json.loads(Path(tl_bridge_rescue_summary_json).read_text())
+    slot_basis = json.loads(Path(tl_slot_basis_summary_json).read_text())
+    baseline_reader = _reader_query_summary(tl_h4_k8_reader_query_csv)
+    bridge_reader = _reader_query_summary(tl_bridge_rescue_reader_query_csv)
+    slot_basis_reader = _reader_query_summary(tl_slot_basis_reader_query_csv)
+    baseline_geometry = _train_geometry_summary(tl_h4_k8_train_events_json)
+    bridge_geometry = _train_geometry_summary(tl_bridge_rescue_train_events_json)
+    slot_basis_geometry = _train_geometry_summary(tl_slot_basis_train_events_json)
+
+    prior_best_unique = max(
+        baseline_reader["reader_query_argmax_unique_mean"],
+        bridge_reader["reader_query_argmax_unique_mean"],
+    )
+    prior_best_long_rank = max(
+        baseline_geometry["final_memory_long_effective_rank"],
+        bridge_geometry["final_memory_long_effective_rank"],
+    )
+    prior_best_short_rank = max(
+        baseline_geometry["final_memory_short_effective_rank"],
+        bridge_geometry["final_memory_short_effective_rank"],
+    )
+    prior_best_pairwise = min(
+        baseline_geometry["final_reader_attention_pairwise_cosine_mean"],
+        bridge_geometry["final_reader_attention_pairwise_cosine_mean"],
+    )
+
+    basis_selection_improved = bool(
+        bool(slot_basis.get("selection_passed", False))
+        and not bool(tl_h4_k8.get("selection_passed", False))
+        and not bool(bridge_rescue.get("selection_passed", False))
+    )
+    basis_primary_gate_improved = bool(
+        bool(slot_basis.get("screen248_test_gate_passed", False))
+        and not bool(tl_h4_k8.get("screen248_test_gate_passed", False))
+        and not bool(bridge_rescue.get("screen248_test_gate_passed", False))
+    )
+    basis_collapse_delayed = bool(
+        _later_onset(
+            slot_basis.get("dominant_label_collapse_onset_step"),
+            max(
+                int(tl_h4_k8.get("dominant_label_collapse_onset_step") or 0),
+                int(bridge_rescue.get("dominant_label_collapse_onset_step") or 0),
+            ),
+        )
+        or _later_onset(
+            slot_basis.get("cap_saturation_onset_step"),
+            max(
+                int(tl_h4_k8.get("cap_saturation_onset_step") or 0),
+                int(bridge_rescue.get("cap_saturation_onset_step") or 0),
+            ),
+        )
+    )
+    basis_reader_specialization_improved = bool(
+        slot_basis_reader["reader_query_argmax_unique_mean"] > prior_best_unique + 1e-6
+        or slot_basis_reader["reader_query_entropy_mean"]
+        + 1e-6
+        < min(
+            baseline_reader["reader_query_entropy_mean"],
+            bridge_reader["reader_query_entropy_mean"],
+        )
+    )
+    basis_geometry_improved = bool(
+        slot_basis_geometry["final_memory_long_effective_rank"] > prior_best_long_rank + 0.05
+        or slot_basis_geometry["final_memory_short_effective_rank"] > prior_best_short_rank + 0.05
+        or (
+            prior_best_pairwise > 0.0
+            and slot_basis_geometry["final_reader_attention_pairwise_cosine_mean"]
+            + 1e-6
+            < prior_best_pairwise
+        )
+    )
+    basis_bridge_supported_vs_sl8 = bool(
+        bool(slot_basis.get("screen248_test_gate_passed", False))
+        or _later_onset(
+            slot_basis.get("dominant_label_collapse_onset_step"),
+            sl8.get("dominant_label_collapse_onset_step"),
+        )
+        or _later_onset(
+            slot_basis.get("cap_saturation_onset_step"),
+            sl8.get("cap_saturation_onset_step"),
+        )
+        or basis_geometry_improved
+    )
+    basis_improves_over_prior = bool(
+        basis_selection_improved
+        or basis_primary_gate_improved
+        or basis_collapse_delayed
+        or basis_reader_specialization_improved
+        or basis_geometry_improved
+    )
+    if basis_primary_gate_improved or (
+        basis_bridge_supported_vs_sl8 and basis_improves_over_prior
+    ):
+        conclusion = "success"
+        failure_reason = ""
+    elif basis_improves_over_prior:
+        conclusion = "informative"
+        failure_reason = ""
+    else:
+        conclusion = "failure"
+        failure_reason = "basis_not_alive"
+
+    return {
+        "sl8_selection_passed": bool(sl8.get("selection_passed", False)),
+        "sl8_selected_step": sl8.get("selected_step"),
+        "sl8_primary_gate_passed": bool(sl8.get("screen248_test_gate_passed", False)),
+        "sl8_cap_saturation_onset_step": sl8.get("cap_saturation_onset_step"),
+        "sl8_dominant_label_collapse_onset_step": sl8.get("dominant_label_collapse_onset_step"),
+        "tl_h4_k8_selection_passed": bool(tl_h4_k8.get("selection_passed", False)),
+        "tl_h4_k8_primary_gate_passed": bool(tl_h4_k8.get("screen248_test_gate_passed", False)),
+        "tl_bridge_rescue_selection_passed": bool(bridge_rescue.get("selection_passed", False)),
+        "tl_bridge_rescue_primary_gate_passed": bool(
+            bridge_rescue.get("screen248_test_gate_passed", False)
+        ),
+        "tl_slot_basis_selection_passed": bool(slot_basis.get("selection_passed", False)),
+        "tl_slot_basis_selected_step": slot_basis.get("selected_step"),
+        "tl_slot_basis_primary_gate_passed": bool(slot_basis.get("screen248_test_gate_passed", False)),
+        "tl_slot_basis_dominant_label_collapse_onset_step": slot_basis.get(
+            "dominant_label_collapse_onset_step"
+        ),
+        "tl_h4_k8_reader_query_argmax_unique_mean": baseline_reader["reader_query_argmax_unique_mean"],
+        "tl_bridge_rescue_reader_query_argmax_unique_mean": bridge_reader[
+            "reader_query_argmax_unique_mean"
+        ],
+        "tl_slot_basis_reader_query_argmax_unique_mean": slot_basis_reader[
+            "reader_query_argmax_unique_mean"
+        ],
+        "tl_h4_k8_reader_query_entropy_mean": baseline_reader["reader_query_entropy_mean"],
+        "tl_bridge_rescue_reader_query_entropy_mean": bridge_reader["reader_query_entropy_mean"],
+        "tl_slot_basis_reader_query_entropy_mean": slot_basis_reader["reader_query_entropy_mean"],
+        "tl_h4_k8_final_memory_long_effective_rank": baseline_geometry[
+            "final_memory_long_effective_rank"
+        ],
+        "tl_bridge_rescue_final_memory_long_effective_rank": bridge_geometry[
+            "final_memory_long_effective_rank"
+        ],
+        "tl_slot_basis_final_memory_long_effective_rank": slot_basis_geometry[
+            "final_memory_long_effective_rank"
+        ],
+        "tl_h4_k8_final_reader_attention_pairwise_cosine_mean": baseline_geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "tl_bridge_rescue_final_reader_attention_pairwise_cosine_mean": bridge_geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "tl_slot_basis_final_reader_attention_pairwise_cosine_mean": slot_basis_geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean": slot_basis_geometry[
+            "final_writer_slot_basis_pairwise_cosine_mean"
+        ],
+        "basis_selection_improved": basis_selection_improved,
+        "basis_primary_gate_improved": basis_primary_gate_improved,
+        "basis_collapse_delayed": basis_collapse_delayed,
+        "basis_reader_specialization_improved": basis_reader_specialization_improved,
+        "basis_geometry_improved": basis_geometry_improved,
+        "basis_bridge_supported_vs_sl8": basis_bridge_supported_vs_sl8,
+        "comparison_conclusion": conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def _rg1_probe_metrics(
+    *,
+    summary_json: str,
+    reader_query_csv: str | None = None,
+    train_events_json: str | None = None,
+) -> dict[str, float | bool | int | None]:
+    summary = json.loads(Path(summary_json).read_text())
+    reader = _reader_query_summary(reader_query_csv)
+    geometry = _train_geometry_summary(train_events_json)
+    return {
+        "selection_passed": bool(summary.get("selection_passed", False)),
+        "selected_step": summary.get("selected_step"),
+        "reader_query_rows": reader["reader_query_rows"],
+        "reader_query_argmax_unique_mean": reader["reader_query_argmax_unique_mean"],
+        "reader_query_entropy_mean": reader["reader_query_entropy_mean"],
+        "reader_query_coverage_mean": reader["reader_query_coverage_mean"],
+        "final_memory_short_effective_rank": geometry["final_memory_short_effective_rank"],
+        "final_reader_attention_pairwise_cosine_mean": geometry[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "final_reader_context_overwrite_ratio": geometry["final_reader_context_overwrite_ratio"],
+        "final_reader_readout_effective_rank": geometry["final_reader_readout_effective_rank"],
+        "final_fuser_output_effective_rank": geometry["final_fuser_output_effective_rank"],
+    }
+
+
+def _rg1_arm_delta(baseline: dict[str, float | bool | int | None], arm: dict[str, float | bool | int | None]) -> dict[str, float | bool]:
+    entropy_delta = float(arm["reader_query_entropy_mean"]) - float(baseline["reader_query_entropy_mean"])
+    pairwise_delta = float(arm["final_reader_attention_pairwise_cosine_mean"]) - float(
+        baseline["final_reader_attention_pairwise_cosine_mean"]
+    )
+    short_rank_delta = float(arm["final_memory_short_effective_rank"]) - float(
+        baseline["final_memory_short_effective_rank"]
+    )
+    selection_alive = bool(arm["selection_passed"]) and not bool(baseline["selection_passed"])
+    meaningful_movement = bool(
+        entropy_delta <= -0.05
+        or pairwise_delta <= -0.05
+        or short_rank_delta >= 0.30
+        or selection_alive
+    )
+    return {
+        "entropy_delta": entropy_delta,
+        "pairwise_delta": pairwise_delta,
+        "short_rank_delta": short_rank_delta,
+        "selection_alive": selection_alive,
+        "meaningful_movement": meaningful_movement,
+    }
+
+
+def compare_tl_reader_geometry_runs(
+    *,
+    baseline_summary_json: str,
+    rg1a_summary_json: str,
+    rg1b_summary_json: str,
+    rg1c_summary_json: str,
+    baseline_reader_query_csv: str | None = None,
+    rg1a_reader_query_csv: str | None = None,
+    rg1b_reader_query_csv: str | None = None,
+    rg1c_reader_query_csv: str | None = None,
+    baseline_train_events_json: str | None = None,
+    rg1a_train_events_json: str | None = None,
+    rg1b_train_events_json: str | None = None,
+    rg1c_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    baseline = _rg1_probe_metrics(
+        summary_json=baseline_summary_json,
+        reader_query_csv=baseline_reader_query_csv,
+        train_events_json=baseline_train_events_json,
+    )
+    rg1a = _rg1_probe_metrics(
+        summary_json=rg1a_summary_json,
+        reader_query_csv=rg1a_reader_query_csv,
+        train_events_json=rg1a_train_events_json,
+    )
+    rg1b = _rg1_probe_metrics(
+        summary_json=rg1b_summary_json,
+        reader_query_csv=rg1b_reader_query_csv,
+        train_events_json=rg1b_train_events_json,
+    )
+    rg1c = _rg1_probe_metrics(
+        summary_json=rg1c_summary_json,
+        reader_query_csv=rg1c_reader_query_csv,
+        train_events_json=rg1c_train_events_json,
+    )
+
+    rg1a_delta = _rg1_arm_delta(baseline, rg1a)
+    rg1b_delta = _rg1_arm_delta(baseline, rg1b)
+    rg1c_delta = _rg1_arm_delta(baseline, rg1c)
+
+    def arm_score(
+        arm_metrics: dict[str, float | bool | int | None],
+        arm_delta: dict[str, float | bool],
+    ) -> tuple[float, float, float, float]:
+        return (
+            1.0 if bool(arm_delta["selection_alive"]) else 0.0,
+            float(max(0.0, -float(arm_delta["entropy_delta"]))),
+            float(max(0.0, -float(arm_delta["pairwise_delta"]))),
+            float(max(0.0, float(arm_delta["short_rank_delta"]))),
+        )
+
+    arms = {
+        "rg1a_ctxoff_h4_k8": (rg1a, rg1a_delta),
+        "rg1b_ctxoff_h4_k4": (rg1b, rg1b_delta),
+        "rg1c_ctxoff_h4_k4_linear": (rg1c, rg1c_delta),
+    }
+    meaningful_arms = {
+        name: values for name, values in arms.items() if bool(values[1]["meaningful_movement"])
+    }
+
+    recommended_control_arm = "baseline_slot_basis"
+    if meaningful_arms:
+        recommended_control_arm = max(
+            meaningful_arms.items(),
+            key=lambda item: arm_score(item[1][0], item[1][1]),
+        )[0]
+
+    if bool(rg1a_delta["meaningful_movement"]):
+        primary_interpretation = "B-1a_context_overwrite"
+        comparison_conclusion = "informative"
+        failure_reason = ""
+    elif bool(rg1b_delta["meaningful_movement"]):
+        primary_interpretation = "B-1b_h_equals_k"
+        comparison_conclusion = "informative"
+        failure_reason = ""
+    elif bool(rg1c_delta["meaningful_movement"]):
+        primary_interpretation = "B-1c_linear_fuser"
+        comparison_conclusion = "informative"
+        failure_reason = ""
+    else:
+        primary_interpretation = "B-1_undetermined_move_to_rg2"
+        comparison_conclusion = "failure"
+        failure_reason = "no_meaningful_movement"
+
+    return {
+        "baseline_selection_passed": bool(baseline["selection_passed"]),
+        "baseline_selected_step": baseline["selected_step"],
+        "baseline_reader_query_entropy_mean": baseline["reader_query_entropy_mean"],
+        "baseline_reader_query_argmax_unique_mean": baseline["reader_query_argmax_unique_mean"],
+        "baseline_final_memory_short_effective_rank": baseline["final_memory_short_effective_rank"],
+        "baseline_final_reader_attention_pairwise_cosine_mean": baseline[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "baseline_final_reader_context_overwrite_ratio": baseline["final_reader_context_overwrite_ratio"],
+        "baseline_final_reader_readout_effective_rank": baseline["final_reader_readout_effective_rank"],
+        "baseline_final_fuser_output_effective_rank": baseline["final_fuser_output_effective_rank"],
+        "rg1a_selection_passed": bool(rg1a["selection_passed"]),
+        "rg1a_selected_step": rg1a["selected_step"],
+        "rg1a_reader_query_entropy_mean": rg1a["reader_query_entropy_mean"],
+        "rg1a_reader_query_argmax_unique_mean": rg1a["reader_query_argmax_unique_mean"],
+        "rg1a_final_memory_short_effective_rank": rg1a["final_memory_short_effective_rank"],
+        "rg1a_final_reader_attention_pairwise_cosine_mean": rg1a[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "rg1a_final_reader_context_overwrite_ratio": rg1a["final_reader_context_overwrite_ratio"],
+        "rg1a_final_reader_readout_effective_rank": rg1a["final_reader_readout_effective_rank"],
+        "rg1a_final_fuser_output_effective_rank": rg1a["final_fuser_output_effective_rank"],
+        "rg1a_entropy_delta": rg1a_delta["entropy_delta"],
+        "rg1a_pairwise_delta": rg1a_delta["pairwise_delta"],
+        "rg1a_short_rank_delta": rg1a_delta["short_rank_delta"],
+        "rg1a_selection_alive": rg1a_delta["selection_alive"],
+        "rg1a_meaningful_movement": rg1a_delta["meaningful_movement"],
+        "rg1b_selection_passed": bool(rg1b["selection_passed"]),
+        "rg1b_selected_step": rg1b["selected_step"],
+        "rg1b_reader_query_entropy_mean": rg1b["reader_query_entropy_mean"],
+        "rg1b_reader_query_argmax_unique_mean": rg1b["reader_query_argmax_unique_mean"],
+        "rg1b_final_memory_short_effective_rank": rg1b["final_memory_short_effective_rank"],
+        "rg1b_final_reader_attention_pairwise_cosine_mean": rg1b[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "rg1b_final_reader_context_overwrite_ratio": rg1b["final_reader_context_overwrite_ratio"],
+        "rg1b_final_reader_readout_effective_rank": rg1b["final_reader_readout_effective_rank"],
+        "rg1b_final_fuser_output_effective_rank": rg1b["final_fuser_output_effective_rank"],
+        "rg1b_entropy_delta": rg1b_delta["entropy_delta"],
+        "rg1b_pairwise_delta": rg1b_delta["pairwise_delta"],
+        "rg1b_short_rank_delta": rg1b_delta["short_rank_delta"],
+        "rg1b_selection_alive": rg1b_delta["selection_alive"],
+        "rg1b_meaningful_movement": rg1b_delta["meaningful_movement"],
+        "rg1c_selection_passed": bool(rg1c["selection_passed"]),
+        "rg1c_selected_step": rg1c["selected_step"],
+        "rg1c_reader_query_entropy_mean": rg1c["reader_query_entropy_mean"],
+        "rg1c_reader_query_argmax_unique_mean": rg1c["reader_query_argmax_unique_mean"],
+        "rg1c_final_memory_short_effective_rank": rg1c["final_memory_short_effective_rank"],
+        "rg1c_final_reader_attention_pairwise_cosine_mean": rg1c[
+            "final_reader_attention_pairwise_cosine_mean"
+        ],
+        "rg1c_final_reader_context_overwrite_ratio": rg1c["final_reader_context_overwrite_ratio"],
+        "rg1c_final_reader_readout_effective_rank": rg1c["final_reader_readout_effective_rank"],
+        "rg1c_final_fuser_output_effective_rank": rg1c["final_fuser_output_effective_rank"],
+        "rg1c_entropy_delta": rg1c_delta["entropy_delta"],
+        "rg1c_pairwise_delta": rg1c_delta["pairwise_delta"],
+        "rg1c_short_rank_delta": rg1c_delta["short_rank_delta"],
+        "rg1c_selection_alive": rg1c_delta["selection_alive"],
+        "rg1c_meaningful_movement": rg1c_delta["meaningful_movement"],
+        "context_overwrite_supported": bool(rg1a_delta["meaningful_movement"]),
+        "k_eq_h_supported": bool(rg1b_delta["meaningful_movement"]),
+        "linear_fuser_supported": bool(rg1c_delta["meaningful_movement"]),
+        "primary_interpretation": primary_interpretation,
+        "recommended_control_arm": recommended_control_arm,
+        "move_to_rg2": not bool(meaningful_arms),
+        "comparison_conclusion": comparison_conclusion,
+        "failure_reason": failure_reason,
+    }
+
+
+def _rg2_arm_delta(
+    control: dict[str, float | bool | int | None],
+    arm: dict[str, float | bool | int | None],
+) -> dict[str, float | bool]:
+    entropy_delta = float(arm["best_reader_attention_entropy_mean"]) - float(
+        control["best_reader_attention_entropy_mean"]
+    )
+    pairwise_delta = float(arm["best_reader_attention_pairwise_cosine_mean"]) - float(
+        control["best_reader_attention_pairwise_cosine_mean"]
+    )
+    short_rank_delta = float(arm["best_memory_short_effective_rank"]) - float(
+        control["best_memory_short_effective_rank"]
+    )
+    selection_alive = bool(arm["selection_passed"]) and not bool(control["selection_passed"])
+    partial_gain = bool(
+        bool(arm["geometry_alive"])
+        or entropy_delta <= -0.05
+        or pairwise_delta <= -0.05
+        or short_rank_delta >= 0.30
+        or selection_alive
+    )
+    return {
+        "entropy_delta": entropy_delta,
+        "pairwise_delta": pairwise_delta,
+        "short_rank_delta": short_rank_delta,
+        "selection_alive": selection_alive,
+        "partial_gain": partial_gain,
+    }
+
+
+def compare_tl_reader_rg2_runs(
+    *,
+    control_summary_json: str,
+    competitive_summary_json: str,
+    partition_summary_json: str,
+    control_train_events_json: str | None = None,
+    competitive_train_events_json: str | None = None,
+    partition_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _rg2_geometry_gate_summary(
+        summary_json=control_summary_json,
+        train_events_json=control_train_events_json,
+    )
+    competitive = _rg2_geometry_gate_summary(
+        summary_json=competitive_summary_json,
+        train_events_json=competitive_train_events_json,
+    )
+    partition = _rg2_geometry_gate_summary(
+        summary_json=partition_summary_json,
+        train_events_json=partition_train_events_json,
+    )
+    competitive_delta = _rg2_arm_delta(control, competitive)
+    partition_delta = _rg2_arm_delta(control, partition)
+    competitive_reader_supported = bool(
+        bool(competitive["geometry_alive"]) or bool(competitive_delta["partial_gain"])
+    )
+    partition_reader_supported = bool(
+        bool(partition["geometry_alive"]) or bool(partition_delta["partial_gain"])
+    )
+    geometry_alive = bool(
+        bool(control["geometry_alive"])
+        or bool(competitive["geometry_alive"])
+        or bool(partition["geometry_alive"])
+    )
+
+    if bool(competitive["geometry_alive"]):
+        primary_interpretation = "rg2_competitive_geometry_alive"
+        comparison_conclusion = "success"
+        recommended_arm = "competitive_slots"
+        move_to_rg3 = False
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    elif bool(partition["geometry_alive"]):
+        primary_interpretation = "rg2_partition_geometry_alive"
+        comparison_conclusion = (
+            "success" if bool(partition["selection_passed"]) else "diagnostic_success"
+        )
+        recommended_arm = "masked_partition"
+        move_to_rg3 = False
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    elif bool(partition_delta["partial_gain"]) and not bool(competitive_delta["partial_gain"]):
+        primary_interpretation = "rg2_partition_only_partial_gain"
+        comparison_conclusion = "informative"
+        recommended_arm = "masked_partition"
+        move_to_rg3 = True
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    elif bool(competitive_delta["partial_gain"]) or bool(partition_delta["partial_gain"]):
+        primary_interpretation = "rg2_partial_gain_move_to_rg3"
+        comparison_conclusion = "informative"
+        recommended_arm = "competitive_slots" if bool(competitive_delta["partial_gain"]) else "masked_partition"
+        move_to_rg3 = True
+        failure_reason = ""
+        bridge_failure_submode = "B-1b_attention_symmetry_collapse"
+    else:
+        primary_interpretation = "rg2_no_geometry_gain"
+        comparison_conclusion = "failure"
+        recommended_arm = "control"
+        move_to_rg3 = False
+        failure_reason = "no_partial_geometry_gain"
+        bridge_failure_submode = "B-1d_residual_write_side_insufficiency"
+
+    return {
+        "control_selection_passed": bool(control["selection_passed"]),
+        "control_geometry_alive": bool(control["geometry_alive"]),
+        "control_geometry_alive_step": control["geometry_alive_step"],
+        "control_best_reader_attention_pairwise_cosine_mean": control[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "control_best_reader_attention_entropy_mean": control["best_reader_attention_entropy_mean"],
+        "control_best_memory_short_effective_rank": control["best_memory_short_effective_rank"],
+        "control_best_memory_short_pairwise_cosine_mean": control[
+            "best_memory_short_pairwise_cosine_mean"
+        ],
+        "control_best_reader_readout_effective_rank": control["best_reader_readout_effective_rank"],
+        "control_best_fuser_output_effective_rank": control["best_fuser_output_effective_rank"],
+        "competitive_selection_passed": bool(competitive["selection_passed"]),
+        "competitive_geometry_alive": bool(competitive["geometry_alive"]),
+        "competitive_geometry_alive_step": competitive["geometry_alive_step"],
+        "competitive_g1_query_specialization": bool(competitive["g1_query_specialization"]),
+        "competitive_g2_noncollapsed_memory_short": bool(competitive["g2_noncollapsed_memory_short"]),
+        "competitive_g3_no_early_label_collapse": bool(competitive["g3_no_early_label_collapse"]),
+        "competitive_best_reader_attention_pairwise_cosine_mean": competitive[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "competitive_best_reader_attention_entropy_mean": competitive[
+            "best_reader_attention_entropy_mean"
+        ],
+        "competitive_best_memory_short_effective_rank": competitive["best_memory_short_effective_rank"],
+        "competitive_best_memory_short_pairwise_cosine_mean": competitive[
+            "best_memory_short_pairwise_cosine_mean"
+        ],
+        "competitive_best_reader_readout_effective_rank": competitive[
+            "best_reader_readout_effective_rank"
+        ],
+        "competitive_best_fuser_output_effective_rank": competitive[
+            "best_fuser_output_effective_rank"
+        ],
+        "competitive_entropy_delta": competitive_delta["entropy_delta"],
+        "competitive_pairwise_delta": competitive_delta["pairwise_delta"],
+        "competitive_short_rank_delta": competitive_delta["short_rank_delta"],
+        "competitive_selection_alive": competitive_delta["selection_alive"],
+        "competitive_partial_gain": competitive_delta["partial_gain"],
+        "partition_selection_passed": bool(partition["selection_passed"]),
+        "partition_geometry_alive": bool(partition["geometry_alive"]),
+        "partition_geometry_alive_step": partition["geometry_alive_step"],
+        "partition_g1_query_specialization": bool(partition["g1_query_specialization"]),
+        "partition_g2_noncollapsed_memory_short": bool(partition["g2_noncollapsed_memory_short"]),
+        "partition_g3_no_early_label_collapse": bool(partition["g3_no_early_label_collapse"]),
+        "partition_best_reader_attention_pairwise_cosine_mean": partition[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "partition_best_reader_attention_entropy_mean": partition[
+            "best_reader_attention_entropy_mean"
+        ],
+        "partition_best_memory_short_effective_rank": partition["best_memory_short_effective_rank"],
+        "partition_best_memory_short_pairwise_cosine_mean": partition[
+            "best_memory_short_pairwise_cosine_mean"
+        ],
+        "partition_best_reader_readout_effective_rank": partition[
+            "best_reader_readout_effective_rank"
+        ],
+        "partition_best_fuser_output_effective_rank": partition[
+            "best_fuser_output_effective_rank"
+        ],
+        "partition_entropy_delta": partition_delta["entropy_delta"],
+        "partition_pairwise_delta": partition_delta["pairwise_delta"],
+        "partition_short_rank_delta": partition_delta["short_rank_delta"],
+        "partition_selection_alive": partition_delta["selection_alive"],
+        "partition_partial_gain": partition_delta["partial_gain"],
+        "competitive_reader_supported": competitive_reader_supported,
+        "partition_reader_supported": partition_reader_supported,
+        "geometry_alive": geometry_alive,
+        "bridge_failure_submode": bridge_failure_submode,
+        "primary_interpretation": primary_interpretation,
+        "comparison_conclusion": comparison_conclusion,
+        "recommended_arm": recommended_arm,
+        "move_to_rg3": move_to_rg3,
+        "failure_reason": failure_reason,
+    }
+
+
+def _rg3_collapse_score(collapse_onset_step: int | None) -> int:
+    return 10_000 if collapse_onset_step is None else int(collapse_onset_step)
+
+
+def _rg3_arm_delta(
+    control: dict[str, float | bool | int | None],
+    arm: dict[str, float | bool | int | None],
+) -> dict[str, float | bool]:
+    control_collapse = control.get("dominant_label_collapse_onset_step")
+    arm_collapse = arm.get("dominant_label_collapse_onset_step")
+    collapse_delta = float(_rg3_collapse_score(arm_collapse) - _rg3_collapse_score(control_collapse))
+    short_rank_delta = float(arm["best_memory_short_effective_rank"]) - float(
+        control["best_memory_short_effective_rank"]
+    )
+    readout_rank_delta = float(arm["best_reader_readout_effective_rank"]) - float(
+        control["best_reader_readout_effective_rank"]
+    )
+    selection_alive = bool(arm["selection_passed"]) and not bool(control["selection_passed"])
+    geometry_alive_gain = bool(arm["geometry_alive"]) and not bool(control["geometry_alive"])
+    partial_gain = bool(
+        geometry_alive_gain
+        or selection_alive
+        or collapse_delta >= 4.0
+        or readout_rank_delta >= 0.05
+        or short_rank_delta >= 0.05
+    )
+    return {
+        "collapse_delta": collapse_delta,
+        "short_rank_delta": short_rank_delta,
+        "readout_rank_delta": readout_rank_delta,
+        "selection_alive": selection_alive,
+        "geometry_alive_gain": geometry_alive_gain,
+        "partial_gain": partial_gain,
+    }
+
+
+def compare_tl_reader_rg3_runs(
+    *,
+    control_summary_json: str,
+    bootstrap_summary_json: str,
+    bootstrap_reconstruction_summary_json: str,
+    control_train_events_json: str | None = None,
+    bootstrap_train_events_json: str | None = None,
+    bootstrap_reconstruction_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _rg2_geometry_gate_summary(
+        summary_json=control_summary_json,
+        train_events_json=control_train_events_json,
+    )
+    bootstrap = _rg2_geometry_gate_summary(
+        summary_json=bootstrap_summary_json,
+        train_events_json=bootstrap_train_events_json,
+    )
+    bootstrap_reconstruction = _rg2_geometry_gate_summary(
+        summary_json=bootstrap_reconstruction_summary_json,
+        train_events_json=bootstrap_reconstruction_train_events_json,
+    )
+    bootstrap_delta = _rg3_arm_delta(control, bootstrap)
+    bootstrap_reconstruction_delta = _rg3_arm_delta(control, bootstrap_reconstruction)
+    geometry_alive = bool(
+        bool(control["geometry_alive"])
+        or bool(bootstrap["geometry_alive"])
+        or bool(bootstrap_reconstruction["geometry_alive"])
+    )
+
+    if bool(bootstrap["geometry_alive"]):
+        primary_interpretation = "rg3_bootstrap_geometry_alive"
+        comparison_conclusion = "success"
+        recommended_arm = "bootstrap_only"
+        move_to_rg4 = True
+        failure_reason = ""
+        final_classification = "B-1_resolved_geometry_alive"
+        stop_after_rg3 = False
+    elif bool(bootstrap_reconstruction["geometry_alive"]):
+        primary_interpretation = "rg3_bootstrap_reconstruction_geometry_alive"
+        comparison_conclusion = "success"
+        recommended_arm = "bootstrap_reconstruction"
+        move_to_rg4 = True
+        failure_reason = ""
+        final_classification = "B-1_resolved_geometry_alive"
+        stop_after_rg3 = False
+    elif bool(bootstrap_reconstruction_delta["partial_gain"]) and not bool(bootstrap_delta["partial_gain"]):
+        primary_interpretation = "rg3_bootstrap_reconstruction_only_partial_gain"
+        comparison_conclusion = "informative"
+        recommended_arm = "bootstrap_reconstruction"
+        move_to_rg4 = False
+        failure_reason = "b2_candidate_downstream_flattening"
+        final_classification = "B-2_candidate_downstream_flattening"
+        stop_after_rg3 = True
+    elif bool(bootstrap_delta["partial_gain"]) and not bool(bootstrap_reconstruction_delta["partial_gain"]):
+        primary_interpretation = "rg3_bootstrap_only_partial_gain"
+        comparison_conclusion = "informative"
+        recommended_arm = "bootstrap_only"
+        move_to_rg4 = False
+        failure_reason = "b2_candidate_downstream_flattening"
+        final_classification = "B-2_candidate_downstream_flattening"
+        stop_after_rg3 = True
+    elif bool(bootstrap_delta["partial_gain"]) or bool(bootstrap_reconstruction_delta["partial_gain"]):
+        bootstrap_wins = (
+            float(bootstrap_delta["collapse_delta"]),
+            float(bootstrap_delta["readout_rank_delta"]),
+            float(bootstrap_delta["short_rank_delta"]),
+        ) >= (
+            float(bootstrap_reconstruction_delta["collapse_delta"]),
+            float(bootstrap_reconstruction_delta["readout_rank_delta"]),
+            float(bootstrap_reconstruction_delta["short_rank_delta"]),
+        )
+        primary_interpretation = "rg3_partial_gain_but_not_geometry_alive"
+        comparison_conclusion = "informative"
+        recommended_arm = "bootstrap_only" if bootstrap_wins else "bootstrap_reconstruction"
+        move_to_rg4 = False
+        failure_reason = "b2_candidate_downstream_flattening"
+        final_classification = "B-2_candidate_downstream_flattening"
+        stop_after_rg3 = True
+    else:
+        primary_interpretation = "rg3_no_geometry_gain"
+        comparison_conclusion = "failure"
+        recommended_arm = "control"
+        move_to_rg4 = False
+        failure_reason = "rg3_local_bootstrap_insufficient"
+        final_classification = "B-1_local_bootstrap_failed"
+        stop_after_rg3 = True
+
+    return {
+        "control_selection_passed": bool(control["selection_passed"]),
+        "control_geometry_alive": bool(control["geometry_alive"]),
+        "control_geometry_alive_step": control["geometry_alive_step"],
+        "control_dominant_label_collapse_onset_step": control["dominant_label_collapse_onset_step"],
+        "control_best_reader_attention_pairwise_cosine_mean": control[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "control_best_reader_attention_entropy_mean": control["best_reader_attention_entropy_mean"],
+        "control_best_memory_short_effective_rank": control["best_memory_short_effective_rank"],
+        "control_best_reader_readout_effective_rank": control["best_reader_readout_effective_rank"],
+        "bootstrap_selection_passed": bool(bootstrap["selection_passed"]),
+        "bootstrap_geometry_alive": bool(bootstrap["geometry_alive"]),
+        "bootstrap_geometry_alive_step": bootstrap["geometry_alive_step"],
+        "bootstrap_dominant_label_collapse_onset_step": bootstrap["dominant_label_collapse_onset_step"],
+        "bootstrap_best_reader_attention_pairwise_cosine_mean": bootstrap[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "bootstrap_best_reader_attention_entropy_mean": bootstrap["best_reader_attention_entropy_mean"],
+        "bootstrap_best_memory_short_effective_rank": bootstrap["best_memory_short_effective_rank"],
+        "bootstrap_best_reader_readout_effective_rank": bootstrap["best_reader_readout_effective_rank"],
+        "bootstrap_collapse_delta": bootstrap_delta["collapse_delta"],
+        "bootstrap_short_rank_delta": bootstrap_delta["short_rank_delta"],
+        "bootstrap_readout_rank_delta": bootstrap_delta["readout_rank_delta"],
+        "bootstrap_selection_alive": bootstrap_delta["selection_alive"],
+        "bootstrap_partial_gain": bootstrap_delta["partial_gain"],
+        "bootstrap_reconstruction_selection_passed": bool(bootstrap_reconstruction["selection_passed"]),
+        "bootstrap_reconstruction_geometry_alive": bool(bootstrap_reconstruction["geometry_alive"]),
+        "bootstrap_reconstruction_geometry_alive_step": bootstrap_reconstruction["geometry_alive_step"],
+        "bootstrap_reconstruction_dominant_label_collapse_onset_step": bootstrap_reconstruction[
+            "dominant_label_collapse_onset_step"
+        ],
+        "bootstrap_reconstruction_best_reader_attention_pairwise_cosine_mean": bootstrap_reconstruction[
+            "best_reader_attention_pairwise_cosine_mean"
+        ],
+        "bootstrap_reconstruction_best_reader_attention_entropy_mean": bootstrap_reconstruction[
+            "best_reader_attention_entropy_mean"
+        ],
+        "bootstrap_reconstruction_best_memory_short_effective_rank": bootstrap_reconstruction[
+            "best_memory_short_effective_rank"
+        ],
+        "bootstrap_reconstruction_best_reader_readout_effective_rank": bootstrap_reconstruction[
+            "best_reader_readout_effective_rank"
+        ],
+        "bootstrap_reconstruction_collapse_delta": bootstrap_reconstruction_delta["collapse_delta"],
+        "bootstrap_reconstruction_short_rank_delta": bootstrap_reconstruction_delta["short_rank_delta"],
+        "bootstrap_reconstruction_readout_rank_delta": bootstrap_reconstruction_delta[
+            "readout_rank_delta"
+        ],
+        "bootstrap_reconstruction_selection_alive": bootstrap_reconstruction_delta["selection_alive"],
+        "bootstrap_reconstruction_partial_gain": bootstrap_reconstruction_delta["partial_gain"],
+        "geometry_alive": geometry_alive,
+        "primary_interpretation": primary_interpretation,
+        "comparison_conclusion": comparison_conclusion,
+        "recommended_arm": recommended_arm,
+        "move_to_rg4": move_to_rg4,
+        "final_classification": final_classification,
+        "stop_after_rg3": stop_after_rg3,
+        "failure_reason": failure_reason,
+    }
+
+
+def _collapse_onset_from_snapshot_metrics(run_metrics: dict[str, Any]) -> int | None:
+    snapshot_metrics = run_metrics.get("snapshot_metrics", [])
+    if not isinstance(snapshot_metrics, list):
+        return None
+    ordered = sorted(
+        [snapshot for snapshot in snapshot_metrics if isinstance(snapshot, dict)],
+        key=lambda snapshot: int(snapshot.get("step", 0)),
+    )
+    for snapshot in ordered:
+        if float(snapshot.get("dominant_label_fraction", 0.0)) >= 0.85:
+            return int(snapshot.get("step", 0))
+    return None
+
+
+def _writer_value_arm_summary(
+    *,
+    metrics_json: str,
+    train_events_json: str | None = None,
+) -> dict[str, Any]:
+    run_metrics = json.loads(Path(metrics_json).read_text())
+    train_geometry = _train_geometry_summary(train_events_json)
+    forensics = _v0_forensics_summary(run_metrics)
+    return {
+        "writer_mode": str(run_metrics.get("pilot_writer_slot_conditioning_mode", "shared_add")),
+        "shared_state_scale": float(run_metrics.get("pilot_writer_shared_state_scale", 1.0)),
+        "best_adapt_task_score": float(run_metrics.get("best_adapt_task_score", 0.0)),
+        "best_adapt_macro_f1": float(run_metrics.get("best_adapt_macro_f1", 0.0)),
+        "dominant_label_fraction": float(run_metrics.get("dominant_label_fraction", 0.0)),
+        "dominant_label_collapse_onset_step": _collapse_onset_from_snapshot_metrics(run_metrics),
+        "memory_long_top1_top2_ratio": float(
+            run_metrics.get(
+                "memory_long_top1_top2_ratio",
+                train_geometry["final_memory_long_top1_top2_ratio"],
+            )
+        ),
+        "memory_long_common_mode_energy_ratio": float(
+            run_metrics.get(
+                "memory_long_common_mode_energy_ratio",
+                train_geometry["final_memory_long_common_mode_energy_ratio"],
+            )
+        ),
+        "memory_long_centered_effective_rank": float(
+            run_metrics.get(
+                "memory_long_centered_effective_rank",
+                train_geometry["final_memory_long_centered_effective_rank"],
+            )
+        ),
+        "reader_value_projected_effective_rank": float(
+            run_metrics.get(
+                "reader_value_projected_effective_rank",
+                train_geometry["final_reader_value_projected_effective_rank"],
+            )
+        ),
+        "reader_value_projected_pairwise_cosine_mean": float(
+            run_metrics.get(
+                "reader_value_projected_pairwise_cosine_mean",
+                train_geometry["final_reader_value_projected_pairwise_cosine_mean"],
+            )
+        ),
+        "reader_readout_effective_rank": float(
+            run_metrics.get(
+                "reader_readout_effective_rank",
+                train_geometry["final_reader_readout_effective_rank"],
+            )
+        ),
+        "reader_readout_centered_effective_rank": float(
+            run_metrics.get(
+                "reader_readout_centered_effective_rank",
+                train_geometry["final_reader_readout_centered_effective_rank"],
+            )
+        ),
+        "reader_readout_pairwise_cosine_mean": float(
+            run_metrics.get("reader_readout_pairwise_cosine_mean", 0.0)
+        ),
+        **forensics,
+    }
+
+
+def _writer_value_candidate_delta(
+    *,
+    reference: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    top1_top2_reduction_factor = float(
+        reference["memory_long_top1_top2_ratio"]
+        / max(candidate["memory_long_top1_top2_ratio"], 1e-6)
+    )
+    readout_cosine_delta = float(
+        reference["reader_readout_pairwise_cosine_mean"]
+        - candidate["reader_readout_pairwise_cosine_mean"]
+    )
+    readout_rank_delta = float(
+        candidate["reader_readout_effective_rank"]
+        - reference["reader_readout_effective_rank"]
+    )
+    collapse_delayed = bool(
+        _later_onset(
+            candidate["dominant_label_collapse_onset_step"],
+            reference["dominant_label_collapse_onset_step"],
+        )
+    )
+    diagnostic_success = bool(
+        top1_top2_reduction_factor >= 3.0
+        and readout_cosine_delta >= 0.02
+        and readout_rank_delta > 0.25
+    )
+    partial_geometry_gain = bool(
+        candidate["v0_value_diversity_gate_passed"]
+        or top1_top2_reduction_factor >= 1.5
+        or readout_cosine_delta >= 0.01
+        or readout_rank_delta > 0.1
+        or collapse_delayed
+    )
+    medium_success = bool(
+        candidate["memory_long_top1_top2_ratio"] < 15.0
+        and candidate["reader_readout_pairwise_cosine_mean"] < 0.95
+        and candidate["reader_readout_effective_rank"] > 2.0
+        and collapse_delayed
+    )
+    strong_success = bool(
+        candidate["memory_long_top1_top2_ratio"] < 10.0
+        and candidate["memory_long_centered_effective_rank"] >= 3.0
+        and candidate["reader_readout_pairwise_cosine_mean"] < 0.90
+        and candidate["reader_readout_effective_rank"] > 2.5
+        and candidate["best_adapt_task_score"]
+        >= max(reference["best_adapt_task_score"] + 0.05, 0.45)
+    )
+    return {
+        "top1_top2_reduction_factor": top1_top2_reduction_factor,
+        "readout_cosine_delta": readout_cosine_delta,
+        "readout_rank_delta": readout_rank_delta,
+        "collapse_delayed": collapse_delayed,
+        "diagnostic_success": diagnostic_success,
+        "partial_geometry_gain": partial_geometry_gain,
+        "medium_success": medium_success,
+        "strong_success": strong_success,
+    }
+
+
+def compare_tl_writer_value_runs(
+    *,
+    control_metrics_json: str,
+    shared_scaled_metrics_json: str,
+    slot_query_only_metrics_json: str,
+    control_train_events_json: str | None = None,
+    shared_scaled_train_events_json: str | None = None,
+    slot_query_only_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _writer_value_arm_summary(
+        metrics_json=control_metrics_json,
+        train_events_json=control_train_events_json,
+    )
+    shared_scaled = _writer_value_arm_summary(
+        metrics_json=shared_scaled_metrics_json,
+        train_events_json=shared_scaled_train_events_json,
+    )
+    slot_query_only = _writer_value_arm_summary(
+        metrics_json=slot_query_only_metrics_json,
+        train_events_json=slot_query_only_train_events_json,
+    )
+    shared_scaled_delta = _writer_value_candidate_delta(reference=control, candidate=shared_scaled)
+    slot_query_only_delta = _writer_value_candidate_delta(reference=control, candidate=slot_query_only)
+
+    candidate_rows = [
+        {
+            "arm": "shared_add_scaled",
+            "preference": 0,
+            **shared_scaled,
+            **shared_scaled_delta,
+        },
+        {
+            "arm": "slot_query_only",
+            "preference": 1,
+            **slot_query_only,
+            **slot_query_only_delta,
+        },
+    ]
+    best_candidate = max(
+        candidate_rows,
+        key=lambda row: (
+            bool(row["strong_success"]),
+            bool(row["medium_success"]),
+            bool(row["diagnostic_success"]),
+            bool(row["partial_geometry_gain"]),
+            float(row["top1_top2_reduction_factor"]),
+            float(row["readout_rank_delta"]),
+            float(row["readout_cosine_delta"]),
+            float(row["best_adapt_task_score"]),
+            int(row["preference"]),
+        ),
+    )
+
+    if bool(best_candidate["strong_success"]):
+        comparison_conclusion = "strong_success"
+        primary_interpretation = "writer_value_diversity_strongly_improved"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v2 = True
+        move_to_v1_penalties = False
+        stop_after_v1_architecture = False
+        failure_reason = ""
+    elif bool(best_candidate["medium_success"]):
+        comparison_conclusion = "move_to_v2"
+        primary_interpretation = "writer_value_diversity_gate_passed"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v2 = True
+        move_to_v1_penalties = False
+        stop_after_v1_architecture = False
+        failure_reason = ""
+    elif bool(best_candidate["partial_geometry_gain"]):
+        comparison_conclusion = "needs_penalty_refinement"
+        primary_interpretation = "writer_architecture_helped_but_common_mode_remains"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v2 = False
+        move_to_v1_penalties = True
+        stop_after_v1_architecture = False
+        failure_reason = ""
+    else:
+        comparison_conclusion = "failure"
+        primary_interpretation = "writer_architecture_first_matrix_flat"
+        recommended_arm = "control"
+        move_to_v2 = True
+        move_to_v1_penalties = False
+        stop_after_v1_architecture = True
+        if (
+            bool(shared_scaled["v0_common_mode_domination_flag"])
+            and bool(slot_query_only["v0_common_mode_domination_flag"])
+        ):
+            failure_reason = "common_mode_domination_persists"
+        elif (
+            bool(shared_scaled["v0_value_projected_homogenization_flag"])
+            and bool(slot_query_only["v0_value_projected_homogenization_flag"])
+        ):
+            failure_reason = "value_projection_homogenization_persists"
+        else:
+            failure_reason = "no_writer_arm_improved_geometry"
+
+    return {
+        "control_writer_mode": control["writer_mode"],
+        "control_shared_state_scale": control["shared_state_scale"],
+        "control_best_adapt_task_score": control["best_adapt_task_score"],
+        "control_best_adapt_macro_f1": control["best_adapt_macro_f1"],
+        "control_dominant_label_collapse_onset_step": control["dominant_label_collapse_onset_step"],
+        "control_memory_long_top1_top2_ratio": control["memory_long_top1_top2_ratio"],
+        "control_memory_long_common_mode_energy_ratio": control["memory_long_common_mode_energy_ratio"],
+        "control_memory_long_centered_effective_rank": control["memory_long_centered_effective_rank"],
+        "control_reader_value_projected_effective_rank": control["reader_value_projected_effective_rank"],
+        "control_reader_readout_effective_rank": control["reader_readout_effective_rank"],
+        "control_reader_readout_pairwise_cosine_mean": control["reader_readout_pairwise_cosine_mean"],
+        "control_v0_primary_bottleneck": control["v0_primary_bottleneck"],
+        "shared_scaled_writer_mode": shared_scaled["writer_mode"],
+        "shared_scaled_shared_state_scale": shared_scaled["shared_state_scale"],
+        "shared_scaled_best_adapt_task_score": shared_scaled["best_adapt_task_score"],
+        "shared_scaled_best_adapt_macro_f1": shared_scaled["best_adapt_macro_f1"],
+        "shared_scaled_dominant_label_collapse_onset_step": shared_scaled[
+            "dominant_label_collapse_onset_step"
+        ],
+        "shared_scaled_memory_long_top1_top2_ratio": shared_scaled["memory_long_top1_top2_ratio"],
+        "shared_scaled_memory_long_common_mode_energy_ratio": shared_scaled[
+            "memory_long_common_mode_energy_ratio"
+        ],
+        "shared_scaled_memory_long_centered_effective_rank": shared_scaled[
+            "memory_long_centered_effective_rank"
+        ],
+        "shared_scaled_reader_value_projected_effective_rank": shared_scaled[
+            "reader_value_projected_effective_rank"
+        ],
+        "shared_scaled_reader_readout_effective_rank": shared_scaled["reader_readout_effective_rank"],
+        "shared_scaled_reader_readout_pairwise_cosine_mean": shared_scaled[
+            "reader_readout_pairwise_cosine_mean"
+        ],
+        "shared_scaled_top1_top2_reduction_factor": shared_scaled_delta["top1_top2_reduction_factor"],
+        "shared_scaled_readout_cosine_delta": shared_scaled_delta["readout_cosine_delta"],
+        "shared_scaled_readout_rank_delta": shared_scaled_delta["readout_rank_delta"],
+        "shared_scaled_collapse_delayed": shared_scaled_delta["collapse_delayed"],
+        "shared_scaled_diagnostic_success": shared_scaled_delta["diagnostic_success"],
+        "shared_scaled_partial_geometry_gain": shared_scaled_delta["partial_geometry_gain"],
+        "shared_scaled_medium_success": shared_scaled_delta["medium_success"],
+        "shared_scaled_strong_success": shared_scaled_delta["strong_success"],
+        "shared_scaled_v0_primary_bottleneck": shared_scaled["v0_primary_bottleneck"],
+        "slot_query_only_writer_mode": slot_query_only["writer_mode"],
+        "slot_query_only_shared_state_scale": slot_query_only["shared_state_scale"],
+        "slot_query_only_best_adapt_task_score": slot_query_only["best_adapt_task_score"],
+        "slot_query_only_best_adapt_macro_f1": slot_query_only["best_adapt_macro_f1"],
+        "slot_query_only_dominant_label_collapse_onset_step": slot_query_only[
+            "dominant_label_collapse_onset_step"
+        ],
+        "slot_query_only_memory_long_top1_top2_ratio": slot_query_only[
+            "memory_long_top1_top2_ratio"
+        ],
+        "slot_query_only_memory_long_common_mode_energy_ratio": slot_query_only[
+            "memory_long_common_mode_energy_ratio"
+        ],
+        "slot_query_only_memory_long_centered_effective_rank": slot_query_only[
+            "memory_long_centered_effective_rank"
+        ],
+        "slot_query_only_reader_value_projected_effective_rank": slot_query_only[
+            "reader_value_projected_effective_rank"
+        ],
+        "slot_query_only_reader_readout_effective_rank": slot_query_only[
+            "reader_readout_effective_rank"
+        ],
+        "slot_query_only_reader_readout_pairwise_cosine_mean": slot_query_only[
+            "reader_readout_pairwise_cosine_mean"
+        ],
+        "slot_query_only_top1_top2_reduction_factor": slot_query_only_delta[
+            "top1_top2_reduction_factor"
+        ],
+        "slot_query_only_readout_cosine_delta": slot_query_only_delta["readout_cosine_delta"],
+        "slot_query_only_readout_rank_delta": slot_query_only_delta["readout_rank_delta"],
+        "slot_query_only_collapse_delayed": slot_query_only_delta["collapse_delayed"],
+        "slot_query_only_diagnostic_success": slot_query_only_delta["diagnostic_success"],
+        "slot_query_only_partial_geometry_gain": slot_query_only_delta["partial_geometry_gain"],
+        "slot_query_only_medium_success": slot_query_only_delta["medium_success"],
+        "slot_query_only_strong_success": slot_query_only_delta["strong_success"],
+        "slot_query_only_v0_primary_bottleneck": slot_query_only["v0_primary_bottleneck"],
+        "recommended_arm": recommended_arm,
+        "primary_interpretation": primary_interpretation,
+        "comparison_conclusion": comparison_conclusion,
+        "move_to_v2": move_to_v2,
+        "move_to_v1_penalties": move_to_v1_penalties,
+        "stop_after_v1_architecture": stop_after_v1_architecture,
+        "failure_reason": failure_reason,
+    }
+
+
+def _train_event_list(train_events_json: str | None) -> list[dict[str, Any]]:
+    if not train_events_json:
+        return []
+    payload = json.loads(Path(train_events_json).read_text())
+    if isinstance(payload, dict):
+        events = payload.get("events", [])
+        return list(events) if isinstance(events, list) else []
+    return list(payload) if isinstance(payload, list) else []
+
+
+def _median_train_event_window(
+    train_events: list[dict[str, Any]],
+    *,
+    key: str,
+    step_start: int,
+    step_end: int,
+) -> float:
+    values = [
+        float(event[key])
+        for event in train_events
+        if step_start <= int(event.get("step", -1)) <= step_end and event.get(key) is not None
+    ]
+    if not values:
+        return 0.0
+    values.sort()
+    midpoint = len(values) // 2
+    if len(values) % 2 == 1:
+        return float(values[midpoint])
+    return float((values[midpoint - 1] + values[midpoint]) / 2.0)
+
+
+def _micro_lora_arm_summary(
+    *,
+    metrics_json: str,
+    run_summary_json: str,
+    train_events_json: str | None = None,
+) -> dict[str, Any]:
+    run_metrics = json.loads(Path(metrics_json).read_text())
+    run_summary = json.loads(Path(run_summary_json).read_text())
+    train_events = _train_event_list(train_events_json)
+    return {
+        "receiver_lora_enabled": bool(run_metrics.get("pilot_receiver_lora_enabled", False)),
+        "receiver_lora_rank": int(run_metrics.get("pilot_receiver_lora_rank", 0)),
+        "receiver_lora_alpha": float(run_metrics.get("pilot_receiver_lora_alpha", 0.0)),
+        "receiver_lora_dropout": float(run_metrics.get("pilot_receiver_lora_dropout", 0.0)),
+        "receiver_lora_target_layers": [
+            int(layer_index)
+            for layer_index in run_metrics.get("pilot_receiver_lora_target_layers", [])
+        ],
+        "receiver_lora_target_modules": [
+            str(module_name)
+            for module_name in run_metrics.get("pilot_receiver_lora_target_modules", [])
+        ],
+        "receiver_lora_trainable_params": int(
+            run_metrics.get("pilot_receiver_lora_trainable_params", 0)
+        ),
+        "best_adapt_task_score": float(run_metrics.get("best_adapt_task_score", 0.0)),
+        "best_adapt_macro_f1": float(run_metrics.get("best_adapt_macro_f1", 0.0)),
+        "dominant_label_fraction": float(run_metrics.get("dominant_label_fraction", 0.0)),
+        "dominant_label_collapse_onset_step": int(
+            0
+            if run_summary.get(
+                "dominant_label_collapse_onset_step",
+                _collapse_onset_from_snapshot_metrics(run_metrics),
+            )
+            is None
+            else run_summary.get(
+                "dominant_label_collapse_onset_step",
+                _collapse_onset_from_snapshot_metrics(run_metrics),
+            )
+        ),
+        "selection_passed": bool(run_summary.get("selection_passed", False)),
+        "screen248_test_gate_passed": bool(run_summary.get("screen248_test_gate_passed", False)),
+        "fixed64_gate_passed": bool(run_summary.get("fixed64_gate_passed", False)),
+        "memory_long_top1_top2_ratio": float(run_metrics.get("memory_long_top1_top2_ratio", 0.0)),
+        "memory_long_common_mode_energy_ratio": float(
+            run_metrics.get("memory_long_common_mode_energy_ratio", 0.0)
+        ),
+        "reader_readout_effective_rank": float(run_metrics.get("reader_readout_effective_rank", 0.0)),
+        "reader_readout_pairwise_cosine_mean": float(
+            run_metrics.get("reader_readout_pairwise_cosine_mean", 0.0)
+        ),
+        "train_grad_norm_reader_steps_1_4_median": float(
+            run_metrics.get(
+                "train_grad_norm_reader_steps_1_4_median",
+                _median_train_event_window(train_events, key="grad_norm_reader", step_start=1, step_end=4),
+            )
+        ),
+        "train_grad_norm_fuser_steps_1_4_median": float(
+            run_metrics.get(
+                "train_grad_norm_fuser_steps_1_4_median",
+                _median_train_event_window(train_events, key="grad_norm_fuser", step_start=1, step_end=4),
+            )
+        ),
+        "train_grad_norm_receiver_lora_steps_1_4_median": float(
+            run_metrics.get(
+                "train_grad_norm_receiver_lora_steps_1_4_median",
+                _median_train_event_window(
+                    train_events,
+                    key="grad_norm_receiver_lora",
+                    step_start=1,
+                    step_end=4,
+                ),
+            )
+        ),
+        "train_reader_to_support_grad_ratio_steps_1_4_median": float(
+            run_metrics.get("train_reader_to_support_grad_ratio_steps_1_4_median", 0.0)
+        ),
+        "train_fuser_to_support_grad_ratio_steps_1_4_median": float(
+            run_metrics.get("train_fuser_to_support_grad_ratio_steps_1_4_median", 0.0)
+        ),
+        "train_receiver_lora_to_reader_grad_ratio_steps_1_4_median": float(
+            run_metrics.get("train_receiver_lora_to_reader_grad_ratio_steps_1_4_median", 0.0)
+        ),
+    }
+
+
+def _micro_lora_candidate_delta(
+    *,
+    reference: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    reader_grad_boost = float(
+        candidate["train_grad_norm_reader_steps_1_4_median"]
+        / max(reference["train_grad_norm_reader_steps_1_4_median"], 1e-8)
+    )
+    fuser_grad_boost = float(
+        candidate["train_grad_norm_fuser_steps_1_4_median"]
+        / max(reference["train_grad_norm_fuser_steps_1_4_median"], 1e-8)
+    )
+    task_score_delta = float(candidate["best_adapt_task_score"] - reference["best_adapt_task_score"])
+    macro_f1_delta = float(candidate["best_adapt_macro_f1"] - reference["best_adapt_macro_f1"])
+    collapse_delayed = bool(
+        _later_onset(
+            candidate["dominant_label_collapse_onset_step"],
+            reference["dominant_label_collapse_onset_step"],
+        )
+    )
+    selection_upgraded = bool(candidate["selection_passed"] and not reference["selection_passed"])
+    screen248_upgraded = bool(
+        candidate["screen248_test_gate_passed"] and not reference["screen248_test_gate_passed"]
+    )
+    fixed64_upgraded = bool(candidate["fixed64_gate_passed"] and not reference["fixed64_gate_passed"])
+    no_obvious_label_collapse = bool(
+        candidate["dominant_label_fraction"]
+        <= min(0.98, reference["dominant_label_fraction"] + 0.02)
+    )
+    diagnostic_success = bool(
+        reader_grad_boost >= 10.0
+        or fuser_grad_boost >= 10.0
+        or collapse_delayed
+        or selection_upgraded
+        or screen248_upgraded
+        or fixed64_upgraded
+        or task_score_delta >= 0.05
+    )
+    partial_evidence = bool(
+        candidate["train_grad_norm_receiver_lora_steps_1_4_median"] > 0.0
+        and (
+            reader_grad_boost >= 3.0
+            or fuser_grad_boost >= 3.0
+            or collapse_delayed
+            or task_score_delta >= 0.02
+            or macro_f1_delta >= 0.02
+        )
+    )
+    medium_success = bool(
+        diagnostic_success
+        and no_obvious_label_collapse
+        and (
+            task_score_delta >= 0.05
+            or macro_f1_delta >= 0.05
+            or selection_upgraded
+            or screen248_upgraded
+            or fixed64_upgraded
+        )
+    )
+    strong_success = bool(selection_upgraded or screen248_upgraded or fixed64_upgraded)
+    return {
+        "reader_grad_boost": reader_grad_boost,
+        "fuser_grad_boost": fuser_grad_boost,
+        "task_score_delta": task_score_delta,
+        "macro_f1_delta": macro_f1_delta,
+        "collapse_delayed": collapse_delayed,
+        "selection_upgraded": selection_upgraded,
+        "screen248_upgraded": screen248_upgraded,
+        "fixed64_upgraded": fixed64_upgraded,
+        "no_obvious_label_collapse": no_obvious_label_collapse,
+        "diagnostic_success": diagnostic_success,
+        "partial_evidence": partial_evidence,
+        "medium_success": medium_success,
+        "strong_success": strong_success,
+    }
+
+
+def compare_tl_micro_lora_runs(
+    *,
+    control_metrics_json: str,
+    control_run_summary_json: str,
+    late3_metrics_json: str,
+    late3_run_summary_json: str,
+    control_train_events_json: str | None = None,
+    late3_train_events_json: str | None = None,
+    all5_metrics_json: str | None = None,
+    all5_run_summary_json: str | None = None,
+    all5_train_events_json: str | None = None,
+    rank4_metrics_json: str | None = None,
+    rank4_run_summary_json: str | None = None,
+    rank4_train_events_json: str | None = None,
+) -> dict[str, Any]:
+    control = _micro_lora_arm_summary(
+        metrics_json=control_metrics_json,
+        run_summary_json=control_run_summary_json,
+        train_events_json=control_train_events_json,
+    )
+    late3 = _micro_lora_arm_summary(
+        metrics_json=late3_metrics_json,
+        run_summary_json=late3_run_summary_json,
+        train_events_json=late3_train_events_json,
+    )
+    candidate_rows: list[dict[str, Any]] = [
+        {
+            "arm": "micro_lora_r2_late3",
+            "prefix": "late3",
+            "preference": 2,
+            **late3,
+            **_micro_lora_candidate_delta(reference=control, candidate=late3),
+        }
+    ]
+    all5: dict[str, Any] | None = None
+    rank4: dict[str, Any] | None = None
+    if all5_metrics_json and all5_run_summary_json:
+        all5 = _micro_lora_arm_summary(
+            metrics_json=all5_metrics_json,
+            run_summary_json=all5_run_summary_json,
+            train_events_json=all5_train_events_json,
+        )
+        candidate_rows.append(
+            {
+                "arm": "micro_lora_r2_all5",
+                "prefix": "all5",
+                "preference": 1,
+                **all5,
+                **_micro_lora_candidate_delta(reference=control, candidate=all5),
+            }
+        )
+    if rank4_metrics_json and rank4_run_summary_json:
+        rank4 = _micro_lora_arm_summary(
+            metrics_json=rank4_metrics_json,
+            run_summary_json=rank4_run_summary_json,
+            train_events_json=rank4_train_events_json,
+        )
+        candidate_rows.append(
+            {
+                "arm": "micro_lora_r4",
+                "prefix": "rank4",
+                "preference": 0,
+                **rank4,
+                **_micro_lora_candidate_delta(reference=control, candidate=rank4),
+            }
+        )
+    best_candidate = max(
+        candidate_rows,
+        key=lambda row: (
+            bool(row["strong_success"]),
+            bool(row["medium_success"]),
+            bool(row["diagnostic_success"]),
+            bool(row["partial_evidence"]),
+            float(row["task_score_delta"]),
+            float(row["reader_grad_boost"]),
+            float(row["fuser_grad_boost"]),
+            int(row["preference"]),
+        ),
+    )
+
+    continue_to_l2 = False
+    continue_to_l3 = False
+    move_to_v3 = False
+    move_to_v4 = False
+    failure_reason = ""
+    if bool(best_candidate["strong_success"]):
+        comparison_conclusion = "strong_success"
+        primary_interpretation = "micro_lora_unblocked_bridge"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v3 = True
+    elif bool(best_candidate["medium_success"]):
+        comparison_conclusion = "move_to_v3"
+        primary_interpretation = "micro_lora_helped_without_gate_pass"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v3 = True
+    elif bool(best_candidate["partial_evidence"]) and all5 is None and best_candidate["prefix"] == "late3":
+        comparison_conclusion = "expand_to_l2"
+        primary_interpretation = "late3_micro_lora_partial_signal"
+        recommended_arm = str(best_candidate["arm"])
+        continue_to_l2 = True
+    elif bool(best_candidate["partial_evidence"]) and rank4 is None:
+        comparison_conclusion = "expand_to_l3"
+        primary_interpretation = "rank2_micro_lora_partial_signal"
+        recommended_arm = str(best_candidate["arm"])
+        continue_to_l3 = True
+    else:
+        comparison_conclusion = "move_to_v4"
+        primary_interpretation = "micro_lora_no_actionable_signal"
+        recommended_arm = str(best_candidate["arm"])
+        move_to_v4 = True
+        if not bool(best_candidate["diagnostic_success"]):
+            failure_reason = "no_gradient_or_capability_gain"
+        elif not bool(best_candidate["no_obvious_label_collapse"]):
+            failure_reason = "label_collapse_tradeoff"
+        else:
+            failure_reason = "partial_signal_exhausted"
+
+    summary: dict[str, Any] = {
+        "control_receiver_lora_enabled": control["receiver_lora_enabled"],
+        "control_best_adapt_task_score": control["best_adapt_task_score"],
+        "control_best_adapt_macro_f1": control["best_adapt_macro_f1"],
+        "control_dominant_label_fraction": control["dominant_label_fraction"],
+        "control_dominant_label_collapse_onset_step": control["dominant_label_collapse_onset_step"],
+        "control_selection_passed": control["selection_passed"],
+        "control_screen248_test_gate_passed": control["screen248_test_gate_passed"],
+        "control_fixed64_gate_passed": control["fixed64_gate_passed"],
+        "control_memory_long_top1_top2_ratio": control["memory_long_top1_top2_ratio"],
+        "control_reader_readout_effective_rank": control["reader_readout_effective_rank"],
+        "control_reader_readout_pairwise_cosine_mean": control["reader_readout_pairwise_cosine_mean"],
+        "control_train_grad_norm_reader_steps_1_4_median": (
+            control["train_grad_norm_reader_steps_1_4_median"]
+        ),
+        "control_train_grad_norm_fuser_steps_1_4_median": (
+            control["train_grad_norm_fuser_steps_1_4_median"]
+        ),
+    }
+    for row in candidate_rows:
+        prefix = str(row["prefix"])
+        summary.update(
+            {
+                f"{prefix}_receiver_lora_enabled": row["receiver_lora_enabled"],
+                f"{prefix}_receiver_lora_rank": row["receiver_lora_rank"],
+                f"{prefix}_receiver_lora_alpha": row["receiver_lora_alpha"],
+                f"{prefix}_receiver_lora_dropout": row["receiver_lora_dropout"],
+                f"{prefix}_receiver_lora_target_layers": row["receiver_lora_target_layers"],
+                f"{prefix}_receiver_lora_target_modules": row["receiver_lora_target_modules"],
+                f"{prefix}_receiver_lora_trainable_params": row["receiver_lora_trainable_params"],
+                f"{prefix}_best_adapt_task_score": row["best_adapt_task_score"],
+                f"{prefix}_best_adapt_macro_f1": row["best_adapt_macro_f1"],
+                f"{prefix}_dominant_label_fraction": row["dominant_label_fraction"],
+                f"{prefix}_dominant_label_collapse_onset_step": row[
+                    "dominant_label_collapse_onset_step"
+                ],
+                f"{prefix}_selection_passed": row["selection_passed"],
+                f"{prefix}_screen248_test_gate_passed": row["screen248_test_gate_passed"],
+                f"{prefix}_fixed64_gate_passed": row["fixed64_gate_passed"],
+                f"{prefix}_memory_long_top1_top2_ratio": row["memory_long_top1_top2_ratio"],
+                f"{prefix}_reader_readout_effective_rank": row["reader_readout_effective_rank"],
+                f"{prefix}_reader_readout_pairwise_cosine_mean": row[
+                    "reader_readout_pairwise_cosine_mean"
+                ],
+                f"{prefix}_train_grad_norm_reader_steps_1_4_median": row[
+                    "train_grad_norm_reader_steps_1_4_median"
+                ],
+                f"{prefix}_train_grad_norm_fuser_steps_1_4_median": row[
+                    "train_grad_norm_fuser_steps_1_4_median"
+                ],
+                f"{prefix}_train_grad_norm_receiver_lora_steps_1_4_median": row[
+                    "train_grad_norm_receiver_lora_steps_1_4_median"
+                ],
+                f"{prefix}_reader_grad_boost": row["reader_grad_boost"],
+                f"{prefix}_fuser_grad_boost": row["fuser_grad_boost"],
+                f"{prefix}_task_score_delta": row["task_score_delta"],
+                f"{prefix}_macro_f1_delta": row["macro_f1_delta"],
+                f"{prefix}_collapse_delayed": row["collapse_delayed"],
+                f"{prefix}_selection_upgraded": row["selection_upgraded"],
+                f"{prefix}_screen248_upgraded": row["screen248_upgraded"],
+                f"{prefix}_fixed64_upgraded": row["fixed64_upgraded"],
+                f"{prefix}_diagnostic_success": row["diagnostic_success"],
+                f"{prefix}_partial_evidence": row["partial_evidence"],
+                f"{prefix}_medium_success": row["medium_success"],
+                f"{prefix}_strong_success": row["strong_success"],
+            }
+        )
+    summary.update(
+        {
+            "recommended_arm": recommended_arm,
+            "primary_interpretation": primary_interpretation,
+            "comparison_conclusion": comparison_conclusion,
+            "continue_to_l2": continue_to_l2,
+            "continue_to_l3": continue_to_l3,
+            "move_to_v3": move_to_v3,
+            "move_to_v4": move_to_v4,
+            "failure_reason": failure_reason,
+        }
+    )
+    return summary

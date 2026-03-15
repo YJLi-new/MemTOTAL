@@ -1,0 +1,8 @@
+includes:
+  - ../tasks/benchmarks/pilots/fever_fixed64.yaml
+  - m4_fever_qwen25_screen248_test_gate_m47_structured_common.yaml
+
+experiment:
+  name: m4_fever_qwen25_fixed64_gate_m47_structured_legacy_common
+  stage: M4-shared-injection
+  method_variant: fever-fixed64-gate-m47-structured-legacy

@@ -1,0 +1,8 @@
+includes:
+  - ../tasks/benchmarks/pilots/fever_screen248_test_m46_heldout_b.yaml
+  - m4_fever_qwen25_screen248_test_gate_m47_pooled_common.yaml
+
+experiment:
+  name: m4_fever_qwen25_screen248_test_heldout_b_gate_m47_pooled_common
+  stage: M4-shared-injection
+  method_variant: fever-screen248-test-heldout-b-gate-m47-pooled

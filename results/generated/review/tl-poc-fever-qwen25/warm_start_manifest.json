@@ -1,0 +1,6 @@
+{
+  "sl8": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0008/checkpoint.pt",
+  "tl-h1-k4": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0008/checkpoint.pt",
+  "tl-h4-k4": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0008/checkpoint.pt",
+  "tl-h4-k8": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0008/checkpoint.pt"
+}

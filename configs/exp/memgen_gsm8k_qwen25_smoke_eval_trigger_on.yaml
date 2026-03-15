@@ -1,0 +1,34 @@
+experiment:
+  name: memgen_gsm8k_qwen25_smoke_eval_trigger_on
+  stage: M1
+  method_variant: memgen-trigger-smoke
+
+task:
+  name: gsm8k
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/mydir/MemTOTAL/MemGen-master/data_chache/models/Qwen2.5-1.5B-Instruct
+
+baseline:
+  name: memgen
+  repo_root: MemGen-master
+  task_name: gsm8k
+  memgen_run_mode: evaluate
+  memgen_config_path: configs/latent_memory/gsm8k.yaml
+  trigger_active: true
+  insertion_profile: trigger_path_smoke
+  load_model_path: null
+  max_prompt_aug_num: 1
+  max_inference_aug_num: 1
+  extra_options:
+    - model.attn_implementation=sdpa
+    - dataset.mode=sft
+    - dataset.sft.val_ratio=0.01
+    - dataset.sft.num_workers=1
+    - dataset.sft.max_train_samples=8
+    - dataset.sft.max_valid_samples=4
+    - dataset.sft.max_test_samples=4
+    - run.interaction.batch_size=1
+    - run.interaction.do_sample=False
+    - run.interaction.max_response_length=256

@@ -1,0 +1,5 @@
+{
+  "rg2-competitive-none-linear-h4-k4": "/root/autodl-tmp/runs/verify/tl-reader-geometry-rescue-fever-qwen25/rg1c-ctxoff-h4-k4-linear/phase2-selected/pilot-I-real/checkpoint.pt",
+  "rg2-control-ctxoff-linear-h4-k4": "/root/autodl-tmp/runs/verify/tl-reader-geometry-rescue-fever-qwen25/rg1c-ctxoff-h4-k4-linear/phase2-selected/pilot-I-real/checkpoint.pt",
+  "rg2-partition-none-linear-h4-k4": "/root/autodl-tmp/runs/verify/tl-reader-geometry-rescue-fever-qwen25/rg1c-ctxoff-h4-k4-linear/phase2-selected/pilot-I-real/checkpoint.pt"
+}

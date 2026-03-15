@@ -1,0 +1,39 @@
+includes:
+  - ../tasks/benchmarks/pilots/fever_screen248_test.yaml
+  - ../method/memory_bootstrap_transformer_real.yaml
+
+experiment:
+  name: m4_fever_qwen25_screen248_test_gate_deep_common
+  stage: M4-shared-injection
+  method_variant: fever-screen248-test-gate-deep
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+  attn_implementation: eager
+
+runtime:
+  training_stage: shared_injection_pilot
+  shared_injection_arm: base_only
+  writer_memory_control: real
+  pilot_arm_alias: A
+  pilot_prompt_variant: answer_slot_labels
+  pilot_support_serialization: triad_curated6
+  pilot_support_examples: 8
+  pilot_injection_mode: sparse_deep_prefix
+  pilot_deep_prefix_layers:
+    - 0
+    - 7
+    - 14
+    - 21
+    - 27
+  pilot_deep_prefix_rank: 32
+  pilot_train_steps: 0
+  pilot_projector_warmup_steps: 0
+  pilot_prefix_slot_max_norm: 48.0
+  pilot_prefix_total_max_norm: 192.0
+  stage_c_choice_margin: 0.1
+  device: cuda

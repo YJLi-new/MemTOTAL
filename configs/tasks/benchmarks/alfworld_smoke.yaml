@@ -1,0 +1,10 @@
+task:
+  name: alfworld_smoke
+  benchmark_id: alfworld
+  domain: agent
+  split: smoke
+  smoke_subset: local_contract_v1
+  dataset_path: data/benchmarks/smoke/alfworld_smoke.jsonl
+  metric_name: exact_match
+  evaluator:
+    type: exact_match

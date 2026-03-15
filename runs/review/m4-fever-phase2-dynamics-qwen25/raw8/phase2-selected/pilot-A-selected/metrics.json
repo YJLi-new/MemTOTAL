@@ -1,0 +1,60 @@
+{
+  "benchmark_id": "fever",
+  "best_adapt_macro_f1": 0.2,
+  "best_adapt_step": 0,
+  "best_adapt_task_margin": -2.557648926973343,
+  "best_adapt_task_score": 0.25,
+  "checkpoint_path": "",
+  "device": "cuda",
+  "dominant_label_fraction": 1.0,
+  "eval_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/fixed64.jsonl",
+  "eval_examples": 64,
+  "event_name": "train",
+  "examples": 64,
+  "label_recall_by_class": {
+    "REFUTES": 0.0,
+    "SUPPORTS": 1.0
+  },
+  "mode": "train",
+  "peak_device_memory_bytes": 5409272320,
+  "peak_device_memory_mib": 5158.684082,
+  "peak_rss_kb": 6174160,
+  "pilot_arm_alias": "A",
+  "pilot_projector_learning_rate": 0.01,
+  "pilot_projector_warmup_steps": 0,
+  "pilot_snapshot_steps": [
+    0
+  ],
+  "pilot_split": "fixed64",
+  "pilot_train_steps": 0,
+  "pilot_writer_learning_rate": 0.002,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "base_only",
+  "snapshot_metrics": [
+    {
+      "accuracy": 0.25,
+      "dominant_label_fraction": 1.0,
+      "macro_f1": 0.2,
+      "mean_margin": -2.557648926973343,
+      "snapshot_dir": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-A-selected/snapshot_evals/step_0000",
+      "step": 0,
+      "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-A-selected/snapshot_evals/step_0000/task_case_dump.jsonl"
+    }
+  ],
+  "stage_c_choice_margin": 0.1,
+  "support_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/pilot-support8.jsonl",
+  "support_examples": 8,
+  "support_serialization_variant": "example_blocks_raw8",
+  "support_text_block_chars": 1988,
+  "task_case_dump_path": "/root/mydir/MemTOTAL/runs/verify/m4-fever-phase2-dynamics-qwen25/raw8/phase2-selected/pilot-A-selected/task_case_dump.jsonl",
+  "task_case_dump_rows": 64,
+  "task_metric_name": "accuracy",
+  "task_name": "fever_real_fixed64",
+  "teacher_text_block_chars": 1988,
+  "token_count": 6259,
+  "tokens_per_sec": 2587.246176,
+  "train_final_loss": null,
+  "training_stage": "shared_injection_pilot",
+  "wall_time_sec": 2.419175,
+  "writer_memory_control": "real"
+}

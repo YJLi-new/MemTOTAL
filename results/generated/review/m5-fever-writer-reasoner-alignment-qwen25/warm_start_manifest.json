@@ -1,0 +1,5 @@
+{
+  "canonical": "/root/autodl-tmp/runs/verify/m4-fever-shared-injection-alignment-qwen25/canonical/phase2-selected/pilot-I-real/snapshot_evals/step_0064/checkpoint.pt",
+  "freeze-writer": "/root/autodl-tmp/runs/verify/m4-fever-shared-injection-alignment-qwen25/canonical/phase2-selected/pilot-I-real/snapshot_evals/step_0064/checkpoint.pt",
+  "pooled-block": "/root/autodl-tmp/runs/verify/m4-fever-shared-injection-alignment-qwen25/pooled-block/phase2-selected/pilot-I-real/snapshot_evals/step_0064/checkpoint.pt"
+}

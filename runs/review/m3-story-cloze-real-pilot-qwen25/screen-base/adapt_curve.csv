@@ -1,0 +1,2 @@
+decision_mode,memory_control_mode,choice_objective,query_learning_mode,adaptation_target,trainable_module,trainable_parameter_count,step,support_examples,eval_examples,support_loss,support_accuracy,support_grad_norm,objective_accuracy,task_score,task_metric_name,task_proxy_score,task_proxy_name,task_margin
+base_only,real,continuation_retrieval,none,q_only,none,0,0,8,248,0.0,0.0,0.0,0.6411290322580645,0.6411290322580645,accuracy,0.638076073878245,gold_choice_probability,3.3229008393902935

@@ -1,0 +1,48 @@
+{
+  "gate_name": "screen248_test_canonical",
+  "rows": [
+    {
+      "alias": "A",
+      "arm": "base_only",
+      "macro_f1": 0.15160955347871236,
+      "subdir": "pilot-A-gate",
+      "task_score": 0.29435483870967744,
+      "writer_memory_control": "real"
+    },
+    {
+      "alias": "T",
+      "arm": "teacher_text",
+      "macro_f1": 0.4679815480730813,
+      "subdir": "pilot-T-gate",
+      "task_score": 0.5120967741935484,
+      "writer_memory_control": "real"
+    },
+    {
+      "alias": "I_real",
+      "arm": "injected",
+      "macro_f1": 0.21834729548040124,
+      "subdir": "pilot-I-real-gate",
+      "task_score": 0.3064516129032258,
+      "writer_memory_control": "real"
+    },
+    {
+      "alias": "I_shuffle",
+      "arm": "injected",
+      "macro_f1": 0.21125975473801561,
+      "subdir": "pilot-I-shuffle-gate",
+      "task_score": 0.3064516129032258,
+      "writer_memory_control": "shuffled"
+    },
+    {
+      "alias": "I_zero",
+      "arm": "injected",
+      "macro_f1": 0.15160955347871236,
+      "subdir": "pilot-I-zero-gate",
+      "task_score": 0.29435483870967744,
+      "writer_memory_control": "zero"
+    }
+  ],
+  "selected_prompt_variant": "answer_slot_labels",
+  "selected_support_serialization": "triad_curated6",
+  "selection_json": "/root/autodl-tmp/results/generated/tl-poc-fever-qwen25/sl8/dynamics-recovery/selection.json"
+}

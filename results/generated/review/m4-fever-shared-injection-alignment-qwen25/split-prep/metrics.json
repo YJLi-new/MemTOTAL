@@ -1,0 +1,26 @@
+{
+  "analysis_mode": "m4_prepare_fever_validation_splits",
+  "audit_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-val-audit12.jsonl",
+  "audit_examples": 12,
+  "audit_label_distribution": {
+    "NOT_ENOUGH_INFO": 4,
+    "REFUTES": 4,
+    "SUPPORTS": 4
+  },
+  "manifest_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-train-val-manifest.json",
+  "source_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-eval248.jsonl",
+  "train_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-train.jsonl",
+  "train_examples": 187,
+  "train_label_distribution": {
+    "NOT_ENOUGH_INFO": 70,
+    "REFUTES": 62,
+    "SUPPORTS": 55
+  },
+  "val_dataset_path": "/root/mydir/MemTOTAL/data/benchmarks/pilots/fever/screen-val.jsonl",
+  "val_examples": 61,
+  "val_label_distribution": {
+    "NOT_ENOUGH_INFO": 23,
+    "REFUTES": 20,
+    "SUPPORTS": 18
+  }
+}

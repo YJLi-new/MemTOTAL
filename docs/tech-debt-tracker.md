@@ -1,0 +1,159 @@
+# Tech Debt Tracker
+
+## Open
+
+- 清理真实 Hugging Face/Qwen 路径里的下载与环境治理细节：`BackboneWrapper(load_mode=hf_causal_lm)` 已打通，但 wrapper 里仍沿用 `TRANSFORMERS_CACHE` 兼容变量，并且 staged local-model 流程还没有完全脚本化成零手工步骤。
+- `Workstream B / TL-PoC` 已经把“Reader/Fuser 还没正式接进 active FEVER harness”这条解释单独排除了：最新 `results/generated/review/tl-poc-fever-qwen25/tl-poc-summary.json` 当前显示 `comparison_conclusion=failure`、`failure_reason=bridge_not_alive`。当前新的第一优先级 tech debt 已进一步收紧成：
+  - 为什么 `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 的 `memory_long_effective_rank` 在末步仍接近 `1.0`
+  - 为什么 `memory_short_effective_rank` 也只停在约 `1.1-1.2`
+  - 为什么 reader attention entropy 稳定停在 `2.0794 ≈ ln(8)`，表现得像对 long slots 的近均匀读法
+  - 为什么 `H=4` 没有比 `H=1` 提供更健康的 specialization
+  - 当前是否应先修 `Reader/Fuser` 的 memory-side geometry，而不是立即动 receiver
+- `TL bridge rescue` 已对上述 `B-1` 解释做了第一轮更直接的工程检验：最新 `results/generated/review/tl-bridge-rescue-fever-qwen25/bridge-rescue-summary.json` 当前显示 `comparison_conclusion=failure`、`failure_reason=no_bridge_geometry_gain`。这说明当前 top tech debt 已进一步从“是否需要 geometry regularization”收紧成：
+  - 为什么 `support_set -> writer` 保留 conditioned-slot residual 后，`M_long` 仍几乎全程 `≈ rank-1`
+  - 为什么显式 `memory_long / memory_short / reader_attention` diversity regularization 仍被训练动力学压平到最坏边界
+  - 当前更该直接约束的是 `M_long` 的 slot basis / factorization，还是 reader query initialization / temperature
+- `TL slot-basis rescue` 现在又把同一个 `B-1` 解释进一步拆开：最新 `results/generated/review/tl-slot-basis-rescue-fever-qwen25/slot-basis-summary.json` 当前显示 `comparison_conclusion=success`，但对应 run-summary 仍是 `selection_passed=false`、`screen248_test_gate_passed=false`。这说明：
+  - `M_long` 的 write-side basis / factorization 并不是完全做不起来；显式 slot-basis 约束已经能把末步 `memory_long_effective_rank` 拉到 `1.6126`
+  - writer slot basis 的 pairwise cosine 也已经被压到 `≈0`
+  - 但 reader attention 仍保持 `pairwise_cosine_mean=1.0`、`entropy≈ln(8)`，`M_short` 也仍只停在 `≈1.2`
+  - 因而当前 top tech debt 已从“如何把 `M_long` 拉出 rank-1”继续收紧成“为什么 `Reader/Fuser` 仍把更健康的 `M_long` 读成近均匀、低专化的 `M_short`”
+- `M4.7` structured support-set alignment 已经把“pooled support block 是否就是主瓶颈”和“writer 是否必须可训练”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.json` 显示 `comparison_conclusion=canonical_failed_selection`。当前新的第一优先级 tech debt 不再是“support block 要不要结构化”本身，而是：
+  - 为什么 canonical structured path 虽然优于 `freeze-writer / pooled-block`，却仍无法通过 selection
+  - 为什么三臂都会从 `step0` 起落在 `dominant_label_fraction=1.0`
+  - canonical `step64` 的 `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3` 为什么仍然伴随 `regressions_vs_base=16`
+- `M4.6` anti-shortcut deep prompt 已经把“static support memorization 是否是主因”单独拉出来做了真实对照，但最新 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/anti-shortcut-comparison.json` 显示 `comparison_conclusion=run_a_equals_run_b`。当前新的第一优先级 tech debt 不再是“要不要把 triad6 换成 episode bank”，而是：
+  - 为什么 `Run A=episode_bank` 与 `Run B=static triad6` 都会在 `step4` 出现 `dominant_label_collapse`
+  - 为什么两条 run 都会在 `step80` 左右进入 cap saturation
+  - 为什么 `I_real` 只能恢复出弱的 `vs_zero` 信号，却始终拉不开 `vs_shuffle`
+  - 当前是否已经需要把 writer latent 直接对齐到 frozen Qwen 的决策方向
+- 因而，当前 top tech debt 已进一步收缩成：
+  - `Reader -> Fuser -> M_short` 两层路径为什么在 active FEVER harness 中仍然近似 uniform-attention / low-rank compression
+  - 当前 memory-side geometry 的主要问题是否已从 `M_long` 写入转移到 `Reader/Fuser` 的 query-side readout
+  - 需要什么最小改动才能在不动 receiver 的前提下先把 `TL-H4-K8` bridge 做活，再谈 bottleneck / specialization / transfer
+  - 在 two-level bridge 还没活之前，不应重新打开 single-level objective 迭代，也不应过早把责任推给 receiver
+- 当前最优先的 tech debt 已进一步上移到 `M4 shared injection` 的主链路本身，而不再是 prompt/support gate。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase0-gate-sweep/metrics.json` 当前显示：`phase0_gate_passed=true`，并且 `T_winner` 相对 `A_winner` 的 `accuracy_gain=0.4274193548387097`、`macro_f1_gain=0.5351999379825547`。这说明显式 support text 已经能帮助 frozen qwen。
+- `writer information audit` 也已按更严格的判因口径通过：不仅有 `linear` probe，还有 `shallow MLP` fallback，并且同时比较 `real / shuffle / zero`。最新 `results/generated/review/m4-fever-shared-injection-qwen25/phase1-writer-audit/report.md` 当前显示：`label_probe_passed=true`、`semantic_probe_passed=true`、`phase1_probe_passed=true`、`phase1_gate_passed=true`。因此，当前问题不再适合继续归因成“writer 完全没信息”或“线性 probe 假阴性”。
+- `shared latent prefix injection` 现在已经进入预注册 validation 口径。最新 `results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/selection.json` 显示：`selection_passed=false`，说明当前还没有一个能在 `screen248-val` 上稳定通过 gate 的 checkpoint。
+- 这轮的新证据比“step32 曾经好过”更强：两条 support variant 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`，但同时都带来 `regressions_vs_base=18`。因此当前不该把问题写成“只要挑对 checkpoint 就行”，而应写成“shared injection 的正信号目前可训练但不稳健”。
+- 当前真正最关键的 tech debt 已继续收紧成动力学问题：`results/generated/review/m4-fever-dynamics-recovery-qwen25/dynamics-recovery/prefix_attention_consumption.csv` 已证明 frozen Qwen 会消费 prefix，而 `prefix_norm_drift.csv` 同时显示明显 norm blow-up。当前 `raw8 / I-real` 的 `prefix_l2` 从 `84.54` 升到 `7001.36`，`triad6 / I-real` 从 `86.66` 升到 `11397.91`。
+- 最新 `results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25/dynamics-recovery/selection.json` 进一步说明：单纯加 `prefix norm cap + grad clip + 更温和 lr` 并不能让 shared injection 稳定过 gate。`raw8` 在 `step0..64` 全程保持 `macro_f1=0.1518987341772152`，几乎完全学不动；`triad6` 虽然在 `step64` 恢复出 `flip_gain_vs_shuffle=2`、`flip_gain_vs_zero=2`，但仍伴随 `regressions_vs_base=18`。
+- 因而，当前 top tech debt 已从“无控制的 norm blow-up”收缩成“shallow prefix 在强稳定化下仍然太脆弱”。也就是说：
+  - `raw8` 更像负对照，不再适合承担主恢复路线
+  - `triad6` 才是当前唯一值得继续押的 support variant
+  - 下一轮若继续 shared injection，优先级应转向 `deep prompt / per-layer prefix`，而不是继续堆更多浅层 prefix 的 score-side小修补
+- 这条 tech debt 现在已经不再是“下一轮若继续 shared injection”；`M4.5` 已经把 deep prompt 实做出来并真实跑完。因此当前文档里凡是还把 `deep prompt / per-layer prefix` 写成“未来 fallback”的地方，都应视为待清理历史表述。
+- 因而当前最应优先补的不是新的 score-side residual family，而是：
+  - 继续把 `shared injection` 当作主线
+  - 在 `screen248-train / screen248-val / screen248-test` 的预注册口径下继续做稳定训练
+  - `fixed64` 只保留为 legacy report，不再做硬 veto
+  - 但不再把“再换一个 support bank / 再补一个浅层 tweak”当成主解
+  - `M5.3` 已经说明：仅靠 denser objective 也不够；这一步不应再被表述成“继续修 teacher loss / 再做一个 objective 变体”
+  - `TL-PoC` 又进一步说明：下一步也不应被表述成“Reader/Fuser 还没接进去”
+  - `M5.1/M5.2/M5.3` 已经说明 same-schema warm-start、latent anchor、engaged dense teacher 单独都不够；这一步不应再被表述成“把训练步数简单拉长”
+  - 只有 two-level FEVER bridge 真正活起来后，再进入 `Stage B/C / fixed64 / Story Cloze / Qwen3-8B`
+- 旧的 `candidate-conditioned residual family` 现已进入停止维护状态：`FEVER-first repair` fresh pilot 已证明 `R-real = R-shuffle = R-zero = 0.25`，当前没有任何继续在这条 family 上叠 router / sign selector / 更多 sweep 的理由。后续若回到 candidate-specific `Stage C`，必须建立在 shared injection 已先证明 `real > shuffle > zero` 的前提上。
+- 当前 `fixed100` 来自 `screen256` 的分层抽样，但在真实 qwen25 screening 下没有自然形成的 `near_threshold_bad` bucket，最终补位成了 `40` 个 `improving_but_unflipped`。虽然这已经不再是当前第一优先级 tech debt，但如果后续仍要回到 `Story Cloze`，仍需要扩大 screening pool 或改用 margin-normalized fixed-set builder，避免 hard set 过度偏向远离边界的错例。
+- 将当前 toy smoke 数据替换为与 `docs/EXPERIMENTS_INFO.md` 主套件兼容的数据准备流水线。
+- 增加更严格的结构 lint，覆盖 run 命名、结果目录和 generated-only 报表规则。
+- 让 MemGen adapter 在真实运行后补齐 profiling / wall time / token / 显存字段，并与我们自己的 `metrics.json` 结构进一步对齐。
+- 评估是否需要兼容官方 `load_model_path=<file>.safetensors` 的旧路径语义；当前 smoke 路径通过 `load_model_path=null` 绕过了这条版本漂移问题。
+- 验证 MemGen `trigger.active=True` 路径，并决定哪些坑需要升级为强制脚本规则。
+- 继续验证 `gpqa` 在无认证环境下的 preflight 与有认证环境下的真实 smoke 结果是否保持一致可复现。
+- 为 `trigger.active=True` 补正式可比的 checkpoint / 权重来源约束；当前仓库只验证了未训练 trigger 的 smoke 路径。
+- 当前 `toy_meta_smoke` 的 canonical Stage B run 已能体现正的 `mean_adaptation_gain`，但该信号对 seed 仍敏感；后续需要更稳的 toy 任务或更多 seeds，避免把单个正向 smoke 误当成稳定规律。
+- benchmark-native `core4_transfer_smoke` 现已打通真实 benchmark 子集上的 `Stage A/B/C` 协议，并已做三轮 retrieval follow-up：先把 query/val 侧候选池改成排除 support continuations、inner-loop 只在 support pool 内做 retrieval，再把 canonical 结构提升到 `smoke8/3x3`，最后补上 backbone-specific Stage B probe harness。当前 canonical `Stage B` 的 `mean_adaptation_gain` 已保持正值：qwen25 当前 canonical 为 `meta_episodes=16`、`mean_adaptation_gain=6.527453660964966e-05`，qwen3 当前 canonical 为 `meta_episodes=6`、`mean_adaptation_gain=0.0007965167363484701`；但 margin 仍然偏小，还没有达到“稳定 source-domain meta gain”的强证据。
+- `scripts/run_m3_core4_stage_b_probe_suite.sh` 与 `scripts/run_m3_core4_stage_c_probe_suite.sh` 现在都具备 `config.snapshot + seed` 的最小安全复用；其中 Stage C probe 还额外把“同一 backbone 下三条适配曲线必须共用同一个 seed”升级成了脚本规则，避免 target episode 漂移污染对比。
+- benchmark-native `Stage C` 的 `q_only` 参数化问题已经通过 direct query residual 得到一轮明确修复：`method.reader.query_residual_scale=1.0` 现已进入默认方法配置，fresh sensitivity audit `results/generated/m3-stage-c-sensitivity-audit/` 当前记录 qwen25 `query_to_memory_score_delta_ratio=0.7457097764552213`、qwen3 `query_to_memory_score_delta_ratio=1.2928086655448818`，说明 query path 的函数影响已经抬到与 memory path 同量级。
+- fresh Stage C probe `results/generated/m3-core4-stage-c-probe-suite-v2/metrics.json` 当前也显示两档 backbone 的 `q_only` 都已 `adaptation_effective=True`，并且 q-only 的 `best_adapt_query_loss` 已与 `w_only / w_plus_q` 几乎打平；对应的 q-only gradient audit 现在是 qwen25 `query_to_writer_grad_ratio=0.07231639531004393`、qwen3 `query_to_writer_grad_ratio=0.057166275150394304`。因此，旧的“q-only 基本不承载更新”结论已经不再成立。
+- 当前新的真实 blocker 已收缩成 metric 侧问题：benchmark-native smoke 的 `task_score` 仍然对 objective 改善不够敏感。fresh Stage C probe v2 上两档 backbone 都保持 `0.6666666666666666 -> 0.6666666666666666`，而 q-only budget probe v2 上 qwen25 又落在 `0.3333333333333333 -> 0.3333333333333333`。也就是说，q-only 更新已经恢复，但 target metric 仍然过于粗糙且对 seed 敏感。
+- `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v2/metrics.json` 还说明另一个问题：Stage C budget 现在不再是首要矛盾。两档 backbone 的所有 q-only budget variant 都已经 `adaptation_effective=True`；qwen25 只是在 `lr=5.0, steps=10` 上略优，qwen3 则是 canonical `lr=0.2, steps=3` 已最佳。后续不应再把主要精力放在盲扫更大 q-only 预算上。
+- 这轮已经把“看不见 target-side 细微改善”也收了一部分：Stage C 现会并行记录 `task_proxy_score / task_proxy_name / task_margin`，当前 multiple-choice 任务使用 `gold_choice_probability`。fresh probe `results/generated/m3-core4-stage-c-probe-suite-v3/metrics.json` 显示，在 official `accuracy` 完全打平时，这个 proxy 仍能稳定分出 `q_only / w_only / w_plus_q` 的细小差异。
+- 这条 metric-side 债务已经部分收口：canonical `Stage C` 当前已加入 `target_eval_repeats=3`，`adapt_curve.csv` 会对 3 组 target query 子集取平均。fresh `results/generated/m3-core4-stage-c-probe-suite-v4/metrics.json` 现已显示 official `task_score` 真正会动：qwen25 `0.6666666666666666 -> 0.8888888888888888`，qwen3 `0.5555555555555555 -> 0.7777777777777778`。
+- 当前剩下的 tech debt 已进一步收缩成 target-side 稳定性问题，而不是纯粹的 metric 过粗。`results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v4/metrics.json` 当前显示：qwen25 在同一 target seed 上仍能稳定得到 `+0.22222222222222215` 的 official gain，但 qwen3 在该 seed 上所有 q-only budget 都退化到 `-0.2222222222222222`。后续应优先补 target support/query 多 episode 聚合或 target-seed sweep，而不是继续盲扫更大 q-only 学习率。
+- target-seed sweep 已经补上，而且结果进一步说明“单 seed 正向提升”还不够。`results/generated/m3-core4-stage-c-qonly-seed-sweep/metrics.json` 当前记录：qwen25 在 5 个 target seeds 上只有 `positive_gain_rate=0.2`、`mean_task_gain=-0.2`；qwen3 当前是 `positive_gain_rate=0.4`、`mean_task_gain=-0.13333333333333333`。这意味着 canonical q-only 路径已经具备产生正向 official gain 的能力，但 target-side 结果分布仍太宽，均值尚未转正。
+- 这条 target-side 稳定性债务已经继续收口：canonical `Stage C` 现已升级为 `target_episode_repeats=3`。fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v2/metrics.json` 当前记录：qwen25 在 5 个 target seeds 上已到 `positive_gain_rate=0.6`、`mean_task_gain=0.0962962962962963`；qwen3 也已到 `mean_task_gain=0.007407407407407407`。也就是说，canonical q-only 路径的多 seed 均值终于不再为负。
+- 当前剩下的 tech debt 已进一步收缩成 qwen3 的尾部风险，而不是整体均值问题。fresh seed sweep v2 里 qwen3 的 `worst_task_gain` 仍为 `-0.11111111111111116`，而 fresh `results/generated/m3-core4-stage-c-probe-suite-v5/metrics.json` 与 `results/generated/m3-core4-stage-c-qonly-budget-probe-suite-v5/metrics.json` 都显示 qwen3 的最佳点已经落回 canonical `q_only / lr=0.2 / steps=3`。这说明下一步更应该稳 target split / episode budget，而不是继续扫更大学习率。
+- `target_episode_policy` 现在已经被正式策略化为 `independent / aggregate_support`，并且 fresh `results/generated/m3-core4-stage-c-qonly-policy-sweep-v1/metrics.json` 已把“换 policy 能不能救 Stage C”这件事做成同 seed 对照。当前结论很清楚：在相同 5-seed target pack 上，两种 policy 的 `mean_task_gain` 完全一致，qwen25 都是 `-0.059259259259259255`，qwen3 都是 `0.0962962962962963`；区别主要只在成本，`aggregate_support` 的 `mean_support_updates` 是 `3.0`，而 `independent` 是 `9.0`。
+- 因此，上一轮看起来像“aggregate_support 把 qwen3 拉稳了”的现象，现在已能明确判定主要来自 target seed 不同，而不是 policy 本身。当前真正剩下的 tech debt 是 target-seed 方差本身，而不是 Stage C target episode policy 的选择。
+- fresh `results/generated/m3-core4-stage-c-qonly-episode-budget-sweep-v1/metrics.json` 现在又把另一个误区排掉了：在当前 core4 smoke 上，`target_episode_repeats` 不是“越大越稳”。相同 5-seed 下，qwen25 当前是 `ep1=0.08888888888888889 > ep3=0.02222222222222222 > ep5=-0.013333333333333336`；qwen3 当前是 `ep1=0.022222222222222233 > ep5=0.013333333333333358 > ep3=0.007407407407407407`。这说明更多 target episodes 已开始稀释 few-shot 适配信号。
+- 因而，当前 M3 smoke 最真实的 tech debt 已从“挑 policy”继续收缩成“如何降低 target-seed 方差，同时避免 episode aggregation 把 support signal 过度平均掉”。下一步应优先拆 target split / support weighting，而不是继续盲加 `target_episode_repeats`。
+- fresh `results/generated/m3-core4-stage-c-qonly-support-weight-sweep-v1/metrics.json` 现在又把 `support weighting` 这条线排掉了：在固定 `aggregate_support + ep3` 的 5-seed 口径下，`uniform / proxy_softmax / proxy_top1` 的 official `mean_task_gain` 基本完全一样。当前 qwen25 三档都约为 `-0.11111111111111112`，qwen3 三档都为 `-0.022222222222222233`；只有 proxy 有 1e-6 量级波动。
+- fresh `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v1/metrics.json` 现在把 `target split` 这条线也做成了同 seed 对照，而且第一次出现了明确有效杠杆：`proxy_bottomk_support` 在两档 backbone 上都明显优于 `random`，而 `proxy_topk_support` 稳定最差。当前 qwen25 是 `bottomk=0.3037037037037037 > random=0.044444444444444474 > topk=-0.2592592592592592`；qwen3 是 `bottomk=0.22962962962962963 > random=-0.02962962962962965 > topk=-0.2518518518518519`。
+- 因此，上一轮“当前 blocker 还是 target split / support set 方差”这句话已经需要更新：`target split` 本身现在已经找到一个有效方案，新的 tech debt 变成“把 `proxy_bottomk_support` 带回 canonical 后，multi-seed canonical 曲线和后续正式 few-shot 表是否同样稳定”。
+- 这条新 debt 也已经完成第一轮验证：fresh clean canonical sweep `results/generated/m3-core4-stage-c-qonly-seed-sweep-v4-bottomk/metrics.json` 当前显示，切到 `target_split_policy=proxy_bottomk_support` 后，两档 backbone 的 canonical 5-seed `q_only` 都达到 `positive_gain_rate=1.0`。当前 qwen25 `mean_task_gain=0.25925925925925924`，qwen3 `mean_task_gain=0.17037037037037037`。
+- 因此，Stage C 当前剩下的 tech debt 已进一步从“如何把 canonical q-only 拉到稳定正 gain”转成“何时把这条更稳的 canonical 路径扩大到正式 few-shot grid / 更多 benchmark 预算，并检验是否仍能保持预算公平”。
+- 这轮进一步把“扩大到正式 few-shot grid”也做成了可运行 harness：`results/generated/m3-core4-stage-c-curve-suite-v1/shot_curve.csv` 与 `step_curve.csv` 已能从多 seed Stage C run 自动汇总出来。
+- 但 fresh curve suite 也暴露了新的债务：在当前 canonical `proxy_bottomk_support` 路径上，`shot_curve` 单调上升，而 `step_curve` 从 `step=0` 起几乎完全持平。也就是说，target-side收益现在主要来自“拿到 support 之后的立即重排”，而不是后续 inner-loop 更新本身。下一步需要针对这个现象继续做 step-aware 诊断。
+- 这条 step-aware 诊断现在也已经跑出来了：`results/generated/m3-core4-stage-c-step-saturation-audit-v1/metrics.json` 当前明确记录，qwen25 与 qwen3 的 `mean_step0_to_final_task_gain` 都是 `0.0`，`shot_dominates_rate` 都是 `1.0`。也就是说，当前 canonical 路径下的 few-shot 收益完全来自 `zero->step0`，后续 inner-loop steps 没有再贡献额外 official gain。
+- 因此，当前最真实的 tech debt 已从“target split 怎么选”切换成“为什么拿到 support 之后，step-level inner-loop 更新不再提供额外收益”。下一步应优先拆 Stage C 的 step-level update semantics，而不是继续调 `target_support_weighting`。
+- Stage C 适配对象消融现已完成，但在 canonical toy smoke 上仍表现为 `Q-only` 基本不动、`W-only/W+Q` 只降低 loss 而不提升 accuracy；后续需要更丰富的 toy 任务或真实任务验证更强的 few-shot 提升。
+- Reader 学习方式消融现已完成，但当前 toy smoke 的信号主要体现在 target zero-shot loss 的排序 `meta-trained < non-meta < random`，而不是 few-shot accuracy 的分离；后续需要更能体现 few-shot query update 的 toy 任务或真实 benchmark。
+- `m3_failure_checks` 现已通过三项检查，但 `base_short_slot_diversity=0.004472408443689346` 仍然偏小；后续若迁移到更复杂 toy 任务或真实任务，仍应继续监控 `collapsed_fuser` 间隙是否稳定存在。
+- `M4` 当前新增的是本地 benchmark smoke contract，而不是正式 benchmark 数据接入；后续仍需要把 `data/benchmarks/smoke/*.jsonl` 替换成与 `EXPERIMENTS_INFO.md` 对齐的真实下载 / 缓存 / 许可路径。
+- `TaskEvaluator` 现已扩到 `memoryagentbench / qa_f1`，并且生成式任务现已改为真正评估 `generated_text`；但当前仍是本地代理评测版本：`MemoryAgentBench` 只覆盖官方非 API 指标的本地代理，`NarrativeQA` 当前也只是 `qa_f1` smoke 指标。若后续要严格复现实验论文中的 `Long-Range Understanding` 或 NarrativeQA 正式评测，还需要补更接近官方协议的指标与外部评测依赖治理。
+- `MemoryAgentBench` 的真实来源 smoke 已打通，但当前为了本地 stub-harness 可运行，materialize 时会把 context 截断到 `512` tokens；正式长上下文实验仍需要补无截断路径、预算说明和更强的 runtime。
+- `NarrativeQA` 当前已经从 `summary_only` 升级到 `runtime-pool full_text_segmented` real-source smoke，并且具备 `anchor_only / question_aware / oracle_like_proxy` selector 消融；但这仍然只是“官方 full story -> runtime-selected 6 chunk excerpt”的轻量版本。虽然现在已补了基于 `dramatis personae / act i / chapter i` 的结构化正文起点探测，后续若要把它升级成更强的 CDMI 证据，仍需要补更完整的 full-story runtime、更稳的 front-matter / intro 清洗和正式指标口径。
+- `ALFWorld` 当前打通的是 TextWorld transition-style smoke，而不是完整 THOR / visual stack；如果后续论文需要 embodied 视觉结果，需要补 `ai2thor/cv2` 环境、预算说明和更重的运行治理。
+- 当前若上游 Hugging Face metadata 没有结构化 license 字段，仓库只会写“需核对上游卡片”而不会自行补写；后续若要对外发布数据副本，需要补更严格的 license 审核流程。
+- `rocstories` 当前通过 `hf://` CSV 路径 materialize，而不是老式 dataset script；后续需要确认这种路径在 CI/离线缓存环境中的稳定性。
+
+## Resolved In This Bootstrap
+
+- 缺少统一 CLI、run contract 与结果汇总脚手架。
+- 缺少 agent 可重启的 `ExecPlan` 与 M0 架构地图。
+- 缺少 profiling、结果治理 lint、artifact 收集验证与脚本 wrapper 回归。
+- 缺少 MemGen 统一 dry-run adapter、最小真实 eval 路径、以及官方 `answer.json` 到统一 `predictions.jsonl` 的翻译桥。
+- 缺少 MemGen 可复用模板索引、任务矩阵与常见坑记录。
+- 统一 analysis 之前没有把 MemGen `compute_reward` 当作主分数字段处理。
+- 动态环境任务之前只会写官方 `conversations.txt`，不会进入统一 `predictions.jsonl`；现已补齐动态翻译分支。
+- `gpqa` gated dataset 认证缺失此前会在官方进程里晚失败；现已补齐 adapter preflight 并写明 `huggingface-cli login` / `HF_TOKEN` 提示。
+- `trigger_active / insertion_profile / requires_trained_checkpoint / load_model_path` 已进入 MemGen adapter 的显式配置契约。
+- `kodcode` 的 tokenizers fork 警告已升级为脚本规则：adapter 默认设置 `TOKENIZERS_PARALLELISM=false`。
+- `Fuser collapse` blocker 已完成一轮 follow-up 修复：`MemoryFuser` 的 `resampler` 现保留 short-query slot identity，下游 M3 分类/检查改为使用 position-sensitive `summary_proj`，canonical failure checks 已从 `2/3` 提升到 `3/3` 通过。
+- `writer_noise` failure check 已改为可配置的多次噪声抽样均值，避免 tiny smoke 上单次噪声抽样导致的高方差误判；当前 canonical 配置使用 `writer_noise_trials=8`。
+- `M4` benchmark foundation 已补齐统一 registry / prompt template / evaluator scaffold，本地 smoke 子集与 `scripts/run_benchmark_smoke_suite.sh` 已能真实跑通 6 个代表任务并进入统一汇总。
+- `M4` 已进一步补齐 benchmark source registry、数据来源文档、materialize 脚本与 manifest；真实来源 smoke 子集现已覆盖 `gsm8k / gpqa / triviaqa / kodcode / story_cloze / rocstories` 并通过统一 eval 汇总。
+- `MemoryAgentBench` 的真实来源 smoke、四类能力分项与统一汇总入口现已接入：`AR / TTL / LRU / CR` 当前都会进入 `metrics.json` 的 `capability_scores`，并在 `summary.csv` 里展开成独立列。
+- `NarrativeQA` 的真实来源 smoke 已升级到 `runtime-pool question-aware full_text_segmented` 视图，并接入统一 registry / eval / summary；当前会进入 `results/generated/m4-real-benchmark-smoke/*/summary.csv`，并与 `Story Cloze / ROCStories` 一起构成 Narrative 域 smoke 入口。
+- `NarrativeQA` 当前已具备两档固定 backbone 的 smoke 配置：`Qwen2.5-1.5B-Instruct` 与 `Qwen3-8B` 都能跑通同一条 runtime-pool NarrativeQA 路径。
+- `NarrativeQA` selector 消融当前已接入统一汇总；但 qwen25 stub smoke 下的排序是 `anchor_only > question_aware > oracle_like_proxy`（按 `mean_similarity`），这说明 contract 生效了，不说明启发式已接近正式最优，后续仍需要用真实长上下文方法与正式指标重评。
+- `Qwen3-8B` 上同一组 NarrativeQA selector smoke 的排序又变成了 `question_aware > anchor_only > oracle_like_proxy`，进一步说明当前 smoke 更像“backbone-sensitive contract check”而不是“稳定实验结论”；后续若要用于论文主表，仍需升级到真实权重与正式指标。
+- `M5` 的 `prompting` baseline family 现已接入 `Vanilla / CoT`，并补到了两档固定 backbone以及 `GSM8K + Story Cloze` 的 real-source smoke；但当前仍是 zero-shot smoke 验证，后续还需要补更多真实 benchmark、few-shot/step 预算对齐，以及主表需要的 Prompt Tuning / LoRA / MetaPrompting 家族。
+- `prompting / meta_prompting` 当前已支持最小 in-context few-shot demo 注入，并在 `story_cloze` real-source 上真实跑通了 `2-shot` smoke；但这还不是正式 shot-curve，后续仍需要把更多 shots、更多任务和 seeds 纳入统一网格。
+- 当前 `story_cloze` baseline grid suite 只覆盖最小 smoke 网格 `shots={0,2}`、`steps={0,4}`；它证明了 suite contract 已经存在，但离 `EXPERIMENTS_INFO.md` 里锁定的正式网格还差很远。
+- baseline grid 现已能把 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 与 `story_cloze / Qwen3-8B / 0-shot / 0-step` 两个外部点都接进同一条 `adapt_curve.csv`；但这仍只是零样本单点导入，不是正式的 `MemGen` shot/step 网格。
+- baseline grid 虽然已经验证了 `allow_missing -> refreshed` 这条补点链路，但当前还没有把外部点成本建模成与内部 baseline 同构的 `shot/step` 预算口径；`MemGen` 仍处于“统一汇总有了，统一预算还没有”的状态。
+- `story_cloze` grid 现已进一步扩到 protocol-smoke 版本：`smoke8` 子集上的 `shots={0,1,2,4}`、`steps={0,1,3,5}` 已真实跑通；但这仍只是锁定网格的一个小前缀，距离正式 `{0,1,2,4,8,16,32,64,128} x {0,1,3,5,10,20,50}` 还差得很远。
+- `grid.reuse_existing_runs` 现已落地并在 protocol-smoke suite 上验证，可避免仅因导入点/汇总变化而重复执行整套 grid；当前已收紧到 `required artifacts + config.snapshot + seed` 匹配，但仍没有更稳定的显式 config hash / schema version。
+- `memory_bank` 现已作为更完整的 memory-agent 风格 scaffold 接入 `story_cloze` real-source smoke、protocol-smoke grid 与 budget audit；但它当前仍是“结构化 memory entries + 有限容量 bank”的最小实现，不是官方 `MemoryBank` 论文级系统复现。
+- `M5` 的 `adapter` baseline family 现已接入最小 `Prompt Tuning / LoRA / IA3 / Prefix Tuning` 闭环，并补到了两档固定 backbone 和 `story_cloze` real-source smoke；但当前仍只支持 candidate-selection 任务，后续还需要补到更多任务和更正式的 few-shot/step 网格。
+- `Prefix Tuning` 现已补进同一套 adapter harness、budget audit 与 protocol-smoke grid；当前 `trainable_parameter_count=4416` 已进入统一预算口径，但 adapter 侧仍缺少更接近 ensemble-style meta-learning 的 `prompt ensembling` 一类变体。
+- benchmark-native `core4` meta-split 现已固化到 `configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml`，并新增 `scripts/10_pretrain_writer.sh`、`scripts/20_meta_train_queries.sh`、`scripts/30_adapt_queries.sh` 三段 runbook；当前 `summary.csv` 已能把 Stage C 的 `best_adapt_task_score` 当作主指标，而不是继续退回 toy-only 的 `best_adapt_query_accuracy`。
+- `M5` 的 `MetaPrompting` 现已接入最小 `planner_critic` scaffold，但当前仍是单次 prompt protocol，而不是正式多轮/多-agent MetaPrompting 复现；后续若要进入主表，需要补更接近原方法的交互与预算口径。
+- `MetaPrompting` 当前已补到 `story_cloze` real-source smoke，但还没有进 `gsm8k / narrativeqa / gpqa` 等更强任务，也没有与 Prompt Tuning / LoRA 对齐到正式 shot/step 网格。
+- `M5 / P1` 的最小 `LightThinker` 路线现已接入 `story_cloze` real-source smoke、budget audit 与 baseline grid；但当前只是一条 `compress -> answer` prompt scaffold，不是正式 `LightThinker` 论文级复现。
+- `M5 / P1` 的最小 `RAG` 路线现已接入 `story_cloze` real-source smoke 与 protocol-smoke grid；但当前只是一条检索式 prompt baseline，不是 `MemoryBank / ExpeL / AWM` 级别的完整系统对照。
+- `baseline_budget_audit` 现已能自动检查 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 的预算字段与双 backbone 覆盖；当前已收集 `60` 行 run，但 `MemGen` 仍未纳入同一条自动预算审计，因为它的外部训练/权重成本还没有在本仓库统一建模。
+- benchmark materialize 现在已支持按 `max_examples` 生成不同的 real-smoke 文件名，避免 `smoke4` 与 `smoke8` 互相覆盖；但目前 manifest 仍只记录每个 benchmark 最近一次 materialize 的那个子集，还不是“多子集并存”的完整台账。
+- Hugging Face cache 现已迁到 `/root/autodl-tmp/.cache/huggingface`，并新增了固定脚本做 cache 迁移/清理；但这仍是“本机 runbook 级”约束，后续若换机器或换容器镜像，最好把数据盘/cache 根路径做成更显式的配置。
+- `MemGen / Qwen3-8B / story_cloze` 的真实 smoke 已完成并接进 dual-import protocol grid；当前剩余缺口不再是“能不能跑通”，而是“如何把 MemGen 的外部训练/权重成本折算进与 prompt/adapter 同构的预算比较”。
+- 已确认并修掉 benchmark-native `Stage C` 的协议泄漏：旧版实现里 `shot` 会改变 target episode seed，query/eval pool 也会随着 support 选择而缩小，support inner-loop retrieval 甚至会退化到只看被选中的 support 子集。该问题已在 `src/memtotal/training/m3.py` 中修正为固定 holdout eval + 固定 support bank。
+- 因此，`results/generated/m3-core4-stage-c-probe-suite-v4/`、`results/generated/m3-core4-stage-c-qonly-seed-sweep-v2/`、`results/generated/m3-core4-stage-c-qonly-seed-sweep-v4-bottomk/`、`results/generated/m3-core4-stage-c-curve-suite-v1/` 与 `results/generated/m3-core4-stage-c-step-saturation-audit-v1/` 这些基于旧协议得到的正向 official gain 结论，现在都只能作为“曾经暴露过协议方向”的历史记录，不能再作为当前 canonical 证据。
+- 修正协议后的 fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-fixed-eval/metrics.json` 当前记录：qwen25 与 qwen3 的 canonical `q_only` 都是 `mean_task_gain=0.0`、`positive_gain_rate=0.0`、`non_negative_gain_rate=1.0`；两档 backbone 仅剩 `1e-6` 级 `mean_proxy_gain`。
+- 修正协议后的 fresh `results/generated/m3-core4-stage-c-step-saturation-audit-v2-fixed-eval/metrics.json` 也明确显示：qwen25 与 qwen3 的 `mean_zero_to_step0_task_gain` 和 `mean_step0_to_final_task_gain` 都是 `0.0`。因此，旧版“收益全部发生在 `zero->step0`”这条判断本身也已经失效。
+- 现在真正剩下的 tech debt 不再是 target split / support weighting / target episode policy 的口径选择，而是更底层的“在公平 fixed-holdout eval 下，为什么 Stage C official task score 完全不动”。
+- 公平 `target_split_policy` 重扫 `results/generated/m3-core4-stage-c-qonly-target-split-sweep-v2-fixed-eval/metrics.json` 现已把第二条线正式排掉：`random / proxy_topk_support / proxy_bottomk_support` 在两档 backbone 上的 official `mean_task_gain` 都是 `0.0`，proxy 也只剩 `1e-6` 级差异。
+- `support_bank_size={max_shot, auto}` 的 fresh 对照 `results/generated/m3-core4-stage-c-qonly-support-bank-sweep-v1/metrics.json` 现在又进一步缩小了范围：`auto` 仍未把 official `mean_task_gain` 拉出 `0.0`，但 qwen3 的 `mean_proxy_gain` 已从 `7.294e-7` 提升到 `9.086e-6`，并在多数 seeds 上把 `best_step` 从 `0` 推到 `3`。这说明 support bank 变大确实在恢复 inner-loop 信号，只是还没强到能改 official score。
+- `support_negative_pool={support_bank, source_plus_support_bank}` 的 fresh 对照 `results/generated/m3-core4-stage-c-qonly-support-negative-pool-sweep-v1/metrics.json` 现进一步说明：source-augmented negatives 已经是真正更强的杠杆。qwen25 的 `mean_proxy_gain` 从 `6.080e-6` 提升到 `1.466e-5`；qwen3 则从 `mean_task_gain=0.0` 提升到 `0.02222222222222222`，并首次在公平 fixed-holdout 口径下得到 `positive_gain_rate=0.2`。
+- `target_support_negative_sampler={deterministic_id, hard_by_continuation, hard_by_current_model}` 的 fresh 对照 `results/generated/m3-core4-stage-c-qonly-support-negative-sampler-sweep-v2/metrics.json` 现进一步说明：`hard_by_current_model` 已经是当前最强的 support-negative sampler。qwen25 的 `mean_proxy_gain` 从 `1.106e-5` 提升到 `2.561e-5`，qwen3 的 `mean_proxy_gain` 从 `3.389e-5` 提升到 `4.391e-5`；但三档 sampler 的 official `mean_task_gain` 都仍为 `0.0`。
+- 新的 `results/generated/m3-core4-stage-c-step-saturation-audit-v2/metrics.json` 又进一步说明：即便在 canonical `source_plus_support_bank + hard_by_current_model` 下，两档 backbone 的 official `mean_step0_to_final_task_gain` 仍然都为 `0.0`；但 `results/generated/m3-core4-stage-c-curve-suite-v2/step_curve.csv` 同时显示两档 backbone 的 `mean_task_proxy_gain` 会随 steps 单调上升。
+- 新的 `results/generated/m3-core4-stage-c-margin-audit-v1/metrics.json` 又进一步说明：在 canonical `source_plus_support_bank + hard_by_current_model` 下，两档 backbone 的 `cross_zero_margin_rate` 都还是 `0.0`，但 `margin_improves_rate` 都是 `0.6`。也就是，当前增益主要落在已经接近正确或已经正确的 runs 上，而不是把负 margin runs 真正翻到 0 以上。
+- 新的 `results/generated/m3-core4-stage-c-margin-audit-v2/metrics.json` 再往前一步显示：两档 backbone 各只有 `2` 个负 margin seeds；qwen25 的 `negative_only margin_improves_rate=0.5`、`mean_margin_gap_closed=1.88e-5`，qwen3 的 `negative_only margin_improves_rate=0.5`，但 `mean_margin_gap_closed=-4.83e-5`。
+- 新的 `results/generated/m3-core4-stage-c-negative-seed-curve-audit-v1/metrics.json` 又进一步说明：负 margin seeds 上 `shot` 本身几乎没有纯作用，`mean_zero_shot_gap_to_flip` 与 `mean_max_shot_step0_gap_to_flip` 完全相同；真正有变化的是 `step`。但 qwen25 与 qwen3 的方向相反：qwen25 的 final gap 微降到 `0.0732919`，qwen3 的 final gap 反而升到 `0.0829344`。
+- `Stage C` 现在还会额外产出 `episode_trace.json`。这条 trace 一开始确实暴露过 qwen3 负 seed 的双峰行为；但 fresh `results/generated/m3-core4-stage-c-qonly-support-selection-policy-sweep-v2/metrics.json` 现又说明：真正需要保留的是“eval holdout 必须与 support bank 解耦”这条 harness 修复，而不是把 support label 覆盖直接升成 canonical 策略。当前 `target_support_selection_policy={plain,label_diverse_if_possible}` 在 fair holdout 下对 qwen25 的 `mean_task_gain` 完全相同，都是 `0.02222222222222221`；对 qwen3 也都还是 `0.0`，并且 `plain` 的 `mean_proxy_gain=1.1439455880069006e-05` 还略高于 `label_diverse_if_possible=9.725491205858638e-06`。因此，当前最值得继续拆的已不再是 support label 覆盖，而是更底层的 inner-loop objective / negative curriculum 为什么还没把 proxy gain 推过 official rank-flip 阈值。
+- fresh `results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout/metrics.json`、`results/generated/m3-core4-stage-c-margin-audit-v3-fixed-holdout/metrics.json` 与 `results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/metrics.json` 现又把另一条旧结论纠正掉了：在 holdout 解耦之后，qwen3 的负 margin seeds 不再出现“step 越走越坏”的系统性退化。当前 qwen25 的 `negative_only mean_margin_gap_closed=0.000936482412119707`，qwen3 也有 `0.00012016213602489567`；两档 backbone 的 `negative_only margin_improves_rate` 都已经到 `1.0`，但 `cross_zero_margin_rate` 仍都为 `0.0`。因此，当前真正剩下的 tech debt 已进一步收缩成“如何把已经存在的微弱正向 margin gain 放大到 official rank flip”，而不是“如何避免 qwen3 继续被推坏”。
+- fresh `results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1/metrics.json` 现又把 `retrieval_negative_count` 这条线也收掉了：`neg_count={3,7,15}` 会改 proxy，但不会改 official gain。qwen25 当前是 `neg15 > neg7 > neg3`，qwen3 当前是 `neg15 > neg3 > neg7`，但三档在两档 backbone 上的 official `mean_task_gain` 都仍是 `0.0`。因此 negative-count 不再是当前主 tech debt。
+- fresh `results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1/metrics.json` 进一步显示：`retrieval_loss_type=cross_entropy_plus_margin` 已经成为当前最强的 fair inner-loop loss。它把 qwen25 的 `mean_proxy_gain` 从 `4.9209594726551395e-05` 提到 `0.00010149743821884494`，把 qwen3 的 `mean_proxy_gain` 从 `3.530979156495251e-05` 提到 `7.79112180074204e-05`；对应 `mean_margin_gain` 也同步翻倍左右。
+- 但 fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/metrics.json` 又确认：即便 canonical 已切到 `source_plus_support_bank + hard_by_current_model + cross_entropy_plus_margin`，两档 backbone 的 official `mean_task_gain` 仍都是 `0.0`。因此当前剩下的 tech debt 已继续收缩成“如何把更强的 proxy / margin gain 推过 official rank-flip 阈值”，而不再是“该选哪一种 negative count / retrieval loss”。
+- `Stage C` 现在还会直接产出 `task_case_dump.jsonl`，而 fresh `results/generated/m3-core4-stage-c-error-attribution-v1/metrics.json` 已把当前 blocker拆到 case 级：61 个配对 case 里真正 near-threshold 但没翻正的只有 2 个；qwen25 还有 9 个 `improving_but_unflipped` cases，qwen3 只有 1 个；同时不少 remaining wrong cases 会被打上 `story_context_favors_competitor`。这说明当前 tech debt 已不该继续表述成“再找一个更强的全局 loss/sample 策略”，而应转成“对 near-threshold cases 做非线性推力”和“对 `story_context_favors_competitor` 这类错例做 targeted objective / error attribution”。

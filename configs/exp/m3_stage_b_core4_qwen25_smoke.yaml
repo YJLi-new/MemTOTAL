@@ -1,0 +1,26 @@
+includes:
+  - ../tasks/benchmarks/meta/core4_transfer_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: m3_stage_b_core4_qwen25_smoke
+  stage: M3-core4-stage-b
+  method_variant: ours-core4-stage-b-meta-queries
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  training_stage: stage_b
+  query_learning_mode: meta_trained
+  stage_b_trainable_target: queries_plus_fuser
+  query_objective: continuation_retrieval
+  retrieval_negative_count: 7
+  meta_episodes: 16
+  inner_steps: 1
+  inner_learning_rate: 0.01
+  meta_learning_rate: 0.05
+  device: cpu

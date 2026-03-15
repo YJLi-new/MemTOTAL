@@ -1,0 +1,28 @@
+includes:
+  - m5_story_cloze_baseline_grid_smoke.yaml
+
+experiment:
+  name: m5_story_cloze_baseline_grid_protocol_smoke
+  stage: M5
+  method_variant: baseline-grid-protocol-smoke
+
+grid:
+  shots: [0, 1, 2, 4]
+  steps: [0, 1, 3, 5]
+  reuse_existing_runs: true
+  config_overrides:
+    task:
+      smoke_subset: hf_real_smoke8
+      dataset_path: data/benchmarks/materialized/story_cloze/eval-real-smoke8.jsonl
+    runtime:
+      eval_examples: 8
+  imports:
+    - family: memgen
+      mode: external_eval
+      backbone: Qwen2.5-1.5B-Instruct
+      shot: 0
+      step: 0
+      trainable_parameter_count: 0
+      task_name: story_cloze
+      smoke_subset: hf_real_smoke4
+      run_dir: runs/verify/memgen-story-cloze-smoke

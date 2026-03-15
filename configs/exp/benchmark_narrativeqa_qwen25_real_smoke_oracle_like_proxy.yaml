@@ -1,0 +1,11 @@
+includes:
+  - ./benchmark_narrativeqa_qwen25_real_smoke.yaml
+
+experiment:
+  name: benchmark_narrativeqa_qwen25_real_smoke_oracle_like_proxy
+
+task:
+  smoke_subset: hf_real_smoke4_runtime_pool_oracleproxy6x128
+  narrativeqa_runtime:
+    selector: oracle_like_proxy
+    segment_budget: 6

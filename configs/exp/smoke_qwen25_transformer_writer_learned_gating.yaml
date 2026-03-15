@@ -1,0 +1,10 @@
+includes:
+  - smoke_qwen25_transformer_writer.yaml
+
+experiment:
+  name: smoke_qwen25_transformer_writer_learned_gating
+  method_variant: ours-transformer-writer-learned-gating
+
+method:
+  reader:
+    gating_mode: learned

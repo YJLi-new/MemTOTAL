@@ -1,0 +1,104 @@
+{
+  "best_adapt_macro_f1": 0.1452991452991453,
+  "best_adapt_task_margin": -1.9201521638964043,
+  "best_adapt_task_score": 0.2786885245901639,
+  "checkpoint_path": "/root/autodl-tmp/runs/verify/m5-fever-writer-reasoner-alignment-qwen25/freeze-writer/phase2-selected/pilot-I-shuffle/snapshot_evals/step_0008/checkpoint.pt",
+  "dominant_label_fraction": 0.9836065573770492,
+  "label_recall_by_class": {
+    "NOT_ENOUGH_INFO": 0.0,
+    "REFUTES": 0.0,
+    "SUPPORTS": 0.9444444444444444
+  },
+  "pilot_arm_alias": "I_shuffle",
+  "pilot_support_encoder_mode": "structured_support_set",
+  "prefix_artifact_stats": {
+    "active_prefix_layers": [
+      0,
+      7,
+      14,
+      21,
+      27
+    ],
+    "layer_hidden_l2_by_layer": {
+      "0": 29.507572174072266,
+      "14": 28.691360473632812,
+      "21": 29.5553035736084,
+      "27": 29.346721649169922,
+      "7": 28.396066665649414
+    },
+    "layer_key_l2_by_layer": {
+      "0": 3114.107666015625,
+      "14": 95.06843566894531,
+      "21": 59.27357864379883,
+      "27": 80.67469787597656,
+      "7": 151.6994171142578
+    },
+    "layer_slot_norm_max_by_layer": {
+      "0": 10.431246757507324,
+      "14": 10.144672393798828,
+      "21": 10.449292182922363,
+      "27": 10.375871658325195,
+      "7": 10.038823127746582
+    },
+    "layer_slot_norm_mean_by_layer": {
+      "0": 10.431245803833008,
+      "14": 10.144672393798828,
+      "21": 10.449291229248047,
+      "27": 10.375870704650879,
+      "7": 10.038823127746582
+    },
+    "layer_slot_norm_std_by_layer": {
+      "0": 8.920806635615008e-07,
+      "14": 5.840038852511498e-07,
+      "21": 3.3717478231665154e-07,
+      "27": 4.76837158203125e-07,
+      "7": 4.76837158203125e-07
+    },
+    "layer_value_l2_by_layer": {
+      "0": 21.66130828857422,
+      "14": 75.36939239501953,
+      "21": 76.84117126464844,
+      "27": 220.5926971435547,
+      "7": 43.12750244140625
+    },
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "pilot_support_encoder_mode": "structured_support_set",
+    "prefix_l2": 65.0753402709961,
+    "prefix_slot_norm_max": 10.449292182922363,
+    "prefix_slot_norm_mean": 10.287981033325195,
+    "prefix_slot_norm_std": 0.1654617339372635,
+    "prefix_tokens": 8.0,
+    "support_item_count": 6.0,
+    "support_item_hidden_l2": 96.09542846679688,
+    "support_item_hidden_norm_max": 39.232444763183594,
+    "support_item_hidden_norm_mean": 39.23079299926758,
+    "support_item_hidden_norm_std": 0.0014937815722078085,
+    "writer_memory_l2": 117.73040771484375,
+    "writer_slot_norm_max": 41.62397766113281,
+    "writer_slot_norm_mean": 41.62397766113281,
+    "writer_slot_norm_std": 0.0
+  },
+  "prefix_l2": 65.0753402709961,
+  "prefix_slot_norm_max": 10.449292182922363,
+  "prefix_slot_norm_mean": 10.287981033325195,
+  "prefix_slot_norm_std": 0.1654617339372635,
+  "prefix_tokens": 8,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "injected",
+  "step": 8,
+  "support_item_count": 6.0,
+  "support_item_hidden_l2": 96.09542846679688,
+  "support_item_hidden_norm_max": 39.232444763183594,
+  "support_item_hidden_norm_mean": 39.23079299926758,
+  "support_item_hidden_norm_std": 0.0014937815722078085,
+  "support_serialization_variant": "triad_curated6",
+  "support_text_block_chars": 1415,
+  "task_case_dump_path": "/root/autodl-tmp/runs/verify/m5-fever-writer-reasoner-alignment-qwen25/freeze-writer/phase2-selected/pilot-I-shuffle/snapshot_evals/step_0008/task_case_dump.jsonl",
+  "task_case_dump_rows": 61,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "shuffled",
+  "writer_memory_l2": 117.73040771484375,
+  "writer_slot_norm_max": 41.62397766113281,
+  "writer_slot_norm_mean": 41.62397766113281,
+  "writer_slot_norm_std": 0.0
+}

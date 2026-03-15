@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/analysis.py",
+    "--config",
+    "configs/exp/story_cloze_real_fixed_set_builder.yaml",
+    "--seed",
+    "2711",
+    "--output_dir",
+    "results/generated/m3-story-cloze-real-pilot-qwen25/fixed-set",
+    "--input_root",
+    "runs/verify/m3-story-cloze-real-pilot-qwen25"
+  ],
+  "backbone": "Qwen2.5-1.5B-Instruct",
+  "benchmark_id": "story_cloze",
+  "experiment_name": "story_cloze_real_fixed_set_builder",
+  "git_hash": "0e6803e9250a1ba6aaacd5c4f4467fbf67278f98",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "story-cloze-real-fixed100-builder",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 2711,
+  "smoke_subset": "real_screen_eval248",
+  "stage": "M3-story-cloze-real-pilot",
+  "task_domain": "narrative",
+  "task_name": "story_cloze_real_screen_eval248",
+  "task_split": "eval",
+  "timestamp_utc": "2026-03-07T10:49:43.116182+00:00",
+  "torch_version": "2.8.0+cu128"
+}

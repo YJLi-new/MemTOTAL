@@ -1,0 +1,2 @@
+anchor_wrong_alignment_rate,anchor_wrong_examples,anchor_wrong_weighted_alignment,flip_count,flip_count_delta,left_alias,mean_margin_gain,mean_proxy_gain,mean_task_gain,paired_examples,regression_count,right_alias
+1.0,16,0.0023318621970247477,0,0,R_zero,-0.0011866777495015413,-0.0005696192383766174,0.0,64,0,R_real

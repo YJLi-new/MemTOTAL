@@ -1,0 +1,8 @@
+includes:
+  - ../tasks/benchmarks/pilots/fever_screen248_test_m46_heldout_b.yaml
+  - m5_fever_qwen25_screen248_test_gate_pooled_common.yaml
+
+experiment:
+  name: m5_fever_qwen25_screen248_test_heldout_b_gate_pooled_common
+  stage: M5-shared-injection-alignment
+  method_variant: fever-screen248-test-heldout-b-gate-m51-pooled

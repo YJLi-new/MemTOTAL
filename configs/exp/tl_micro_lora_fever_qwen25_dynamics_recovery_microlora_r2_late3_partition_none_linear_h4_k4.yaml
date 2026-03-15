@@ -1,0 +1,11 @@
+includes:
+  - tl_micro_lora_fever_qwen25_microlora_r2_late3_partition_none_linear_h4_k4.yaml
+
+experiment:
+  name: tl_micro_lora_fever_qwen25_dynamics_recovery_microlora_r2_late3_partition_none_linear_h4_k4
+  stage: TL-Micro-LoRA-V2
+  method_variant: fever-tl-micro-lora-v2-dynamics-r2-late3-partition-none-linear-h4-k4
+
+runtime:
+  analysis_mode: m4_shared_injection_dynamics_recovery
+  pilot_val_audit_dataset_path: data/benchmarks/pilots/fever/screen-val-audit12.jsonl

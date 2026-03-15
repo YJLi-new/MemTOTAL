@@ -1,0 +1,10 @@
+includes:
+  - smoke_qwen25_transformer_writer.yaml
+
+experiment:
+  name: smoke_qwen25_transformer_writer_no_injection
+  method_variant: ours-transformer-writer-no-injection
+
+method:
+  injector:
+    position: none

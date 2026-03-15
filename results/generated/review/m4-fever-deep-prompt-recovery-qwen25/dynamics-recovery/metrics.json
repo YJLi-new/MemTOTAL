@@ -1,0 +1,16 @@
+{
+  "analysis_mode": "m4_shared_injection_dynamics_recovery",
+  "attention_csv": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/prefix_attention_consumption.csv",
+  "content_gap_csv": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/content_gap_curve.csv",
+  "dual_gate_summary_json": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/dual_gate_summary.json",
+  "pairwise_csv": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/dynamics_recovery_pairwise.csv",
+  "prefix_norm_csv": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/prefix_norm_drift.csv",
+  "report_path": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/val_selection_report.md",
+  "selected_step": null,
+  "selected_suite": null,
+  "selected_support_serialization": null,
+  "selection_json": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/selection.json",
+  "selection_passed": false,
+  "summary_csv": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/dynamics_recovery_summary.csv",
+  "summary_plot": "/root/autodl-tmp/results/generated/m4-fever-deep-prompt-recovery-qwen25/dynamics-recovery/summary.svg"
+}

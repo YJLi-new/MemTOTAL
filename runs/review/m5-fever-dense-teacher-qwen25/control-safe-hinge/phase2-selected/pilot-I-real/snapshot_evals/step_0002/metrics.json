@@ -1,0 +1,104 @@
+{
+  "best_adapt_macro_f1": 0.1855921855921856,
+  "best_adapt_task_margin": -2.2603200224579356,
+  "best_adapt_task_score": 0.3114754098360656,
+  "checkpoint_path": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0002/checkpoint.pt",
+  "dominant_label_fraction": 0.9508196721311475,
+  "label_recall_by_class": {
+    "NOT_ENOUGH_INFO": 0.0,
+    "REFUTES": 0.9,
+    "SUPPORTS": 0.05555555555555555
+  },
+  "pilot_arm_alias": "I_real",
+  "pilot_support_encoder_mode": "structured_support_set",
+  "prefix_artifact_stats": {
+    "active_prefix_layers": [
+      0,
+      7,
+      14,
+      21,
+      27
+    ],
+    "layer_hidden_l2_by_layer": {
+      "0": 29.38307762145996,
+      "14": 28.357995986938477,
+      "21": 29.73265266418457,
+      "27": 29.39188003540039,
+      "7": 28.69212532043457
+    },
+    "layer_key_l2_by_layer": {
+      "0": 3114.874755859375,
+      "14": 96.87470245361328,
+      "21": 59.94461441040039,
+      "27": 77.83372497558594,
+      "7": 150.04119873046875
+    },
+    "layer_slot_norm_max_by_layer": {
+      "0": 10.389764785766602,
+      "14": 10.02736759185791,
+      "21": 10.512272834777832,
+      "27": 10.391443252563477,
+      "7": 10.143150329589844
+    },
+    "layer_slot_norm_mean_by_layer": {
+      "0": 10.389763832092285,
+      "14": 10.027366638183594,
+      "21": 10.512271881103516,
+      "27": 10.39144229888916,
+      "7": 10.143150329589844
+    },
+    "layer_slot_norm_std_by_layer": {
+      "0": 8.920806635615008e-07,
+      "14": 4.76837158203125e-07,
+      "21": 4.76837158203125e-07,
+      "27": 8.920806635615008e-07,
+      "7": 3.3717478231665154e-07
+    },
+    "layer_value_l2_by_layer": {
+      "0": 21.75916862487793,
+      "14": 78.03321838378906,
+      "21": 75.67092895507812,
+      "27": 219.83180236816406,
+      "7": 42.41920471191406
+    },
+    "pilot_injection_mode": "sparse_deep_prefix",
+    "pilot_support_encoder_mode": "structured_support_set",
+    "prefix_l2": 65.10713958740234,
+    "prefix_slot_norm_max": 10.512272834777832,
+    "prefix_slot_norm_mean": 10.29279899597168,
+    "prefix_slot_norm_std": 0.17896942794322968,
+    "prefix_tokens": 8.0,
+    "support_item_count": 6.0,
+    "support_item_hidden_l2": 96.09700012207031,
+    "support_item_hidden_norm_max": 39.23313522338867,
+    "support_item_hidden_norm_mean": 39.23143005371094,
+    "support_item_hidden_norm_std": 0.0013369511580094695,
+    "writer_memory_l2": 117.73107147216797,
+    "writer_slot_norm_max": 41.62422561645508,
+    "writer_slot_norm_mean": 41.62422180175781,
+    "writer_slot_norm_std": 1.3486991292666062e-06
+  },
+  "prefix_l2": 65.10713958740234,
+  "prefix_slot_norm_max": 10.512272834777832,
+  "prefix_slot_norm_mean": 10.29279899597168,
+  "prefix_slot_norm_std": 0.17896942794322968,
+  "prefix_tokens": 8,
+  "prompt_variant": "answer_slot_labels",
+  "shared_injection_arm": "injected",
+  "step": 2,
+  "support_item_count": 6.0,
+  "support_item_hidden_l2": 96.09700012207031,
+  "support_item_hidden_norm_max": 39.23313522338867,
+  "support_item_hidden_norm_mean": 39.23143005371094,
+  "support_item_hidden_norm_std": 0.0013369511580094695,
+  "support_serialization_variant": "triad_curated6",
+  "support_text_block_chars": 1301,
+  "task_case_dump_path": "/root/autodl-tmp/runs/verify/m5-fever-dense-teacher-qwen25/control-safe-hinge/phase2-selected/pilot-I-real/snapshot_evals/step_0002/task_case_dump.jsonl",
+  "task_case_dump_rows": 61,
+  "training_stage": "shared_injection_snapshot_eval",
+  "writer_memory_control": "real",
+  "writer_memory_l2": 117.73107147216797,
+  "writer_slot_norm_max": 41.62422561645508,
+  "writer_slot_norm_mean": 41.62422180175781,
+  "writer_slot_norm_std": 1.3486991292666062e-06
+}

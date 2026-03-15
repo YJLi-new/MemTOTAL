@@ -1,0 +1,20 @@
+includes:
+  - ../tasks/benchmarks/meta/core4_transfer_smoke.yaml
+  - ../method/memory_bootstrap_transformer.yaml
+
+experiment:
+  name: m3_stage_a_core4_qwen3_smoke
+  stage: M3-core4-stage-a
+  method_variant: ours-core4-stage-a-writer-pretrain
+
+backbone:
+  name: Qwen3-8B
+  model_id: Qwen/Qwen3-8B
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  training_stage: stage_a
+  train_steps: 8
+  learning_rate: 0.01
+  device: cpu

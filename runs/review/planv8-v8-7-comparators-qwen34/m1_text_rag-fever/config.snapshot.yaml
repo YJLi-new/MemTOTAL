@@ -1,0 +1,39 @@
+backbone:
+  attn_implementation: sdpa
+  cache_dir: /root/autodl-tmp/hf-cache
+  chat_template_enable_thinking: false
+  dtype: bfloat16
+  gradient_checkpointing: false
+  load_mode: hf_causal_lm
+  max_new_tokens: 192
+  model_id: /root/autodl-tmp/models/Qwen3-4B
+  name: Qwen3-4B
+  use_chat_template: true
+baseline:
+  family: rag
+  mode: retrieval_augmented
+  rag:
+    include_answer_in_memory: true
+    memory_prefix: Retrieved memory
+    retriever: lexical_overlap
+  support_examples: 8
+experiment:
+  method_variant: m1_text_rag
+  name: planv8_v8_7_m1_text_rag_fever
+  stage: V8-7
+runtime:
+  device: cuda
+  eval_examples: 48
+task:
+  benchmark_id: fever
+  dataset_path: /root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-datasets/fever/eval.jsonl
+  domain: qa
+  evaluator:
+    normalizer: text
+    type: multiple_choice
+  metric_name: accuracy
+  name: fever_real_smoke
+  support_dataset_path: /root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-datasets/fever/support.jsonl
+_meta:
+  config_path: /root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-configs/fever-m1_text_rag.json
+  includes: []

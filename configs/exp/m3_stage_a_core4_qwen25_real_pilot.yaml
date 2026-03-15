@@ -1,0 +1,21 @@
+includes:
+  - ../tasks/benchmarks/meta/core4_transfer_smoke.yaml
+  - ../method/memory_bootstrap_transformer_real.yaml
+
+experiment:
+  name: m3_stage_a_core4_qwen25_real_pilot
+  stage: M3-core4-stage-a-real
+  method_variant: ours-core4-stage-a-writer-pretrain-real-qwen25
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/autodl-tmp/models/Qwen2.5-1.5B-Instruct
+  load_mode: hf_causal_lm
+  dtype: bfloat16
+  cache_dir: /root/autodl-tmp/hf-cache
+
+runtime:
+  training_stage: stage_a
+  train_steps: 8
+  learning_rate: 0.01
+  device: cuda

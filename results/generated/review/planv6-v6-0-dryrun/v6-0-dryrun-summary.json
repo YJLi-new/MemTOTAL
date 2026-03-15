@@ -1,0 +1,29 @@
+{
+  "arm_alias": "V6_probe_dryrun",
+  "gradient_probe_enabled": true,
+  "groupwise_grad_clip": true,
+  "metrics_path": "/root/mydir/MemTOTAL/runs/review/planv6-v6-0-dryrun/metrics.json",
+  "phase": "V6-0",
+  "post_unfreeze_start_step": 2,
+  "projector_clip_fraction_tail_50": 1.0,
+  "proved_fields_present": {
+    "grad_probe_projector_task_only_norm": true,
+    "grad_probe_receiver_lora_task_only_norm": true,
+    "grad_probe_support_encoder_task_only_norm": true,
+    "grad_probe_writer_task_only_norm": true,
+    "support_item_effective_rank": true,
+    "support_item_pairwise_cosine_mean": true,
+    "was_grad_clipped_projector": true,
+    "was_grad_clipped_receiver_lora": true,
+    "was_grad_clipped_writer": true,
+    "writer_support_attention_entropy_mean": true
+  },
+  "receiver_lora_clip_fraction_tail_50": 1.0,
+  "run_dir": "/root/mydir/MemTOTAL/runs/review/planv6-v6-0-dryrun",
+  "support_item_effective_rank_step2": 2.5160889625549316,
+  "train_events_path": "/root/mydir/MemTOTAL/runs/review/planv6-v6-0-dryrun/train_events.json",
+  "writer_clip_fraction_tail_50": 0.5,
+  "writer_support_attention_entropy_step2": 0.9994951486587524,
+  "writer_task_probe_post_unfreeze": 121.01485443115234,
+  "writer_task_total_cosine_post_unfreeze": 1.0
+}

@@ -1,0 +1,144 @@
+{
+  "base_for_v8_8_arm_id": "p5_opd_ansplusctx_centered",
+  "base_for_v8_8_source_phase": "V8-3",
+  "best_v8_beats_floor": false,
+  "best_v8_beats_text_rag": false,
+  "best_v8_vs_legacy": {
+    "aggregate_primary_delta": 0.875,
+    "non_regressive_primary_task_count": 2,
+    "positive_primary_task_count": 2,
+    "task_deltas": {
+      "fever": 0.578125,
+      "gsm8k": 0.859375,
+      "triviaqa": 0.015625
+    }
+  },
+  "best_v8_vs_memgen_context": {
+    "available_primary_tasks": [
+      "gsm8k",
+      "triviaqa"
+    ],
+    "non_isomorphic_scope": true,
+    "task_deltas": {
+      "gsm8k": 0.859375,
+      "triviaqa": -0.234375
+    }
+  },
+  "best_v8_vs_nomemory": {
+    "aggregate_primary_delta": 0.03125,
+    "non_regressive_primary_task_count": 1,
+    "positive_primary_task_count": 1,
+    "task_deltas": {
+      "fever": 0.08333333333333337,
+      "gsm8k": 0.046875,
+      "triviaqa": -0.015625
+    }
+  },
+  "best_v8_vs_text_rag": {
+    "aggregate_primary_delta": 0.109375,
+    "non_regressive_primary_task_count": 1,
+    "positive_primary_task_count": 1,
+    "task_deltas": {
+      "fever": 0.4583333333333333,
+      "gsm8k": 0.21875,
+      "triviaqa": -0.109375
+    }
+  },
+  "comparators": {
+    "m0_nomemory_qwen34": {
+      "comparator_id": "m0_nomemory_qwen34",
+      "prompt_variants": {
+        "fever": "answer_slot_labels",
+        "gsm8k": "q3_gsm8k_nonthink",
+        "triviaqa": "q3_trivia_nonthink"
+      },
+      "recommended_next_step": "open_v8_1_reader_interface_scout",
+      "scope": "planv8_selected_baseline_reference",
+      "task_scores": {
+        "fever": 0.7916666666666666,
+        "gsm8k": 0.8125,
+        "triviaqa": 0.03125
+      }
+    },
+    "m1_text_rag_qwen34": {
+      "available_tasks": [
+        "gsm8k",
+        "triviaqa",
+        "fever"
+      ],
+      "comparator_id": "m1_text_rag_qwen34",
+      "metric_names": {
+        "fever": "accuracy",
+        "gsm8k": "exact_match",
+        "triviaqa": "exact_match"
+      },
+      "scope": "planv8_split_live_text_rag",
+      "task_scores": {
+        "fever": 0.4166666666666667,
+        "gsm8k": 0.640625,
+        "triviaqa": 0.125
+      }
+    },
+    "m2_memgen_qwen34": {
+      "available_tasks": [
+        "gsm8k",
+        "triviaqa"
+      ],
+      "comparator_id": "m2_memgen_qwen34",
+      "non_isomorphic_scope": true,
+      "num_predictions": {
+        "gsm8k": 8,
+        "triviaqa": 8
+      },
+      "scope": "benchmark_native_memgen_mini_eval",
+      "task_scores": {
+        "gsm8k": 0.0,
+        "triviaqa": 0.25
+      }
+    },
+    "m3_legacy_planv7_qwen25": {
+      "best_confirmed_promoted_arm_id": "a5_barlow",
+      "best_confirmed_variant_id": "p1_a5_barlow",
+      "comparator_id": "m3_legacy_planv7_qwen25",
+      "recommended_next_step": "open_stronger_integrated_writer_or_true_highdim_branch",
+      "scope": "historical_multiseed_reference",
+      "task_scores": {
+        "fever": 0.296875,
+        "gsm8k": 0.0,
+        "triviaqa": 0.0
+      }
+    },
+    "m4_best_v8_qwen34": {
+      "best_arm_id": "p5_opd_ansplusctx_centered",
+      "comparator_id": "m4_best_v8_qwen34",
+      "prompt_variants": {
+        "fever": "answer_slot_labels",
+        "gsm8k": "q3_gsm8k_nonthink",
+        "triviaqa": "q3_trivia_nonthink"
+      },
+      "recommended_next_step": "open_v8_7_comparators",
+      "route_live_by_task": {
+        "fever": false,
+        "gsm8k": false,
+        "triviaqa": false
+      },
+      "scope": "planv8_best_route_reference",
+      "selected_aux_family": "opd_token_ce_centered",
+      "selected_bridge_family": "BR0",
+      "selected_interface_family": "ri0_legacy_prefix",
+      "source_phase": "V8-3",
+      "task_scores": {
+        "fever": 0.875,
+        "gsm8k": 0.859375,
+        "triviaqa": 0.015625
+      }
+    }
+  },
+  "comparison_conclusion": "comparators_do_not_support_v8_8",
+  "phase": "V8-7",
+  "recommended_next_step": "hold_v8_8_comparator_review",
+  "route_live_primary_task_count": 0,
+  "selected_aux_family_for_v8_8": "opd_token_ce_centered",
+  "selected_bridge_family_for_v8_8": "BR0",
+  "selected_interface_family_for_v8_8": "ri0_legacy_prefix"
+}

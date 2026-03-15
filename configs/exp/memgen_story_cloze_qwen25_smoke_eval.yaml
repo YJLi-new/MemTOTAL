@@ -1,0 +1,35 @@
+experiment:
+  name: memgen_story_cloze_qwen25_smoke_eval
+  stage: M1
+  method_variant: memgen-baseline-smoke
+
+task:
+  name: story_cloze
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: /root/mydir/MemTOTAL/MemGen-master/data_chache/models/Qwen2.5-1.5B-Instruct
+
+baseline:
+  name: memgen
+  repo_root: MemGen-master
+  task_name: story_cloze
+  memgen_run_mode: evaluate
+  memgen_config_path: configs/latent_memory/story_cloze.yaml
+  trigger_active: false
+  insertion_profile: single_turn_smoke
+  load_model_path: null
+  max_prompt_aug_num: 1
+  max_inference_aug_num: 1
+  extra_options:
+    - model.attn_implementation=sdpa
+    - dataset.mode=sft
+    - dataset.sft.valid_ratio=0.01
+    - dataset.sft.test_ratio=0.01
+    - dataset.sft.num_proc=1
+    - dataset.sft.max_train_samples=8
+    - dataset.sft.max_valid_samples=4
+    - dataset.sft.max_test_samples=4
+    - run.interaction.batch_size=1
+    - run.interaction.do_sample=False
+    - run.interaction.max_response_length=128

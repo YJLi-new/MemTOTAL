@@ -1,0 +1,26 @@
+includes:
+  - ../tasks/benchmarks/materialized/story_cloze_real_smoke.yaml
+
+experiment:
+  name: m5_baseline_budget_audit
+  stage: M5
+  method_variant: baseline-budget-audit
+
+backbone:
+  name: Qwen2.5-1.5B-Instruct
+  model_id: Qwen/Qwen2.5-1.5B-Instruct
+  load_mode: stub
+  stub_hidden_size: 64
+
+runtime:
+  analysis_mode: baseline_budget_audit
+  device: cpu
+
+analysis:
+  baseline_families:
+    - prompting
+    - meta_prompting
+    - adapter
+    - rag
+    - lightthinker
+    - memory_bank

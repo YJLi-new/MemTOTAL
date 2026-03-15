@@ -1,0 +1,618 @@
+# Architecture Map
+
+## Scope
+
+本仓库当前已经完成 `docs/TODO_LIST.md` 的 M0 bootstrap 基座，并补上了 M2 的最小方法骨架；仍然不启动大训练。当前目标是让后续 agent 能按统一入口、统一输出和统一目录契约推进 Stage A/B/C 与论文实验，而不是停留在只会跑 baseline adapter。
+
+## Top-Level Layout
+
+- `train.py` / `eval.py` / `analysis.py`: 根入口，满足 `python -m train|eval|analysis`
+- `scripts/run_memgen.sh`: MemGen baseline 的统一 adapter 入口，先支持 dry-run launch 计划与后续真实执行桥接
+- `scripts/run_m3_core4_stage_b_probe_suite.sh`: benchmark-native `core4` 的 Stage B probe suite，会在数据盘跑 probe variants，并把 `probe_summary.csv/.svg` 写回仓库
+- `scripts/run_m3_core4_stage_c_probe_suite.sh`: benchmark-native `core4` 的 Stage C probe suite，会在数据盘并排跑 `q_only / w_only / w_plus_q`，再把 `probe_summary.csv/.svg` 与 q-only gradient audit 关联结果写回仓库
+- `scripts/run_m3_story_cloze_real_pilot_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `story_cloze` decision-interface pilot，会按 `screen256 -> fixed100 -> A/B/C/D/E` 顺序跑完整对照，并把 review 产物镜像回仓库
+- `scripts/run_m4_fever_shared_injection_qwen25.sh`: 真实 `Qwen2.5-1.5B-Instruct` 的 `FEVER-first` shared generative injection gate，会先跑 `A=base_only`、`T=teacher-text upper bound`、`writer information audit`，只有 gate 通过后才继续 `I-real / I-shuffle / I-zero`
+- `scripts/run_m4_fever_dynamics_recovery_qwen25.sh`: `M4.3` 的 shared-injection dynamics recovery 入口，会并排跑 `raw8 / triad6` 两条 shared-injection suite，并把 `step0/8/16/24/32/48/64` 的 snapshot case dump 汇总成预注册 validation 的 `dynamics-recovery`
+- `scripts/run_m4_fever_deep_prompt_recovery_qwen25.sh`: `M4.5` 的 triad6 sparse deep-prompt recovery 入口，会固定 `triad6`，使用 `0/7/14/21/27` 五层 shared low-rank deep prompt，在 `screen-val` 做 earliest-pass selection；只有 selection 通过后才依次打开 `screen248-test` 与 `fixed64` 双 gate
+- `scripts/run_m4_fever_anti_shortcut_recovery_qwen25.sh`: `M4.6` 的 anti-shortcut recovery 入口，会先构建 `32` 个 `2/2/2` train triad episodes 和 `screen-val / screen248-test / heldout A/B` support banks，再并排跑 `Run A=episode_bank` 与 `Run B=static triad6`，最后生成 top-level anti-shortcut comparison
+- `scripts/run_m4_fever_alignment_qwen25.sh`: `M4.7` 的 structured support-set alignment 入口，会并排跑 `canonical / freeze-writer / pooled-block` 三臂，并生成 top-level alignment summary
+- `scripts/run_m5_fever_alignment_qwen25.sh`: `M5.1` 的 same-schema warm-start alignment 入口，会写出 `warm_start_manifest.json`，再并排跑 `canonical / freeze-writer / pooled-block` 三臂 continuation，并生成 top-level `success / ambiguous_pass / failure` summary
+- `scripts/run_m5_fever_objective_rewrite_qwen25.sh`: `M5.2` 的 writer objective rewrite 入口，会写出 `warm_start_manifest.json`，再并排跑 `task-only-control / anchor-only / canonical(anchor+teacher_margin)` 三臂 continuation，并生成 top-level objective summary
+- `scripts/run_m5_fever_dense_teacher_qwen25.sh`: `M5.3` 的 dense teacher 入口，会写出 `warm_start_manifest.json`，再并排跑 `control-safe-hinge / canonical-dense-teacher` required pair，并生成 top-level dense-teacher summary
+- `scripts/run_tl_poc_fever_qwen25.sh`: `Workstream B / TL-PoC` 的两层 shared-injection 入口，会 materialize `SL-8 / TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 全套 configs，依次跑训练、dynamics、selection、post-selection gates，并生成 top-level TL-PoC summary
+- `scripts/run_tl_bridge_rescue_fever_qwen25.sh`: `TL bridge rescue` 的两层 FEVER follow-up，会在 `TL-H4-K8` 上加入 conditioned-slot residual 与 diversity regularization，验证 bridge 是否能先从最坏边界脱离
+- `scripts/run_tl_slot_basis_rescue_fever_qwen25.sh`: `TL slot-basis rescue` 的两层 FEVER follow-up，会在 `TL-H4-K8` 上加入 writer output slot-basis residual、slot-basis warm-start orthogonalization 与 orthogonality loss，验证 `M_long` 的 write-side basis/factorization 是否可救
+- `scripts/run_m3_core4_stage_c_qonly_budget_probe_suite.sh`: benchmark-native `core4` 的 Stage C `q_only` budget probe，会在同一 target episode 上扫描 `adapt_learning_rate / adapt_steps`
+- `scripts/run_m3_core4_stage_c_sensitivity_audit.sh`: benchmark-native `core4` 的 Stage C sensitivity audit，会对比 `query shift` 与 `memory shift` 对 `readouts / summary / candidate scores` 的影响量级
+- `scripts/run_m3_core4_stage_c_qonly_seed_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` seed sweep，会固定 canonical `q_only` 配置并在多个 target seeds 上重复适配，再汇总 `task_gain` 的分布
+- `scripts/run_m3_core4_stage_c_error_attribution.sh`: benchmark-native `core4` 的 Stage C case-level error attribution，会把 `task_case_dump.jsonl` 配对成 zero-shot vs best-adapt case report，并自动筛出 near-threshold bad cases
+- `scripts/run_m3_core4_stage_c_curve_suite.sh`: benchmark-native `core4` 的 Stage C curve suite，会用 canonical `q_only` 配置跑 `adapt_shots={0,1,2,3}` 与 `adapt_steps=5`，再自动汇总 `shot_curve.csv/.svg` 与 `step_curve.csv/.svg`
+- `scripts/run_m3_core4_stage_c_step_saturation_audit.sh`: benchmark-native `core4` 的 Stage C step saturation audit，会把 canonical curve suite 拆成 `zero->step0` 与 `step0->final` 两段收益
+- `scripts/run_m3_core4_stage_c_qonly_policy_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` policy sweep，会把 `target_episode_policy in {independent, aggregate_support}` 放到同一组 seeds 上直接对照
+- `scripts/run_m3_core4_stage_c_qonly_episode_budget_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` episode-budget sweep，会把 `target_episode_repeats in {1,3,5}` 放到同一组 seeds 上直接对照
+- `scripts/run_m3_core4_stage_c_qonly_support_weight_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` support-weight sweep，会把 `target_support_weighting in {uniform, proxy_softmax, proxy_top1}` 放到同一组 seeds 上直接对照
+- `scripts/run_m3_core4_stage_c_qonly_target_split_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` target-split sweep，会把 `target_split_policy in {random, proxy_topk_support, proxy_bottomk_support}` 放到同一组 seeds 上直接对照
+- `scripts/run_m3_core4_stage_c_qonly_support_selection_policy_sweep.sh`: benchmark-native `core4` 的 Stage C `q_only` support-selection sweep，会把 `target_support_selection_policy in {plain, label_diverse_if_possible}` 放到同一组 seeds 上直接对照，并复核 `shot=0` 是否保持同一个 eval holdout
+- `scripts/move_hf_cache_to_data_disk.sh`: 将 `~/.cache/huggingface` 迁到数据盘并回接符号链接，避免系统盘被模型/数据缓存打满
+- `scripts/cleanup_hf_cache.sh`: 清理 Hugging Face datasets cache 与未完成的模型下载碎片，用于 real-source benchmark / MemGen 的磁盘治理
+- `src/memtotal/models/`: backbone wrapper、Writer/Reader/Fuser/Injector、Segmenter
+- `src/memtotal/training/`: smoke 训练闭环
+- `src/memtotal/training/m3.py`: Stage A/B/C runner，当前同时承载 `toy_meta_smoke` 与 benchmark-native `core4_transfer_smoke`；负责 `writer.ckpt`、`queries_meta_init.pt`、`adapt_curve.csv` 等产物
+- `src/memtotal/training/m3_real_pilot.py`: 真实 `story_cloze` pilot 的并行实验分支，负责 `base_only / shared_summary_late_fusion / candidate_conditioned_late_fusion` 三种决策接口与 `real / shuffled / zero` memory control
+- `src/memtotal/training/m4_shared_injection.py`: 真实 `FEVER` shared generative injection 分支，负责 `teacher-text`、`writer information audit` 的上游协作点，以及 `shared latent prefix injection` 的训练/评测入口
+- `scripts/run_m4_gate_from_selection.py`: 通用 post-selection gate runner；由 selection 结果驱动 `A/T/I_real/I_shuffle/I_zero` 在任意 gate task 上重放，不再绑死 `fixed64`
+- `scripts/update_m4_dual_gate_summary.py`: 汇总 `selection + screen248-test + fixed64` 的双 gate 结论，并回写 `dual_gate_summary.json`
+- `scripts/update_m4_run_summary.py`: 汇总单条 `M4.6` run 的 `selection / screen248-test / heldout sanity / fixed64 legacy` 状态，并回写 `run-summary.json`
+- `scripts/update_m4_anti_shortcut_summary.py`: 汇总 `Run A vs Run B` 的 anti-shortcut comparison，并生成 `anti-shortcut-comparison.{json,md}`
+- `scripts/update_m4_alignment_summary.py`: 汇总 `canonical / freeze-writer / pooled-block` 三臂 alignment 结果，并生成 `alignment-summary.{json,md}`
+- `scripts/update_m5_alignment_summary.py`: 汇总 `M5.1` 三臂 continuation 结果，并生成 `alignment-summary.{json,md}`
+- `scripts/update_m5_objective_summary.py`: 汇总 `M5.2` 三臂 objective rewrite 结果，并生成 `objective-summary.{json,md}`
+- `scripts/update_m5_dense_teacher_summary.py`: 汇总 `M5.3` control/canonical 对照结果，并生成 `dense-teacher-summary.{json,md}`
+- `scripts/update_tl_poc_summary.py`: 汇总 `SL-8 / TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 的 `selection / gate / reader diagnostics`，并生成 `tl-poc-summary.{json,md}`
+- `src/memtotal/eval/`: 统一评测入口与 `predictions.jsonl` / `metrics.json`
+- `src/memtotal/analysis/`: 统一汇总器，扫描 `runs/**/metrics.json` 并生成 `summary.csv` / `summary.svg`
+- `src/memtotal/analysis/story_cloze_real_pilot.py`: 真实 `story_cloze` pilot 的 `screen split / fixed100 builder / A-B-C-D-E compare` 分析入口
+- `src/memtotal/analysis/m4_shared_injection.py`: `teacher-text sanity / writer information audit / shared injection compare` 的统一分析入口
+- `src/memtotal/baselines/`: 外部 baseline 适配层，当前已接入 MemGen launch adapter
+- `configs/tasks|method|exp/`: 任务、方法、实验配置
+- `scripts/`: setup、train/eval/analysis 包装、profiling、smoke、artifact 收集、CI 风格检查
+- `runs/`: 原始 run 产物
+- `results/`: 自动汇总结果
+
+## Method Boundary
+
+- `MemoryWriter.write(state) -> M_long`
+- `MemoryReader.read(M_long, context) -> readouts`
+- `MemoryFuser.fuse(readouts) -> M_short`
+- `MemoryInjector.inject(M_short, next_inputs) -> injected_inputs`
+
+当前方法层的已验证范围：
+
+- `MemoryWriter`
+  - `arch=mlp`：LayerNorm + MLP，直接写出 `[B, L, d]`
+  - `arch=transformer`：learned slot embeddings + state conditioning + Transformer encoder
+  - 支持 `freeze()` / `unfreeze()` / `save_to()` / `load_from()`
+- `MemoryReader`
+  - `H` 个 learned queries
+  - 基于 cross-attention 读取 `M_long`
+  - 支持 `context` conditioning、`memory_mask`、`gating_mode in {off, random, learned}`
+  - 支持 `query_residual_scale`，会把 gated query residual 直接注入 `readouts`；当前 bootstrap 默认值为 `1.0`
+- `MemoryFuser`
+  - `arch=linear`：简单投影压缩
+  - `arch=resampler`：learned short queries 读取 readouts，形成 `M_short`
+- `MemoryInjector`
+  - 当前支持 `prefix` 注入
+  - `enabled` 开关已进入 config 契约；关闭时会同时关闭生成侧 memory token 注入
+  - `position in {segment, delimiter, random, none}` 已进入 config 契约
+
+当前 train/eval 产物里，方法层额外会写出：
+
+- `gating_mode`
+- `mean_gate`
+- `mean_active_queries`
+- `mean_segment_gate`
+- `mean_segment_active_queries`
+- `injection_position`
+- `conditioning_schema`
+- `predictions.jsonl` 中每个样本的 `gates`
+- `predictions.jsonl` 中每个样本的 `segment_stats`
+- `predictions.jsonl` 中每个样本的 `conditioning`
+
+这些实现最初是在 deterministic stub backbone 与 toy pipeline 上建立接口与治理契约；现在 `BackboneWrapper(load_mode=hf_causal_lm)` 也已支持真实 `Qwen2.5-1.5B-Instruct / Qwen3-8B` 的 hidden-state pooling、continuation logprob scoring 与本地 staged model 目录加载。
+
+## M3 Smoke Boundary
+
+- `toy_meta_smoke` 目前承载 Stage A/B/C 的最小验证：`data/toy/meta_samples.jsonl`
+- 当前 toy meta 数据采用“每域 2 个 label、每个 label 2 个样本”的结构，便于分层 support/query 采样与最小 few-shot 曲线验证
+- benchmark-native smoke 现已新增 `configs/tasks/benchmarks/meta/core4_transfer_smoke.yaml`
+  - `dataset_sources={gsm8k, kodcode, gpqa, story_cloze}`
+  - `source_domains={math, code, qa}`
+  - `target_domain=narrative`
+  - 当前 canonical 配置已提升为 `smoke8/3x3`：每个 benchmark source 使用 `eval-real-smoke8.jsonl`，并固定 `support_size=3`、`query_size=3`
+  - `sampling_policy=uniform_examples`
+- Stage A：
+  - 产出 `writer.ckpt`
+  - 保存 `meta_data_manifest.json`，记录 `dataset_sha256` 与 domain split
+- Stage B：
+  - 产出 `queries_meta_init.pt`
+  - 支持 `query_learning_mode in {meta_trained, non_meta_multitask, random}`
+  - 支持 `query_objective in {label_prototype, continuation_retrieval}`
+  - `meta_trained` 当前实现为 first-order ANIL 近似，inner-loop 更新 `reader.queries + fuser`
+  - `non_meta_multitask` 使用固定 Writer + source-domain 全局 label bank 的普通多任务训练
+  - `random` 不做 Stage B 更新，只落 reader-side 随机初始化快照
+  - toy 路径继续按 label 分层采样并使用 domain 内 label prototype
+  - benchmark-native `core4` 路径改为统一 `continuation_retrieval` 目标：正样本是当前 continuation，负样本来自同域或全局 source pool
+  - benchmark-native `core4` 当前进一步固定为 episode-aware pool 协议：query/val 侧候选池显式排除 support continuations，inner-loop support update 只在 support pool 内做 retrieval
+  - `metrics.json` 现已同时记录 `source_eval_query_loss/source_eval_query_accuracy` 与 `source_eval_task_score/source_eval_metric_name`
+  - `metrics.json` 现也显式记录 `retrieval_negative_count / meta_episodes / inner_steps / inner_learning_rate / meta_learning_rate`，便于直接对照 Stage B probe 而不必回看 `config.snapshot`
+  - 当前 canonical Stage B 已变成 backbone-specific 口径：qwen25 使用 `meta_episodes=16`，qwen3 保持 `meta_episodes=6`
+  - 新增 `src/memtotal/analysis/m3_probe.py` 与 `configs/exp/m3_stage_b_probe_summary.yaml`；probe suite 会产出 `best_by_backbone`，并用 `config.snapshot + seed` 校验复用，避免把旧 probe 误当成新结果
+- Stage C：
+  - 默认按 `adaptation_target=q_only` 对齐 `MAIN_IDEA.md` / `EXPERIMENTS_INFO.md` 的 Stage C 契约，只更新 `reader.queries`
+  - 支持 `adaptation_target in {q_only, w_only, w_plus_q}`
+  - 支持 `expected_query_learning_mode`，会在 resume 阶段校验 reader init 来源
+  - 产出 `queries_adapted.pt`
+  - 若 writer 参与适配，则额外产出 `writer_adapted.ckpt`
+  - 产出 `adapt_curve.csv` / `adapt_curve.json` / `adapt_cost.json` / `episode_trace.json` / `task_case_dump.jsonl`
+  - `adapt_curve.csv` 当前会显式写出 `query_learning_mode / query_objective / adaptation_target / trainable_module / trainable_parameter_count / objective_loss / task_score / task_metric_name`
+  - `adapt_curve.csv` 现额外写出 `task_proxy_score / task_proxy_name / task_margin`；当前在 multiple-choice 任务上使用 `gold_choice_probability` 作为更平滑的 target-side proxy
+  - `adapt_curve.csv` 现也写出 `target_eval_repeats / evaluated_query_examples`；当前 canonical `core4` Stage C 配置默认 `target_eval_repeats=3`，即每个 `shot/step` 点会在同一 support set 下采样 3 组 target query 子集再求平均
+  - `adapt_curve.csv` 现进一步写出 `target_episode_repeats / evaluated_target_episodes`；当前 canonical `core4` Stage C 配置默认 `target_episode_repeats=3`，即每个 `shot/step` 点会在 3 组 target support/query episodes 上聚合后再选 best row
+  - `runtime.target_episode_policy` 现支持 `independent / aggregate_support`；当前 canonical `core4` Stage C 配置使用 `aggregate_support`，即在相同 `target_episode_repeats=3` 下把多个 target support episodes 的 support loss 先聚合，再做一次共享 update
+  - `runtime.target_split_policy` 现支持 `random / proxy_topk_support / proxy_bottomk_support`；公平 fixed-holdout 重扫后，三档在 official score 上完全打平，因此 canonical 配置现已回收为最朴素的 `random`
+  - `runtime.target_support_bank_size` 现支持 `auto / max_shot / all_non_holdout / 正整数`；当前 canonical 配置使用 `auto`，即至少给 support-side retrieval 留出 `retrieval_negative_count + 1` 的候选空间，再受 target 域非 holdout 上限裁剪
+  - `runtime.target_support_negative_pool` 现支持 `support_bank / source_plus_support_bank`；当前 canonical 配置已切到 `source_plus_support_bank`，即在 target support bank 之外，再把 source domains 的 continuations 作为 support inner-loop negatives 接入
+  - `runtime.target_support_negative_sampler` 现支持 `deterministic_id / hard_by_continuation / hard_by_current_model`；fresh 5-seed 对照显示 `hard_by_current_model` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain`，因此当前 canonical probe 已切到 `hard_by_current_model`
+  - 并行的 real pilot 分支现已固定支持：
+    - `runtime.stage_c_decision_mode in {base_only, shared_summary_late_fusion, candidate_conditioned_late_fusion, shared_plus_candidate_delta_late_fusion}`
+    - `runtime.stage_c_memory_control in {real, shuffled, zero}`
+    - `runtime.stage_c_choice_objective in {continuation_retrieval, choice_ce_plus_margin}`
+    - `runtime.stage_c_candidate_delta_scale` 与 `runtime.stage_c_candidate_delta_gate_tau` 控制保守的 candidate 增量分支；当前实现是 `shared residual` 主干加上零均值 `candidate delta`
+  - 真实 `Qwen2.5-1.5B-Instruct` `story_cloze` pilot 当前已完成 `A/B/C/D/E` 五臂对照
+    - `A=base_only`
+    - `B=base + shared_summary residual`
+    - `C=base + candidate_conditioned residual`
+    - `D=base + candidate_conditioned residual + shuffled memory`
+    - `E=base + candidate_conditioned residual + choice_ce_plus_margin`
+  - 当前结论是负的：hard `fixed100` 上五条臂全部停在 `task_score=0.2`
+  - `A -> C` 只有极小 `mean_margin_gain=0.0016285324096679688`，而 `C -> D` 与 `C -> E` 的 `mean_task_gain` 都是 `0.0`
+  - 之后新增的 `shared_plus_candidate_delta_late_fusion` 也已完成双任务 real replay：它在 `Story Cloze` 上只带来极小 proxy/margin 改善，在 `FEVER` 上虽明显优于旧 `candidate_conditioned` 分支，但仍低于 `shared_summary residual`，且 `real` 与 `shuffled` 仍重合
+  - 之后又补了 `content audit`：直接用 `B/F/G` 构造 `B + (F-G)` 与 `oracle_per_case_alpha_content`。当前 `Story Cloze` 上这两者仍然都是 `0.2`，`FEVER` 上也都停在 `0.75`；因此，当前结论已进一步收紧为：candidate 增量分支的主体效应来自 branch form，不来自 real-memory content。后续不应直接上 routing / sign selection，而应把这条 residual family 先降级为失败分支
+  - `runtime.retrieval_loss_type` 现支持 `cross_entropy / margin_pairwise / cross_entropy_plus_margin`，`runtime.retrieval_margin_value` 控制 pairwise margin；fresh 5-seed 对照显示 `cross_entropy_plus_margin` 现在能在两档 backbone 上都给出最高 `mean_proxy_gain` 与 `mean_margin_gain`，因此当前 canonical `Stage C` 已切到 `cross_entropy_plus_margin + margin=0.1`
+  - `runtime.target_support_selection_policy` 现支持 `plain / label_diverse_if_possible`；fresh fair-holdout 对照显示它不是当前主杠杆，因此 canonical 仍保留 `plain`
+  - `runtime.target_support_weighting` 现支持 `uniform / proxy_softmax / proxy_top1`；当前 canonical 仍保留 `uniform`，因为 fresh support-weight sweep 尚未观察到对 official `task_score` 的稳定改善
+  - `metrics.json` 现也显式记录 `retrieval_negative_count / adapt_learning_rate / adapt_steps / adapt_shots`，便于直接复核 Stage C few-shot 口径
+  - `metrics.json` 与 `adapt_curve.csv` 现也显式记录 `support_grad_norm / support_update_max_abs / support_update_l2` 诊断；Stage C 会额外给出 `adaptation_effective_threshold / adaptation_effective`，用于区分“分数没涨”与“参数几乎没更新”
+  - `episode_trace.json` 会把每个 target episode 的 `support_ids / support_candidate_ids / support_negative_pool_ids / query_candidate_ids / eval_query_set_ids` 显式落盘，便于直接复盘同一个 seed 下为什么会变好或变坏
+  - `task_case_dump.jsonl` 会把每个 target eval case 的 `gold / competitor / margin / support_ids / choices` 显式落盘，便于直接做 near-threshold bad-case 归因，而不是只看聚合均值
+  - 新增 `configs/exp/m3_stage_c_gradient_audit_qwen25.yaml` 与 `src/memtotal/analysis/m3_gradient_audit.py`，可在不改训练逻辑的前提下审计同一 target support loss 对 `queries / reader_non_query / fuser / writer` 的 counterfactual 梯度大小
+- 新增 `src/memtotal/analysis/m3_stage_c_probe.py` 与 `configs/exp/m3_stage_c_probe_summary.yaml`；probe suite 会把 `Stage C` 的 `q_only / w_only / w_plus_q` 放到同一份 summary 中，并显式检查同一 backbone 下三条曲线是否共用同一个 seed；在 `task_score` 打平时，会用 `task_proxy_score` 作为二级比较键
+  - 新增 `src/memtotal/analysis/m3_stage_c_seed_sweep.py` 与 `configs/exp/m3_stage_c_seed_sweep_summary.yaml`；seed sweep 会把 canonical `q_only` 在多个 target seeds 上的 `task_gain / proxy_gain` 分布写成 `seed_sweep.csv/.svg`
+
+当前 M3 smoke 已经把 toy 路径与 benchmark-native `core4` 路径都接进统一 artifact contract、resume 链路与 summary。当前 benchmark-native `core4` 还只是 smoke 级协议验证，不代表正式 few-shot 结果；但 canonical 配置现已从早期 `smoke4/2x2` 升级为 `smoke8/3x3`，并进一步通过 Stage B probe suite 收口到 backbone-specific episode budget：qwen25 当前 canonical `meta_episodes=16`，`runs/verify/m3-core4-qwen25/stage-b/metrics.json` 记录 `mean_adaptation_gain=6.527453660964966e-05`；qwen3 当前 canonical 仍为 `meta_episodes=6`，`runs/verify/m3-core4-qwen3/stage-b/metrics.json` 记录 `mean_adaptation_gain=0.0007965167363484701`。正式 probe suite `results/generated/m3-core4-stage-b-probe-suite-v2/metrics.json` 当前也显示两档 backbone 的最佳变体都回到各自 canonical。Stage C 这条线则已经继续收口到二十三步：先通过 `query_residual_scale` 修复 q-only 参数化，让 query path 真正进入有效控制回路；再通过 `task_proxy_score` 把 coarse `task_score` 打平时的 target-side变化显式暴露出来；随后把 canonical target 评测升级为 `target_eval_repeats=3` 的多 query-set 官方聚合；再补一条 `q_only` target-seed sweep，把单 seed 的正向结果放回分布里看；再把 canonical `Stage C` 升级为 `target_episode_repeats=3` 的多 target support/query episode 聚合；再用 policy sweep 证明 `aggregate_support` 与 `independent` 在同 seed 上效果等价但前者更省；再用 episode-budget sweep 证明 `target_episode_repeats` 不是越大越稳；再用 support-weight sweep 证明 `target_support_weighting` 也不是主杠杆；再用 target-split sweep 给出过一轮启发式方向；再新增 curve suite，把 canonical `q_only` 直接汇总成 `shot_curve / step_curve`；再新增 step saturation audit，把 `zero->step0` 和 `step0->final` 两段收益拆开；再修掉 Stage C 里 `shot`-耦合 episode/query/support pool 的评测泄漏，使 query/eval 改为固定 holdout、support inner-loop 改为固定 support bank；再在公平 fixed-holdout 口径下重跑 `target_split_policy={random, proxy_topk_support, proxy_bottomk_support}` 的 5-seed sweep，并确认三档在两档 backbone 上的 official `mean_task_gain` 全部为 `0.0`；再新增 `support_bank_size={max_shot, auto}` 的 5-seed 对照，证明 `auto` 确实在恢复 inner-loop 信号但单独不够；随后新增 `support_negative_pool={support_bank, source_plus_support_bank}` 的 5-seed 对照，证明 source-augmented negatives 已经是真正更强的杠杆；再把 `target_support_negative_sampler` 扩到 `{deterministic_id, hard_by_continuation, hard_by_current_model}` 的 5-seed 对照，确认 `hard_by_current_model` 在两档 backbone 上都给出最高 `mean_proxy_gain`；随后新增 `margin audit`；再把它拆成 conditional `negative_only` 摘要；再新增 `negative-seed curve audit`；再把 `episode_trace.json` 接进 Stage C 产物层；再把 eval holdout 与 support bank 彻底解耦，并新增 `target_support_selection_policy={plain,label_diverse_if_possible}` 的 fair-holdout sweep。当前最新证据已经说明：之前那种“support 全是 A 导致 qwen3 负 seed 变坏”的现象，主要来自旧版 holdout/support 耦合；修正后，`label_diverse_if_possible` 并没有成为新的独立主杠杆。fresh `results/generated/m3-core4-stage-c-qonly-support-selection-policy-sweep-v2/metrics.json` 当前记录：qwen25 两档 policy 的 `mean_task_gain` 都是 `0.02222222222222221`，且 `label_diverse_if_possible` 只带来极小 proxy 增益；qwen3 两档 policy 的 `mean_task_gain` 都仍是 `0.0`，而 `plain` 的 `mean_proxy_gain=1.1439455880069006e-05` 还略高于 `label_diverse_if_possible=9.725491205858638e-06`。再往前一步，fresh `results/generated/m3-core4-stage-c-margin-audit-v3-fixed-holdout/metrics.json` 与 `results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout/metrics.json` 又进一步说明：在新的 fixed-holdout 口径下，两档 backbone 的负 margin 都会被 step 轻微缩小，qwen25 的 `negative_only mean_margin_gap_closed=0.000936482412119707`，qwen3 也有 `0.00012016213602489567`；但 `cross_zero_margin_rate` 仍然都是 `0.0`。也就是说，在 canonical `source_plus_support_bank + hard_by_current_model` 下，当前 blocker 已不再是“qwen3 会被推坏”，而是更底层的 inner-loop objective / negative curriculum 为什么还没把已经存在的微弱正向 margin gain 放大成 official rank flip。
+
+更近一步的 follow-up 现已把 `negative count` 与 `retrieval loss` 也纳入同一套 Stage C real sweep。fresh `results/generated/m3-core4-stage-c-qonly-negative-count-sweep-v1/metrics.json` 显示：`retrieval_negative_count={3,7,15}` 只会改变 proxy，不会改变 official `mean_task_gain`，因此它不再是主杠杆。随后 `results/generated/m3-core4-stage-c-qonly-retrieval-loss-sweep-v1/metrics.json` 显示：`cross_entropy_plus_margin` 在两档 backbone 上都给出当前最高的 `mean_proxy_gain` 与 `mean_margin_gain`，因此 canonical `Stage C` 已切到 `source_plus_support_bank + hard_by_current_model + cross_entropy_plus_margin`。但 fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v5-margin-canonical/metrics.json` 又再次确认：即便默认 loss 已增强，两档 backbone 的 official `mean_task_gain` 仍然都是 `0.0`。当前剩下的 blocker 因此已经继续收缩成“为什么更强的 proxy / margin gain 仍然过不了 official rank-flip 阈值”。
+
+再往前一步，fresh `results/generated/m3-core4-stage-c-qonly-seed-sweep-v6-case-dump/` 与 `results/generated/m3-core4-stage-c-error-attribution-v1/` 现已把 blocker 从“均值层面的 rank-flip 没发生”推进到“具体是什么 case 卡住了翻转”。当前 61 个 zero-shot vs best-adapt 配对 case 里，真正 near-threshold 但仍没翻正的只有 2 个；同时许多 remaining wrong cases 会被打上 `story_context_favors_competitor`。因此，下一步最值得推进的不是继续扫全局 loss/sample 口径，而是针对 near-threshold cases 做非线性推力，以及针对 `story_context_favors_competitor` 这类 case 做 targeted objective / error attribution。
+
+## M4 Benchmark Scaffold
+
+- 新增 `src/memtotal/tasks/registry.py`
+  - 统一维护 benchmark `domain / evaluator_type / metric_name / prompt_template`
+  - 当前已登记：`gsm8k`、`math`、`gpqa`、`triviaqa`、`kodcode`、`story_cloze`、`rocstories`、`fever`、`alfworld`
+- 新增 `src/memtotal/tasks/evaluator.py`
+  - 当前统一支持：
+    - `exact_match`
+    - `multiple_choice`
+    - `dataset_label_classification`（向后兼容 toy smoke）
+- `python -m eval` 现通过 `TaskEvaluator` 统一输出：
+  - `benchmark_id`
+  - `task_domain`
+  - `smoke_subset`
+  - `evaluator_type`
+  - `normalized_prediction`
+  - `normalized_reference`
+- 当前本地 contract smoke 数据位于 `data/benchmarks/smoke/*.jsonl`
+  - 这些是仓库内 smoke subset，用于验证 prompt/evaluator/run contract
+  - 不是正式 benchmark 下载替身，也不代表论文主结果
+- 一键回归入口：
+  - `scripts/run_benchmark_smoke_suite.sh`
+  - 当前会顺序跑 `gsm8k / gpqa / kodcode / story_cloze / fever / alfworld` 六个 smoke eval，并汇总到 `summary.csv/.svg`
+- 新增 `src/memtotal/tasks/sources.py` 与 `src/memtotal/tasks/setup_data.py`
+  - 统一维护真实数据源 registry、访问方式、materialize 路径与许可备注
+  - 当前已能真实 materialize：
+    - `gsm8k`
+    - `math`
+    - `gpqa`
+    - `triviaqa`
+    - `story_cloze`
+    - `narrativeqa`
+    - `kodcode`
+    - `rocstories`
+    - `fever`
+    - `alfworld`
+    - `memoryagentbench`
+- 新增真实数据入口脚本：
+  - `scripts/setup_benchmark_data.sh`
+  - `scripts/run_real_benchmark_smoke_suite.sh`
+- 真实来源 smoke 当前会落到：
+  - `data/benchmarks/materialized/<benchmark_id>/eval-real-smoke<k>.jsonl`
+  - `data/benchmarks/manifests/<benchmark_id>.json`
+  - `data/benchmarks/source_summary.json`
+  - `alfworld` 目前通过 `src/memtotal/tasks/alfworld_env.py` 走官方 TextWorld 资产与一次 expert transition materialize，不再停留在手写 contract 样例
+  - `narrativeqa` 目前通过 `deepmind/narrativeqa` 的官方 HF 数据源走 `full_text_segmented` smoke 视图：materialize 时保留完整 `story_chunk_pool`，并用结构化起点探测先跳过明显 intro / editorial front matter；load/eval 时再按 `task.narrativeqa_runtime` 选择真正注入的 story chunks。当前 selector 已显式支持 `anchor_only / question_aware / oracle_like_proxy` 三档，默认仍是 `question_aware` + `6` 段 budget；统一评测当前仍使用 `qa_f1` 代理口径
+  - `memoryagentbench` 目前通过 `src/memtotal/tasks/memoryagentbench.py` 走官方 Hugging Face 数据源，并在 manifest 中显式记录 `AR / TTL / LRU / CR` 四类能力的 smoke source 与当前的 context truncation 预算
+  - `configs/exp/benchmark_narrativeqa_qwen3_real_smoke.yaml` 已提供 NarrativeQA 的 `Qwen3-8B` 同构 smoke 配置，并已真实验证跑通
+  - 当前最新 real-source smoke 汇总位于 `results/generated/m4-real-benchmark-smoke/20260306T163014Z/summary.csv`
+  - `NarrativeQA` selector 消融的统一汇总位于 `results/generated/m4-narrativeqa-selector-ablations/summary.csv`，可直接对比 `anchor_only / question_aware / oracle_like_proxy`
+  - `Qwen3-8B` 版本的 NarrativeQA selector 消融也已真实跑通，汇总位于 `results/generated/m4-narrativeqa-selector-ablations-qwen3/summary.csv`
+
+当前 `M4` 已不只是本地 contract smoke。现在已有 11 个 benchmark 的真实来源 smoke 子集进入统一 eval 与统一汇总，但这仍然只是“真实数据入口已打通”，不是正式 benchmark 主结果。其中特别需要区分：`MemoryAgentBench` 当前是“真实 source + 截断 context 的 smoke scaffold”，`NarrativeQA` 当前是“真实 full story source + runtime-selected selector-ablation excerpt + qa_f1 代理评测”的 smoke scaffold，二者都不是正式长上下文主结果。
+
+## M4 Shared Injection Pivot
+
+- 当前已正式停止维护旧的 `candidate-conditioned residual family`；新的方法侧主线改成 `FEVER-first shared generative injection`
+- 这条线的目标不是再做一个外部 residual scorer，而是先回答：
+  - frozen Qwen 是否会从显式 support bank 文本中受益
+  - 当前 writer family 产出的 latent 是否已经携带可读的任务信息
+  - 当前这两条都已被验证为 `yes`
+  - 最新 blocker 已继续上移到：在预注册 validation 口径下，如何把 shared injection 已出现过的正向内容信号稳定下来
+- 这条线当前固定分三段：
+  - `A = base_only`
+  - `T = teacher-text upper bound`
+  - `writer information audit`
+  - gate 通过后才进入 `I-real / I-shuffle / I-zero`
+- `writer information audit` 当前不是单一线性 probe：
+  - 同时提供 `linear` 与 `shallow MLP` probe，避免纯线性假阴性
+  - 同时比较 `real / shuffle / zero` 三种控制
+- `shared latent prefix injection` 当前实现分成两条兼容路径：
+  - `shallow_prefix`
+    - support text 先过 `backbone.summarize_texts`
+    - 再过 `MemoryWriter`
+    - 再经 `LatentPrefixProjector` 投到 Qwen embedding space
+    - 最终通过 `BackboneWrapper.score_continuations(prefix_embeddings=...)` 进入 frozen Qwen 的主打分链路
+  - `sparse_deep_prefix`
+    - support text 同样先过 `backbone.summarize_texts -> MemoryWriter`
+    - 再经 `SharedLowRankDeepPrefixProjector` 映射成多层 hidden prefix
+    - 当前 canonical 层位是 `0/7/14/21/27`
+    - `BackboneWrapper` 会在层内复用冻结 Qwen 的 `input_layernorm + k_proj + v_proj + rotary` 构造 prefix cache，再通过 `score_continuations(layer_prefix_hidden_by_layer=...)` 进入主链路
+- `M4.7` 又在 injected path 的上游补了一层结构化 support representation：
+  - `runtime.pilot_support_encoder_mode in {pooled_block, structured_support_set}`
+  - `structured_support_set` 会对 `6` 条 support row 单独 `summarize_texts`
+  - 再过 `StructuredSupportSetEncoder`
+  - 再调用 `MemoryWriter.write(..., input_schema=support_set)`
+  - `pooled_block` 则保留旧的 `support_text_block -> summarize_texts([block]) -> writer.write(..., input_schema=pooled_state)` 路径
+- `M4.7` 还新增了两条训练语义开关：
+  - `runtime.pilot_trainable_variant in {full, projector_only}`
+  - `runtime.pilot_alignment_aux_mode in {off, teacher_margin}`
+  - `M5.1` 真实主跑固定 `teacher_margin=off`；`M5.2` 又把它放进 canonical objective，但 fresh run 显示 hook 仍然全程 dormant
+- `M4.6` 又在训练侧补了一层 support-source 解耦：
+  - `task.support_dataset_path` 继续表示 eval-time 单个 support bank
+  - `task.train_support_dataset_path` 允许 train-time 静态 support rows
+  - `task.train_support_episode_bank_path` 允许 train-time episode bank
+  - `runtime.pilot_train_support_mode in {static_support_rows, episode_bank}`
+  - `task.support_lookup_dataset_paths` 用于 attention audit / shuffled id 回查
+- `analysis_mode=m4_prepare_fever_support_banks` 会从 `screen-train` 构建：
+  - `32` 个 `2/2/2` train triad episodes
+  - `screen-val canonical`
+  - `screen248-test canonical`
+  - `screen248-test heldout A/B`
+  - `support-bank-manifest.json`
+- 第一版训练只允许更新：
+  - `MemoryWriter`
+  - `LatentPrefixProjector` 或 `SharedLowRankDeepPrefixProjector`
+  - 并且默认先做 projector warmup，再联合放开 writer，避免随机 projector 早期梯度直接破坏已有 writer 表示
+- 第一版 objective 固定为 task-only：
+  - `choice CE + strongest-competitor hinge`
+  - 不上 KL
+  - 不做 candidate-conditioned / pair-conditioned injection
+- 当前 `M4.3` 的状态应按三段理解：
+  - `Phase 0` 已通过：`T_winner` 相对 `A_winner` 依然保持显著提升，说明显式 support 文本确实有用
+  - `Phase 1` 已通过：当前 writer family 的 latent 在 `real > shuffle/zero` 的 probe 口径下仍可读
+  - `Phase 2` 在 `screen248-val` 的预注册规则下尚未通过：`selection_passed=false`
+- 当前 validation 下的真实结果是：
+  - `raw8` 与 `triad6` 都只有到 `step64` 才出现 `I-real` 相对 `I-shuffle / I-zero` 的 `+2 flips`
+  - 但同一时刻都伴随 `regressions_vs_base=18`
+  - 所以当前并没有一个可直接锁定到 `fixed64` 的稳定 checkpoint
+- 最新 `M4.4` stabilized dynamics recovery 又补了一轮更强稳定化：
+  - 显式 `prefix norm cap`
+  - `grad clip`
+  - 更温和的 `lr / weight decay`
+  - review 路径：`results/generated/review/m4-fever-dynamics-recovery-stabilized-qwen25/`
+- 这轮的新结论是：
+  - `raw8` 在强稳定化下几乎完全学不动
+  - `triad6` 仍只有到 `step64` 才恢复出弱的 `I-real > I-shuffle / I-zero`
+  - 但 `selection_passed` 依然是 `false`
+  - 因此当前问题已从“norm 爆炸”进一步变成“shallow prefix 的有效信号太脆弱，norm control 会把过冲压住，也会把学习一起压平”
+- `M4.5` 当前又把主线推进到 sparse deep prompt：
+  - canonical 配置固定为 `triad6 + sparse_deep_prefix(0/7/14/21/27) + rank32 + warmup32 + total96`
+  - 新增逻辑 `screen248-test` task alias，并把 `fixed64` 明确降格成 selection 之后才允许打开的 legacy gate
+  - observability 现已升级为：
+    - layer-wise `prefix_attention_consumption.csv`
+    - 含 `writer_memory_l2 / per-layer hidden / per-layer projected K/V` 的 `prefix_norm_drift.csv`
+    - `dual_gate_summary.json`
+  - fresh canonical run 位于 `results/generated/review/m4-fever-deep-prompt-recovery-qwen25/`
+  - 最新结论仍是 `selection_passed=false`：
+    - deep prompt 的层内消费已成立
+    - 但 `I_real / I_shuffle` 都会在 `step16` 起迅速顶到 `~192` total cap
+    - `I_real` 只在 `step64` 出现弱内容信号，同时伴随 `regressions_vs_base=18`
+    - 因而当前 blocker 已变成 “cap-saturation + label-bias collapse”，而不是 “模型完全不读 prefix”
+- `M4.6` 当前又把主线推进到 anti-shortcut support protocol：
+  - `Run A` 使用 `32` 个 train-time triad episodes + uniform `5/6` masking
+  - `Run B` 保持固定 `triad6`，其余 deep prompt / optimizer / masking 预算完全相同
+  - `screen248-test` 现在是 primary capability gate；`fixed64` 只保留为 legacy report
+  - 顶层 comparison 位于 `results/generated/review/m4-fever-anti-shortcut-recovery-qwen25/anti-shortcut-comparison.{json,md}`
+  - 最新真实结论是：
+    - `run_a_selection_passed=false`
+    - `run_b_selection_passed=false`
+    - `comparison_conclusion=run_a_equals_run_b`
+    - 两条 run 都在 `step4` 出现 `dominant_label_collapse`
+    - 两条 run 都在 `step80` 左右进入 cap saturation
+  - 因而，当前 blocker 已不再像“static support memorization 是第一主因”
+  - 更合理的下一步顺序是：
+    - 继续留在 shared injection 主线
+    - 不回 residual family
+    - 进入 `M5 writer–reasoner alignment under shared injection`
+    - 等 `screen248-test` 真正过 gate 后，再把 `fixed64 / Story Cloze / candidate-conditioned / Qwen3-8B` 打开
+- `M4.7` 当前又把主线推进到 structured support-set alignment：
+  - `canonical` 使用 `StructuredSupportSetEncoder + trainable writer + sparse deep prompt`
+  - `freeze-writer` 与 canonical 共享同源 writer 初始化，但冻结 support encoder + writer，只训 projector
+  - `pooled-block` 保留旧的 pooled support block path，其余 budget 与 canonical 对齐
+  - 顶层 comparison 位于 `results/generated/review/m4-fever-shared-injection-alignment-qwen25/alignment-summary.{json,md}`
+  - 最新真实结论是：
+    - 三臂都 `selection_passed=false`
+    - canonical structured path 的最佳点强于两个 ablation：
+      - canonical `step64`: `flip_gain_vs_shuffle=3`、`flip_gain_vs_zero=3`、`macro_f1=0.2259`、`regressions_vs_base=16`
+      - `freeze-writer / pooled-block` 最佳都只有弱的 `vs_zero`
+    - 但三臂都没有强到可过 `screen248-val` earliest-pass
+  - 因而：
+    - structured support set 比 pooled block 更对
+    - trainable writer 比 freeze-writer 更对
+    - 但 blocker 已进一步上移到 `writer–reasoner alignment`
+    - 下一步不应被写成“简单延长训练步数”，而应先收紧 writer 初始化语义、trainable stack 自由度和 task-first 对齐目标
+- `M5.1` 当前又把主线推进到 same-schema warm-start alignment：
+  - `runtime.pilot_init_checkpoint_path` 新增为“先加载同 schema checkpoint，再继续训练”的 warm-start 入口
+  - 与 `runtime.pilot_checkpoint_path` 互斥：
+    - `pilot_init_checkpoint_path` 用于 continuation training
+    - `pilot_checkpoint_path` 继续只用于 eval-only / gate replay
+  - `M5.1` 同时把 loss 细化成显式可配：
+    - `runtime.pilot_choice_ce_weight`
+    - `runtime.pilot_competitor_hinge_weight_max`
+    - `runtime.pilot_competitor_hinge_start_step`
+    - `runtime.pilot_competitor_hinge_ramp_steps`
+  - canonical 真实运行固定为：
+    - same-schema warm-start from `M4.7 canonical step64`
+    - task-first `CE + delayed strongest-competitor hinge`
+    - no projector-only warmup
+    - `screen248-test` 继续作为 primary capability gate
+    - `fixed64` 继续只做 legacy report
+  - 顶层 comparison 位于 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/alignment-summary.{json,md}`
+  - warm-start manifest 位于 `results/generated/review/m5-fever-writer-reasoner-alignment-qwen25/warm_start_manifest.json`
+  - 最新真实结论是：
+    - 三臂都 `selection_passed=false`
+    - canonical 的最佳候选其实是 warm-start 本身的 `step0`
+    - canonical continuation 虽能在 `step8` 明显压低 regression，但仍没恢复 `real > shuffle`
+  - 因而：
+    - same-schema warm-start 已不再是主要未知量
+    - 当前 blocker 已进一步收紧成 `writer objective`
+    - 下一步应进入 `M5.2 writer objective rewrite under shared injection`
+- `M5.2` 当前又把主线推进到 writer objective rewrite：
+  - continuation 三臂固定为：
+    - `task-only-control`
+    - `anchor-only`
+    - `canonical(anchor+teacher_margin)`
+  - 训练侧新增：
+    - `runtime.pilot_latent_anchor_weight_{start,end}`
+    - `runtime.pilot_latent_anchor_decay_steps`
+    - `runtime.pilot_alignment_aux_weight_max`
+    - `runtime.pilot_alignment_aux_start_step`
+    - `runtime.pilot_alignment_aux_ramp_steps`
+    - `runtime.pilot_alignment_aux_apply_only_to_real_memory`
+  - `build_prefix_artifacts(...)` 现会额外暴露：
+    - `memory_slots`
+    - `support_item_states`
+    供 writer-side latent anchor 使用
+  - fresh canonical run 仍然 `selection_passed=false`
+  - `anchor-only` 已证明 latent anchor 能保住 warm-start 流形，但单靠保流形仍然不够
+  - canonical 的 `teacher_margin` hook 在 `32` 个训练 step 中 `aux_active=0`
+  - 因而：
+    - 当前并不是“teacher signal 已尝试且无效”
+    - 而是“current teacher hook 太 dormant，还没有真正介入 writer-side alignment”
+    - 下一步应进入 `M5.3 engaged teacher-aided objective under shared injection`
+- `M5.3` 当前又把主线推进到 dense teacher objective：
+  - required pair 固定为：
+    - `control-safe-hinge`
+    - `canonical-dense-teacher(choice-space KL)`
+  - 训练侧新增：
+    - `runtime.pilot_alignment_aux_mode in {off, teacher_margin, teacher_choice_kl, teacher_choice_js}`
+    - `runtime.pilot_alignment_aux_temperature`
+    - `runtime.pilot_alignment_aux_advantage_center`
+    - `runtime.pilot_alignment_aux_advantage_scale`
+  - per-step diagnostics 现已补齐：
+    - `teacher_choice_kl / teacher_choice_js`
+    - `teacher_advantage_weight_mean/max`
+    - `teacher_margin_minus_base_margin`
+    - `teacher_margin_minus_active_margin`
+    - `active/teacher/base_class_entropy`
+    - `memory_slot_effective_rank`
+    - `support_state_effective_rank`
+    - `grad_norm_support_encoder / grad_norm_writer / grad_norm_prefix_projector`
+  - latest real run 说明：
+    - dense teacher 这次已经不再 dormant，canonical `alignment_aux_active_steps=18/32`
+    - 但 canonical 仍然 `selection_passed=false`
+    - canonical `step8` 明显弱于 `control-safe-hinge step8`
+    - top-level comparison 位于 `results/generated/review/m5-fever-dense-teacher-qwen25/dense-teacher-summary.{json,md}`
+  - 因而：
+    - 当前 single-level objective side 已经有一轮 decisive dense-teacher test
+    - next step 不应再是 `M5.4/M5.5`
+    - 应转入 `Workstream B / TL-PoC`，把现有 `MemoryReader / MemoryFuser` 真正接进 active FEVER harness
+- `Workstream B / TL-PoC` 当前又把主线推进到真实两层路径：
+  - runtime 新增：
+    - `pilot_memory_path_variant in {single_level, two_level}`
+    - `pilot_reader_context_mode`
+    - `pilot_reader_num_queries`
+    - `pilot_fuser_short_slots`
+    - `pilot_projector_token_source`
+  - checkpoint schema 现已支持：
+    - `reader_state`
+    - `fuser_state`
+    - two-level runtime metadata
+    - single-level -> two-level warm-start
+  - dynamics observability 现已补齐：
+    - `memory_long_effective_rank`
+    - `memory_short_effective_rank`
+    - `reader_attention_entropy_*`
+    - `reader_attention_pairwise_cosine_mean`
+    - `reader_slot_coverage_fraction`
+    - `reader_query_diagnostics.csv`
+  - latest real run 说明：
+    - `SL-8` 能在 `screen248-val` 选出 `step2`，但 `screen248-test` 仍未通过
+    - `TL-H4-K8 / TL-H4-K4 / TL-H1-K4` 三条 two-level run 都没有通过 selection
+    - top-level comparison 位于 `results/generated/review/tl-poc-fever-qwen25/tl-poc-summary.{json,md}`
+    - 顶层结论当前记录：
+      - `comparison_conclusion=failure`
+      - `failure_reason=bridge_not_alive`
+      - `bridge_supported=false`
+      - `bottleneck_supported=false`
+      - `specialization_supported=false`
+    - two-level diagnostics 更像 `Failure mode B-1 / memory-side capacity-geometry problem`：
+      - `memory_long_effective_rank≈1.0`
+      - `memory_short_effective_rank≈1.1-1.2`
+      - `reader_attention_entropy≈ln(8)`
+      - `H=4` 没有比 `H=1` 更健康的 specialization
+  - 因而：
+    - 当前不再是“Reader/Fuser 还没接进 active FEVER harness”
+    - 也还不到“receiver 一定要解冻”的阶段
+    - 更合理的 next step 是先修 two-level memory path 的 capacity / geometry，再谈 transfer refresh 或 receiver fallback
+  - `TL bridge rescue` 又在现有 two-level path 上补了一层更直接的 geometry 尝试：
+    - `MemoryWriter.write(..., input_schema=support_set)` 现在支持 `support_query_residual_scale`，可把 conditioned writer slots 残差保留到 `M_long`
+    - 训练期新增 `memory_long_diversity_loss`、`memory_short_diversity_loss`、`reader_attention_diversity_loss`
+  - 但最新 `results/generated/review/tl-bridge-rescue-fever-qwen25/bridge-rescue-summary.json` 仍记录：
+    - `comparison_conclusion=failure`
+    - `failure_reason=no_bridge_geometry_gain`
+    - `tl_h4_k8_rescue_selection_passed=false`
+    - `tl_h4_k8_rescue_reader_query_entropy_mean≈2.0794`
+  - 因而：
+    - 当前 bottleneck 已更具体地收缩到 long-slot write/read geometry
+    - “再加一点 regularization”本身不是充分条件
+    - receiver fallback 仍然不该先于更直接的 memory-side factorization / basis constraints
+  - `TL slot-basis rescue` 又把同一条 `B-1` 假设再往前推进了一步：
+    - `MemoryWriter` 新增 `output_slot_basis_scale`
+    - writer warm-start 现在可显式 `orthogonalize_slot_embeddings_()`
+    - 训练期新增 `writer_slot_basis_orthogonality_loss`
+  - 最新 `results/generated/review/tl-slot-basis-rescue-fever-qwen25/slot-basis-summary.json` 当前记录：
+    - `comparison_conclusion=success`
+    - `basis_geometry_improved=true`
+    - `tl_slot_basis_final_memory_long_effective_rank=1.6126`
+    - `tl_slot_basis_final_writer_slot_basis_pairwise_cosine_mean≈0`
+  - 但对应 `run-summary.json` 仍显示：
+    - `selection_passed=false`
+    - `screen248_test_gate_passed=false`
+    - `dominant_label_collapse_onset_step=2`
+    - `tl_slot_basis_final_reader_attention_pairwise_cosine_mean=1.0`
+  - 因而：
+    - 当前不再像“怎么把 `M_long` 从 rank-1 拉出来”
+    - 更像“为什么更健康的 `M_long` 仍然被 `Reader/Fuser` 读成近均匀、低专化的 `M_short`”
+    - 下一轮仍留在 `Failure mode B-1`，但 focus 已从 long-slot basis 转移到 query-side readout geometry
+
+## M3 Failure Checks
+
+- `analysis_mode=m3_failure_checks` 会加载 `writer.ckpt + queries_meta_init.pt`
+- 当前显式运行三个退化 ablation：
+  - `zero_memory`
+  - `writer_noise`
+  - `collapsed_fuser`
+- 输出：
+  - `failure_checks.json`
+  - `failure_ablation_summary.csv`
+  - `failure_ablation_summary.svg`
+- 当前检查规则：
+  - `reader_uses_memory`: `zero_memory` loss 必须显著劣于 base
+  - `writer_beats_noise`: `writer_noise` loss 必须显著劣于 base
+  - `fuser_avoids_collapse`: base slot diversity 与 `collapsed_fuser` loss gap 不能同时退化
+- `writer_noise` 当前支持通过 `runtime.failure_checks.writer_noise_trials` 配置多次噪声抽样取期望，避免 tiny smoke 上单次抽样的高方差把检查打成偶然平局。
+
+当前最新 canonical follow-up run `results/generated/m3-fuser-fix-failure-checks-v2/` 已通过三项检查：
+- `reader_uses_memory`: `0.6569329723715782 -> 0.6758842468261719`
+- `writer_beats_noise`: `0.6569329723715782 -> 0.6875795591622591`，`writer_noise_trials=8`
+- `fuser_avoids_collapse`: `base_short_slot_diversity=0.004472408443689346`，`collapsed_fuser_query_loss=0.6617699563503265`
+
+当前这组结果依赖两条工程修正：一是 `M_short` 的下游摘要不再用简单均值，而是通过 position-sensitive `summary_proj` 保留 slot identity；二是 `writer_noise` 检查改为多次噪声抽样平均，减少 tiny smoke 方差。
+
+## Backbone Policy
+
+当前代码层只允许两档 backbone：
+
+- `Qwen2.5-1.5B-Instruct`
+- `Qwen3-8B`
+
+任何新配置若使用其他 backbone，应视为配置错误并直接失败。
+
+## Run Contract
+
+每个 run 最少写入：
+
+- `config.snapshot.yaml`
+- `run_info.json`
+- `metrics.json`
+- `profiling.json`
+- `predictions.jsonl`（评测）
+- `checkpoint.pt`（训练）
+
+若当前目录没有 git 元数据，`run_info.json` 会显式写入 `git_hash: "nogit"`，而不是静默缺失。
+
+## Baseline Boundary
+
+- `MemGen-master/` 保持为官方参考实现目录。
+- `src/memtotal/baselines/prompting.py` 现提供最小 prompt baseline family：
+  - `family=prompting`
+  - `mode in {vanilla, cot}`
+  - 统一走 `python -m eval`，但绕过 `MemoryRuntime`
+  - 同时支持 `family=meta_prompting`、`mode=planner_critic` 的最小 meta-prompt scaffold
+- `src/memtotal/baselines/adapters.py` 现提供最小 adapter baseline family：
+  - `family=adapter`
+  - `mode in {prompt_tuning, lora, ia3, prefix_tuning}`
+  - 统一走 `python -m train` 产出 checkpoint，再由 `python -m eval --checkpoint ...` 评测
+  - 当前仅支持 candidate-selection 任务的 smoke 训练
+- `src/memtotal/baselines/grid_runner.py` 现提供最小 baseline grid runner：
+  - 当前针对 `story_cloze` real-source smoke
+  - 会在单个 suite 内循环 `shots / steps`
+  - 支持通过 `grid.imports` 把外部 baseline run 导入同一条 `adapt_curve.csv`
+  - `grid.imports` 支持 `allow_missing: true`，会把未就绪外部点写入 `skipped_imports`
+  - 支持通过 `grid.config_overrides` 在不复制模板配置的前提下覆写 `task/runtime` 字段
+  - 支持通过 `grid.reuse_existing_runs` 复用已存在的 `train/eval` 产物，并通过 `config.snapshot + seed` 校验避免误复用
+  - 输出 `adapt_curve.csv`、`adapt_cost.json`、`summary.csv`
+  - 当前 dual-import protocol suite 已真实导入 `MemGen / story_cloze` 的 qwen25 与 qwen3 两个 `0-shot / 0-step` 外部点；对应 `adapt_cost.json` 为 `imported_eval_count=2`、`skipped_import_count=0`
+- 本仓库通过 `src/memtotal/baselines/run_memgen.py` 生成统一 launch plan、run snapshot、真实执行桥接和输出翻译层。
+- `run_memgen.py` 现在会在启动前做磁盘空间 preflight，并在空间不足时直接给出固定清理建议，而不是等官方进程中途失败。
+- 当前已真实验证 `gsm8k`、`gpqa`、`kodcode`、`rocstories`、`story_cloze`、`triviaqa` smoke eval，并将官方静态 `answer.json` 或动态 `conversations.txt` 翻译为统一 `predictions.jsonl` / `metrics.json`。
+- `analysis` 会把 MemGen 的 `compute_reward` 视为主分数字段之一，与自有 eval 的 `accuracy` 一起进入 `summary.csv` / `summary.svg`。
+- prompt baseline 当前会额外写：
+  - `metrics.json.baseline_family`
+  - `metrics.json.baseline_mode`
+  - `metrics.json.support_examples`
+  - `metrics.json.train_steps`
+  - `metrics.json.trainable_parameter_count`
+  - `predictions.jsonl[].baseline_prompt`
+  - `predictions.jsonl[].baseline_support_ids`
+  - `predictions.jsonl[].candidate_scores`
+- 当前已真实 smoke 验证 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen25_smoke.yaml`，汇总位于 `results/generated/m5-prompt-baseline-smoke/summary.csv`
+- 同一套 qwen3 配置 `configs/exp/baseline_{vanilla,cot}_{gsm8k,story_cloze}_qwen3_smoke.yaml` 也已真实跑通，汇总位于 `results/generated/m5-prompt-baseline-smoke-qwen3/summary.csv`
+- 同一套 `Vanilla / CoT` 现已推进到 `gsm8k / story_cloze` 的 real-source smoke：
+  - qwen25: `results/generated/m5-prompt-baseline-real-smoke/summary.csv`
+  - qwen3: `results/generated/m5-prompt-baseline-real-smoke-qwen3/summary.csv`
+- 当前最小 `MetaPrompting` smoke 汇总位于 `results/generated/m5-metaprompting-smoke/summary.csv`
+- 同一套 `MetaPrompting` real-source smoke 汇总位于 `results/generated/m5-metaprompting-real-smoke/summary.csv`
+- `prompting / meta_prompting` 当前已支持 `support_examples > 0` 的 in-context few-shot demos；当前 `2-shot story_cloze` real-source 汇总位于 `results/generated/m5-prompt-fewshot-real-smoke/summary.csv`
+- 当前最小 `RAG` real-source smoke 已接入：
+  - qwen25: `runs/verify/baseline_rag_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_rag_story_cloze_qwen3_real_smoke/metrics.json`
+- `rag` baseline 当前会额外写出 `baseline_retriever / mean_support_retrieval_score / baseline_support_scores`
+- 当前最小 `memory_bank` real-source smoke 也已接入：
+  - qwen25: `runs/verify/baseline_memory_bank_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_memory_bank_story_cloze_qwen3_real_smoke/metrics.json`
+- `memory_bank` baseline 当前会额外写出 `mean_memory_bank_entry_count / mean_memory_bank_selection_score / baseline_memory_bank_entries`
+- 当前最小 `LightThinker` real-source smoke 也已接入：
+  - qwen25: `runs/verify/baseline_lightthinker_story_cloze_qwen25_real_smoke/metrics.json`
+  - qwen3: `runs/verify/baseline_lightthinker_story_cloze_qwen3_real_smoke/metrics.json`
+- `lightthinker` baseline 当前会额外写出 `mean_thought_sketch_tokens / lightthinker_compression_prompt / lightthinker_thought_sketch`
+- `lightthinker` 现已进入 `story_cloze` 的 minimal/protocol baseline grid；当前会以 prompt-style family 的方式沿 `shot` 维展开，而不占用 `step>0` 训练预算
+- 当前 `Prompt Tuning / LoRA / IA3 / Prefix Tuning` 的最小 adapter smoke 已接入：
+  - `results/generated/m5-adapter-baseline-smoke/summary.csv`
+  - `runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/eval/metrics.json`
+  - `runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/eval/metrics.json`
+- 同一套 qwen3 adapter smoke 汇总位于 `results/generated/m5-adapter-baseline-smoke-qwen3/summary.csv`
+- 同一套 `Prompt Tuning / LoRA / IA3 / Prefix Tuning` 现已推进到 `story_cloze` real-source smoke；其中历史汇总位于 `results/generated/m5-adapter-baseline-real-smoke/summary.csv`
+- `IA3` 与 `Prefix Tuning` 现也已接入同一套 adapter harness：
+  - qwen25: `runs/verify/baseline_ia3_story_cloze_qwen25_real_smoke/eval/metrics.json`
+  - qwen3: `runs/verify/baseline_ia3_story_cloze_qwen3_real_smoke/eval/metrics.json`
+  - qwen25 prefix: `runs/verify/baseline_prefix_tuning_story_cloze_qwen25_real_smoke/eval/metrics.json`
+  - qwen3 prefix: `runs/verify/baseline_prefix_tuning_story_cloze_qwen3_real_smoke/eval/metrics.json`
+- baseline run 当前会统一写出 `support_examples / train_steps / trainable_parameter_count / budget_signature`
+- `analysis_mode=baseline_budget_audit` 已接入统一 `python -m analysis`，当前会检查 `prompting / meta_prompting / adapter / rag / lightthinker / memory_bank` 六个 family 的预算字段与双 backbone 覆盖，汇总位于 `results/generated/m5-baseline-budget-audit/summary.csv`
+- 当前最小 baseline grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-smoke/`，并已真实产出 `adapt_curve.csv`
+- 当前 `MemGen` 的 `story_cloze / Qwen2.5-1.5B-Instruct / 0-shot / 0-step` 外部评测点已可通过 `configs/exp/m5_story_cloze_baseline_grid_with_memgen_smoke.yaml` 导入到同一套 grid 汇总，产物位于 `results/generated/m5-story-cloze-baseline-grid-with-memgen-smoke/`
+- 当前更接近协议的 grid smoke 汇总位于 `results/generated/m5-story-cloze-baseline-grid-protocol-smoke/`：它使用 `story_cloze` real-source `smoke8` 子集与 `shots={0,1,2,4}`、`steps={0,1,3,5}`，并通过 `grid.config_overrides` 复用同一套 baseline 模板配置；当前 variant 数已扩到 `20`，其中包含 `rag + memory_bank + lightthinker + ia3 + prefix_tuning`
+- 同一 protocol-smoke suite 已真实验证缓存复用：在相同输出目录上重跑时，`adapt_cost.json` 会记录 `reused_train_run_count=52`、`reused_eval_run_count=100`；本轮新增 `ia3` 后补跑了 `26` 个 train cell 和 `26` 个 eval cell
+- 当前 dual-import protocol suite 位于 `results/generated/m5-story-cloze-baseline-grid-protocol-with-memgen-dual-smoke/`：它已真实导入 qwen25 与 qwen3 的 `MemGen` 点，并把 `memory_bank + ia3` 一起纳入同一套 `18` 个 variant 的 protocol-smoke 汇总
+- `scripts/watch_memgen_story_cloze_qwen3_refresh_grid.sh` 现提供一个任务定制 watcher：等待 `runs/verify/memgen-story-cloze-qwen3-smoke-v2/metrics.json` 出现后，自动刷新 dual-import protocol suite
