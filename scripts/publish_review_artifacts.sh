@@ -64,6 +64,10 @@ clean_review_ephemera() {
   fi
 }
 
+sanitize_review_artifacts() {
+  python scripts/sanitize_review_artifacts.py "runs/review" "results/generated/review"
+}
+
 clean_review_ephemera
 
 sync_dir "runs/verify/m3-core4-qwen25/stage-b" "runs/review/m3-core4-qwen25-stage-b"
@@ -507,6 +511,8 @@ sync_dir "results/generated/m3-core4-stage-c-error-attribution-v1" "results/gene
 sync_dir "results/generated/m3-core4-stage-c-margin-audit-v3-fixed-holdout" "results/generated/review/m3-core4-stage-c-margin-audit-v3-fixed-holdout"
 sync_dir "results/generated/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout" "results/generated/review/m3-core4-stage-c-negative-seed-curve-audit-v2-fixed-holdout"
 sync_dir "results/generated/m3-core4-stage-c-curve-suite-v3-fixed-holdout" "results/generated/review/m3-core4-stage-c-curve-suite-v3-fixed-holdout"
+
+sanitize_review_artifacts
 
 rebuild_docs_bundle
 
