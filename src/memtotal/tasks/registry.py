@@ -197,6 +197,22 @@ TASK_SPECS: dict[str, TaskSpec] = {
 }
 
 
+CANONICAL_TASK_EXAMPLE_KEYS = {
+    "id",
+    "benchmark_id",
+    "task_name",
+    "display_name",
+    "domain",
+    "segment",
+    "continuation",
+    "label",
+    "gold_answer",
+    "metric_name",
+    "evaluator_type",
+    "normalizer",
+}
+
+
 def list_task_specs() -> list[TaskSpec]:
     return [TASK_SPECS[key] for key in sorted(TASK_SPECS)]
 
@@ -335,9 +351,15 @@ def _build_canonical_benchmark_example(
     return example
 
 
+def _is_canonical_task_example(raw_row: object) -> bool:
+    return isinstance(raw_row, dict) and CANONICAL_TASK_EXAMPLE_KEYS.issubset(raw_row.keys())
+
+
 def load_task_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
     task_cfg = config["task"]
     raw_rows = load_jsonl_dataset(task_cfg["dataset_path"])
+    if raw_rows and all(_is_canonical_task_example(row) for row in raw_rows):
+        return [dict(row) for row in raw_rows]
     benchmark_id = task_cfg.get("benchmark_id")
     if benchmark_id is None:
         return raw_rows

@@ -137,6 +137,98 @@ class TaskRegistryTest(unittest.TestCase):
             self.assertEqual(dataset[0]["screening_bucket"], "near_threshold_bad")
             self.assertEqual(dataset[0]["claim"], "The sky is blue.")
 
+    def test_load_task_dataset_passes_through_canonical_mixed_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            dataset_path = tmp / "mixed_canonical.jsonl"
+            rows = [
+                {
+                    "id": "gsm8k-1",
+                    "benchmark_id": "gsm8k",
+                    "task_name": "gsm8k_real_smoke",
+                    "display_name": "GSM8K",
+                    "domain": "math",
+                    "segment": "Question: 1 + 1 = ?\nGive only the final numeric answer.",
+                    "continuation": "2",
+                    "label": "2",
+                    "gold_answer": "2",
+                    "metric_name": "exact_match",
+                    "evaluator_type": "exact_match",
+                    "normalizer": "gsm8k_final_answer",
+                    "question": "1 + 1 = ?",
+                },
+                {
+                    "id": "triviaqa-1",
+                    "benchmark_id": "triviaqa",
+                    "task_name": "triviaqa_real_smoke",
+                    "display_name": "TriviaQA",
+                    "domain": "qa",
+                    "segment": "Question: Who wrote Hamlet?\nAnswer with only the short answer.",
+                    "continuation": "William Shakespeare",
+                    "label": "William Shakespeare",
+                    "gold_answer": "William Shakespeare",
+                    "metric_name": "exact_match",
+                    "evaluator_type": "exact_match",
+                    "normalizer": "text",
+                    "question": "Who wrote Hamlet?",
+                    "aliases": ["Shakespeare", "William Shakespeare"],
+                },
+            ]
+            dataset_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+            config = {
+                "experiment": {
+                    "name": "benchmark_mixed_canonical_test",
+                    "stage": "M4",
+                    "method_variant": "ours-benchmark-real-smoke",
+                },
+                "task": {
+                    "name": "gsm8k_real_smoke",
+                    "benchmark_id": "gsm8k",
+                    "domain": "math",
+                    "split": "eval",
+                    "smoke_subset": "real_smoke",
+                    "pilot_split": "eval",
+                    "dataset_path": str(dataset_path),
+                    "metric_name": "exact_match",
+                    "evaluator": {"type": "exact_match", "normalizer": "gsm8k_final_answer"},
+                },
+                "backbone": {
+                    "name": "Qwen2.5-1.5B-Instruct",
+                    "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                    "load_mode": "stub",
+                    "stub_hidden_size": 64,
+                },
+                "method": {
+                    "embed_dim": 64,
+                    "segmenter": {"mode": "delimiter", "delimiter": "||"},
+                    "writer": {"memory_slots": 4, "arch": "mlp"},
+                    "reader": {
+                        "num_queries": 4,
+                        "use_query_gating": False,
+                        "gating_mode": "off",
+                        "num_heads": 4,
+                        "condition_on_context": True,
+                        "conditioning": {"domain_key": "domain", "include_task_name": True},
+                    },
+                    "fuser": {"short_slots": 2, "arch": "linear"},
+                    "injector": {"mode": "prefix", "enabled": True, "position": "segment"},
+                },
+                "runtime": {
+                    "train_steps": 2,
+                    "eval_examples": 1,
+                    "learning_rate": 0.01,
+                    "device": "cpu",
+                },
+            }
+            config_path = tmp / "mixed.yaml"
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+
+            dataset = load_task_dataset(load_config(config_path))
+
+            self.assertEqual(dataset, rows)
+            self.assertEqual(dataset[1]["benchmark_id"], "triviaqa")
+            self.assertIn("Answer with only the short answer.", dataset[1]["segment"])
+
     def test_task_evaluator_handles_exact_match_and_multiple_choice(self) -> None:
         exact_match_config = load_config(ROOT / "configs/exp/benchmark_kodcode_qwen25_smoke.yaml")
         exact_match_dataset = load_task_dataset(exact_match_config)
