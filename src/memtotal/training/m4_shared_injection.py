@@ -5395,6 +5395,34 @@ def _alignment_aux_loss(
     raise ValueError(f"Unsupported alignment aux mode: {mode}.")
 
 
+def _default_alignment_aux_diagnostics() -> dict[str, float | bool | str]:
+    return {
+        "teacher_choice_kl": 0.0,
+        "teacher_choice_js": 0.0,
+        "teacher_advantage_weight_mean": 0.0,
+        "teacher_advantage_weight_max": 0.0,
+        "teacher_margin_minus_base_margin": 0.0,
+        "teacher_margin_minus_active_margin": 0.0,
+        "active_class_entropy": 0.0,
+        "teacher_class_entropy": 0.0,
+        "base_class_entropy": 0.0,
+        "opd_target_score_active": 0.0,
+        "opd_target_score_base": 0.0,
+        "opd_target_score_teacher": 0.0,
+        "opd_target_logprob_per_token_active": 0.0,
+        "opd_target_logprob_per_token_base": 0.0,
+        "opd_target_logprob_per_token_teacher": 0.0,
+        "opd_mean_advantage": 0.0,
+        "opd_positive_token_fraction": 0.0,
+        "opd_target_text_chars": 0.0,
+        "opd_target_token_count": 0.0,
+        "opd_target_context_available": False,
+        "opd_hint_mode_requested": "",
+        "opd_hint_mode_effective": "",
+        "opd_target_label": "",
+    }
+
+
 def _truncate_hint_words(text: str, *, max_words: int) -> str:
     words = [word for word in str(text).strip().split() if word]
     if not words:
@@ -7847,31 +7875,7 @@ def run_shared_injection_pilot(
                 )
                 alignment_aux_loss = None
                 alignment_aux_active = False
-                alignment_aux_diagnostics = {
-                    "teacher_choice_kl": 0.0,
-                    "teacher_choice_js": 0.0,
-                    "teacher_advantage_weight_mean": 0.0,
-                    "teacher_advantage_weight_max": 0.0,
-                    "teacher_margin_minus_base_margin": 0.0,
-                    "teacher_margin_minus_active_margin": 0.0,
-                    "active_class_entropy": 0.0,
-                    "teacher_class_entropy": 0.0,
-                    "base_class_entropy": 0.0,
-                    "opd_target_score_active": 0.0,
-                    "opd_target_score_base": 0.0,
-                    "opd_target_score_teacher": 0.0,
-                    "opd_target_logprob_per_token_active": 0.0,
-                    "opd_target_logprob_per_token_base": 0.0,
-                    "opd_target_logprob_per_token_teacher": 0.0,
-                    "opd_mean_advantage": 0.0,
-                    "opd_positive_token_fraction": 0.0,
-                    "opd_target_text_chars": 0.0,
-                    "opd_target_token_count": 0.0,
-                    "opd_target_context_available": False,
-                    "opd_hint_mode_requested": "",
-                    "opd_hint_mode_effective": "",
-                    "opd_target_label": "",
-                }
+                alignment_aux_diagnostics = _default_alignment_aux_diagnostics()
                 alignment_aux_allowed = not (
                     alignment_aux_apply_only_to_real_memory and writer_memory_control != "real"
                 )
@@ -7892,7 +7896,11 @@ def run_shared_injection_pilot(
                             ),
                             train_example.candidate_texts,
                         )
-                    alignment_aux_loss, alignment_aux_active, alignment_aux_diagnostics = _alignment_aux_loss(
+                    (
+                        alignment_aux_loss,
+                        alignment_aux_active,
+                        choice_alignment_aux_diagnostics,
+                    ) = _alignment_aux_loss(
                         mode=requested_alignment_mode,
                         active_scores=scores,
                         base_scores=base_scores,
@@ -7902,6 +7910,7 @@ def run_shared_injection_pilot(
                         advantage_center=alignment_aux_advantage_center,
                         advantage_scale=alignment_aux_advantage_scale,
                     )
+                    alignment_aux_diagnostics.update(choice_alignment_aux_diagnostics)
                     if (
                         alignment_aux_mode != "off"
                         and alignment_aux_allowed
