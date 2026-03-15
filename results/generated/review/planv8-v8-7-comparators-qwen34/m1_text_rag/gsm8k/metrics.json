@@ -1,0 +1,19 @@
+{
+  "accuracy": 0.640625,
+  "backbone": "Qwen3-4B",
+  "baseline_family": "rag",
+  "baseline_mode": "retrieval_augmented",
+  "baseline_retriever": "lexical_overlap",
+  "benchmark_id": "gsm8k",
+  "evaluator_type": "exact_match",
+  "exact_match": 0.640625,
+  "examples_evaluated": 64,
+  "mean_score": 0.640625,
+  "mean_support_retrieval_score": 0.19611106463962313,
+  "metric_name": "exact_match",
+  "mode": "eval_baseline_rag_split_pool",
+  "support_examples_requested": 8,
+  "support_pool_size": 8,
+  "task_domain": "math",
+  "task_score": 0.640625
+}

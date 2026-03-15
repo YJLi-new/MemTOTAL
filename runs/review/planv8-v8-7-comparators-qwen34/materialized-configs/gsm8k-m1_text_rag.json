@@ -1,0 +1,45 @@
+{
+  "backbone": {
+    "attn_implementation": "sdpa",
+    "cache_dir": "/root/autodl-tmp/hf-cache",
+    "chat_template_enable_thinking": false,
+    "dtype": "bfloat16",
+    "gradient_checkpointing": false,
+    "load_mode": "hf_causal_lm",
+    "max_new_tokens": 192,
+    "model_id": "/root/autodl-tmp/models/Qwen3-4B",
+    "name": "Qwen3-4B",
+    "use_chat_template": true
+  },
+  "baseline": {
+    "family": "rag",
+    "mode": "retrieval_augmented",
+    "rag": {
+      "include_answer_in_memory": true,
+      "memory_prefix": "Retrieved memory",
+      "retriever": "lexical_overlap"
+    },
+    "support_examples": 8
+  },
+  "experiment": {
+    "method_variant": "m1_text_rag",
+    "name": "planv8_v8_7_m1_text_rag_gsm8k",
+    "stage": "V8-7"
+  },
+  "runtime": {
+    "device": "cuda",
+    "eval_examples": 64
+  },
+  "task": {
+    "benchmark_id": "gsm8k",
+    "dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-datasets/gsm8k/eval.jsonl",
+    "domain": "math",
+    "evaluator": {
+      "normalizer": "gsm8k_final_answer",
+      "type": "exact_match"
+    },
+    "metric_name": "exact_match",
+    "name": "gsm8k_real_smoke",
+    "support_dataset_path": "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-datasets/gsm8k/support.jsonl"
+  }
+}

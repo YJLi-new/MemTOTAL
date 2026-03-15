@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+/root/miniconda3/bin/python main.py --cfg-path /root/mydir/MemTOTAL/MemGen-master/configs/latent_memory/triviaqa.yaml --options run.seed=61149 run.mode=evaluate dataset.name=triviaqa model.model_name=/root/autodl-tmp/models/Qwen3-4B model.weaver.model_name=/root/autodl-tmp/models/Qwen3-4B model.trigger.model_name=/root/autodl-tmp/models/Qwen3-4B model.trigger.active=False model.max_prompt_aug_num=1 model.max_inference_aug_num=0 model.attn_implementation=sdpa dataset.mode=sft dataset.sft.valid_ratio=0.01 dataset.sft.num_workers=1 dataset.sft.max_train_samples=8 dataset.sft.max_valid_samples=4 dataset.sft.max_test_samples=8 run.generation.eval_batch_size=1 run.generation.max_response_length=256 run.generation.max_turns=2

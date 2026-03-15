@@ -1,0 +1,35 @@
+backbone:
+  model_id: /root/autodl-tmp/models/Qwen3-4B
+  name: Qwen3-4B
+baseline:
+  extra_options:
+  - model.attn_implementation=sdpa
+  - dataset.mode=sft
+  - dataset.sft.valid_ratio=0.01
+  - dataset.sft.num_workers=1
+  - dataset.sft.max_train_samples=8
+  - dataset.sft.max_valid_samples=4
+  - dataset.sft.max_test_samples=8
+  - run.generation.eval_batch_size=1
+  - run.generation.max_response_length=256
+  - run.generation.max_turns=2
+  insertion_profile: dynamic_search_smoke
+  load_model_path: null
+  max_inference_aug_num: 0
+  max_prompt_aug_num: 1
+  memgen_config_path: configs/latent_memory/triviaqa.yaml
+  memgen_run_mode: evaluate
+  min_free_disk_gb: 8.0
+  name: memgen
+  repo_root: MemGen-master
+  task_name: triviaqa
+  trigger_active: false
+experiment:
+  method_variant: m2_memgen_context
+  name: planv8_v8_7_m2_memgen_triviaqa
+  stage: V8-7
+task:
+  name: triviaqa
+_meta:
+  config_path: /root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-configs/triviaqa-m2_memgen.json
+  includes: []

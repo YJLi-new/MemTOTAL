@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "/root/mydir/MemTOTAL/src/memtotal/baselines/run_memgen.py",
+    "--config",
+    "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-configs/triviaqa-m2_memgen.json",
+    "--seed",
+    "61149",
+    "--output_dir",
+    "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/m2_memgen-triviaqa"
+  ],
+  "backbone": "Qwen3-4B",
+  "benchmark_id": null,
+  "experiment_name": "planv8_v8_7_m2_memgen_triviaqa",
+  "git_hash": "7cc07c0b9eec1e65afcc2d180103e51311774da5",
+  "gpu_memory_total": "97887 MiB",
+  "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "method_variant": "m2_memgen_context",
+  "nvidia_driver_version": "590.44.01",
+  "platform": "Linux-5.15.0-78-generic-x86_64-with-glibc2.35",
+  "python_version": "3.12.3",
+  "pyyaml_version": "6.0.2",
+  "seed": 61149,
+  "smoke_subset": null,
+  "stage": "V8-7",
+  "task_domain": null,
+  "task_name": "triviaqa",
+  "task_split": null,
+  "timestamp_utc": "2026-03-15T08:23:31.600106+00:00",
+  "torch_version": "2.8.0+cu128"
+}

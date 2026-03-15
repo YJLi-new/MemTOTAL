@@ -1,0 +1,21 @@
+{
+  "access": "public",
+  "benchmark_id": "triviaqa",
+  "data_files": null,
+  "dataset_config": "rc.wikipedia.nocontext",
+  "dataset_configs": null,
+  "dataset_name": "mandarjoshi/trivia_qa",
+  "display_name": "TriviaQA",
+  "homepage": null,
+  "license_note": "Hugging Face metadata currently does not expose a structured license field; verify upstream dataset card before redistribution.",
+  "materialized_path": "/root/autodl-tmp/runs/verify/planv8-v8-7-comparators-qwen34/materialized-sources/triviaqa/eval-real-smoke136.jsonl",
+  "max_examples": 136,
+  "notes": "Validation split is used for local smoke because it is labeled and lightweight; official test split remains available for later protocol alignment.",
+  "num_rows": 136,
+  "output_filename": "eval-real-smoke136.jsonl",
+  "seed": 61210,
+  "source_kind": "huggingface",
+  "source_url": "https://huggingface.co/datasets/mandarjoshi/trivia_qa",
+  "split": "validation",
+  "status": "materialized"
+}
